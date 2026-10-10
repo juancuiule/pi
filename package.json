@@ -1,10 +1,12 @@
 {
   "name": "effect-pi",
   "version": "1.0.0",
+  "type": "module",
   "description": "",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.ts",
+    "typecheck": "tsc"
   },
   "keywords": [],
   "author": "",
@@ -14,5 +16,9 @@
     "@earendil-works/pi-ai": "^1.1.0",
     "@earendil-works/pi-durable": "^1.1.0",
     "effect": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2"
   }
 }
