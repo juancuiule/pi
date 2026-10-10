@@ -133,7 +133,7 @@ export function createEditTool(): ToolRegistration<typeof editSchema, EditToolDe
 							: { firstChangedLine: diffResult.firstChangedLine }),
 					};
 					return {
-						output: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${path}.` }],
+						content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${path}.` }],
 						details,
 					};
 				},

@@ -43,10 +43,10 @@ export class Submissions {
 		this.#now = now;
 		this.#queueModes = queueModes;
 		this.#resume = resume;
-		session.observeCommits((publication) => this.#observe(publication));
+		session.subscribeCommits((publication) => this.#observe(publication));
 		session.subscribeClose(() => {
 			this.#closed = true;
-			this.#waiters.rejectAll(closedError(this.#session));
+			this.#waiters.rejectAll(closedError());
 		});
 	}
 
@@ -80,7 +80,7 @@ export class Submissions {
 			if (record === undefined) throw new Error(`Submission ${id} does not exist`);
 			if (isSettled(record)) return { promise: Promise.resolve(record) };
 			// Close rejects registered waiters synchronously and may begin during the read.
-			if (this.#closed) throw closedError(this.#session);
+			if (this.#closed) throw closedError();
 			return { promise: this.#waiters.add(id, context) };
 		});
 		return found.promise;

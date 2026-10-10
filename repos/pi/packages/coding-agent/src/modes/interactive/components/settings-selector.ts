@@ -13,7 +13,6 @@ import {
 	type WheelScrollLines,
 } from "@earendil-works/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
-import { SETTINGS_DEFAULTS } from "../../../core/settings-defaults.ts";
 import {
 	CACHE_WARMING_MODES,
 	type CacheWarmingMode,
@@ -158,8 +157,7 @@ class WarningSettingsSubmenu extends Container {
 				id: "anthropic-extra-usage",
 				label: "Anthropic extra usage",
 				description: "Warn when Anthropic subscription auth may use paid extra usage",
-				currentValue:
-					(this.state.anthropicExtraUsage ?? SETTINGS_DEFAULTS.warnings.anthropicExtraUsage) ? "true" : "false",
+				currentValue: (this.state.anthropicExtraUsage ?? true) ? "true" : "false",
 				values: ["true", "false"],
 			},
 		];
@@ -809,7 +807,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(skillCommandsIndex + 1, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
-			description: "Use the terminal cursor instead of Pi's drawn cursor",
+			description: "Show the terminal cursor while still positioning it for IME support",
 			currentValue: config.showHardwareCursor ? "true" : "false",
 			values: ["true", "false"],
 		});

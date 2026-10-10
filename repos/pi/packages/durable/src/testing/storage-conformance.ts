@@ -1179,8 +1179,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				} catch (error) {
 					conflictError = error;
 				}
-				// Rejected without effect: the copy and the retirement in the same batch are both absent.
-				expect(conflictError instanceof Error).toBe(true);
+				expect((conflictError as Error | undefined)?.name).toBe("StorageRejected");
 				expect(await storage.document(conflictId, "current", context)).toBeUndefined();
 				expect((await storage.document(currentCopyId, "current", context))?.value).toEqual({
 					count: 2,
@@ -1203,7 +1202,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				} catch (error) {
 					mismatchError = error;
 				}
-				expect(mismatchError instanceof Error).toBe(true);
+				expect((mismatchError as Error | undefined)?.name).toBe("StorageRejected");
 				expect(await storage.document(mismatchId, "current", context)).toBeUndefined();
 			},
 		),

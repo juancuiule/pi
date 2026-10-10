@@ -21,16 +21,6 @@
 			"types": "./dist/source.d.ts",
 			"import": "./dist/source.js"
 		},
-		"./portable": {
-			"source": "./src/portable.ts",
-			"types": "./dist/portable.d.ts",
-			"import": "./dist/portable.js"
-		},
-		"./cloudflare": {
-			"source": "./src/cloudflare.ts",
-			"types": "./dist/cloudflare.d.ts",
-			"import": "./dist/cloudflare.js"
-		},
 		"./worker": {
 			"source": "./src/runtime/worker.ts",
 			"types": "./dist/runtime/worker.d.ts",
@@ -52,9 +42,7 @@
 		"codemode",
 		"sandbox",
 		"quickjs",
-		"wasm",
-		"cloudflare",
-		"durable-objects"
+		"wasm"
 	],
 	"author": "Earendil Works",
 	"license": "MIT",

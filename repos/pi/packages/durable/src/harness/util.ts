@@ -1,5 +1,4 @@
 import type { Context } from "@earendil-works/chord";
-import { SessionFailed } from "../errors.ts";
 import type { Cursor, Page } from "../types.ts";
 
 /** Pending waits by key. Each settles once: through `resolve`, `rejectAll`, or cancellation of its context. */
@@ -54,8 +53,6 @@ export async function scanAll<T>(scan: (cursor: Cursor | undefined) => Promise<P
 	return items;
 }
 
-/** What a closed Harness rejects with: `SessionFailed` with the cause when it closed because the Session failed. */
-export function closedError(session: { readonly failure: { readonly error: unknown } | undefined }): Error {
-	const failure = session.failure;
-	return failure === undefined ? new Error("Harness is closed") : new SessionFailed(failure.error);
+export function closedError(): Error {
+	return new Error("Harness is closed");
 }

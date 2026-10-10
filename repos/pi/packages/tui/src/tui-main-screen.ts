@@ -261,8 +261,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		};
 
 		// Render all components to get new lines
-		// Resolve fake cursors before compositing so overlays and line slicing see plain SGR codes
-		let newLines = this.resolveFakeCursors(this.render(width));
+		let newLines = this.render(width);
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.hasOverlayEntries) {
