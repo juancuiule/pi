@@ -26,7 +26,6 @@ import * as Path from "../Path.ts"
 import * as Predicate from "../Predicate.ts"
 import * as Queue from "../Queue.ts"
 import * as Redacted from "../Redacted.ts"
-import type * as Scope from "../Scope.ts"
 import * as Terminal from "../Terminal.ts"
 import type { Covariant } from "../Types.ts"
 import * as Ansi from "./internal/ansi.ts"
@@ -204,11 +203,6 @@ export interface Theme {
   readonly errorColor: string
   /** The color used for submitted values. */
   readonly submittedColor: string
-  /**
-   * Whether prompts and the command wizard emit color and style escapes.
-   * Cursor movement and redraw controls are always emitted.
-   */
-  readonly colors: boolean
 }
 
 /**
@@ -626,7 +620,7 @@ export interface ToggleOptions extends ThemeOptions {
   readonly inactive?: string
 }
 
-const defaultTheme: Omit<Theme, "colors"> = {
+const defaultTheme: Theme = {
   prefix: "?",
   arrowUp: "↑",
   arrowDown: "↓",
@@ -646,7 +640,7 @@ const defaultTheme: Omit<Theme, "colors"> = {
   submittedColor: Ansi.white
 }
 
-const windowsTheme: Omit<Theme, "colors"> = {
+const windowsTheme: Theme = {
   ...defaultTheme,
   checkboxOn: "[*]",
   checkboxOff: "[ ]",
@@ -659,19 +653,13 @@ const windowsTheme: Omit<Theme, "colors"> = {
 /**
  * Creates a prompt theme using the current platform defaults.
  *
- * **Details**
- *
- * Unless `colors` is provided, it is detected when the theme is created:
- * colors are enabled when stdout is a TTY and `NO_COLOR` is unset or empty.
- *
  * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
 export const makeTheme = (options?: Partial<Theme>): Theme => ({
   ...(process.platform === "win32" ? windowsTheme : defaultTheme),
-  ...options,
-  colors: options?.colors ?? Ansi.detectColors()
+  ...options
 })
 
 /**
@@ -680,13 +668,7 @@ export const makeTheme = (options?: Partial<Theme>): Theme => ({
  * **Details**
  *
  * Provide this reference once to theme every prompt in an application. A
- * prompt's `theme` option takes precedence over the context value. The
- * command wizard also reads `colors` from this reference, so provide a theme
- * with `colors: false` to disable wizard styling.
- *
- * The default value is created with `makeTheme` the first time it is read,
- * so color detection runs once per process. Changes to `NO_COLOR` after the
- * first prompt do not affect the default theme.
+ * prompt's `theme` option takes precedence over the context value.
  *
  * @stability unstable
  * @category services
@@ -850,10 +832,11 @@ export const all: <
   return allTupled(arguments[0]) as any
 }
 
-const annotateErrorLine = (theme: Theme, line: string): string =>
-  Ansi.annotate(theme.colors, line, Ansi.combine(Ansi.italicized, theme.errorColor))
-const annotateSymbol = (theme: Theme, symbol: string, ...styles: Array<string | Array<string>>): string =>
-  symbol.length === 0 ? "" : Ansi.annotate(theme.colors, symbol, ...styles)
+const annotateLine = (line: string): string => Ansi.annotate(line, Ansi.bold)
+const annotateErrorLine = (line: string, color: string): string =>
+  Ansi.annotate(line, Ansi.combine(Ansi.italicized, color))
+const annotateSymbol = (symbol: string, ...styles: Array<string | Array<string>>): string =>
+  symbol.length === 0 ? "" : Ansi.annotate(symbol, ...styles)
 const separateSymbol = (symbol: string, text: string): string => symbol.length === 0 ? text : symbol + " " + text
 const renderPagingPrefix = (theme: Theme, showArrowUp: boolean, showArrowDown: boolean): string => {
   const width = Math.max(theme.arrowUp.length, theme.arrowDown.length)
@@ -1257,7 +1240,7 @@ export const run: <Output>(
 > = Effect.fnUntraced(
   function*<Output>(self: Prompt<Output>) {
     const terminal = yield* Terminal.Terminal
-    const input = yield* Effect.cached(terminal.readInput)
+    const input = yield* terminal.readInput
     return yield* runWithInput(self, terminal, input)
   },
   Effect.mapError(() => new Terminal.QuitError({})),
@@ -1522,13 +1505,13 @@ const allTupled = <const T extends ArrayLike<Prompt<any>>>(arg: T): Prompt<
 const runWithInput = <Output>(
   prompt: Prompt<Output>,
   terminal: Terminal.Terminal,
-  input: Terminal.Terminal["readInput"]
-): Effect.Effect<Output, NoSuchElementError, Environment | Scope.Scope> =>
+  input: Queue.Dequeue<Terminal.UserInput, Cause.Done>
+): Effect.Effect<Output, NoSuchElementError, Environment> =>
   Effect.suspend(() => {
     const op = prompt as PromptPrimitive
     switch (op._tag) {
       case "Loop": {
-        return Effect.flatMap(input, (queue) => runLoop(op, terminal, queue))
+        return runLoop(op, terminal, input)
       }
       case "OnSuccess": {
         return Effect.flatMap(
@@ -1642,36 +1625,48 @@ const handleConfirmClear = (options: ConfirmOptionsReq) => {
     const confirmMessage = state.value
       ? options.placeholder.defaultConfirm!
       : options.placeholder.defaultDeny!
-    const promptText = renderPrompt(confirmMessage, options.message, figures.prefix, figures.pointerSmall, figures, {
-      plain: true
-    })
+    const promptText = renderConfirmOutput(
+      confirmMessage,
+      figures.prefix,
+      figures.pointerSmall,
+      options,
+      { plain: true }
+    )
     const clearOutput = eraseText(promptText, columns)
     const resetCurrentLine = Ansi.eraseLine + Ansi.cursorLeft
     return clearOutput + resetCurrentLine
   })
 }
 
+const renderConfirmOutput = (
+  confirm: string,
+  leadingSymbol: string,
+  trailingSymbol: string,
+  options: ConfirmOptionsReq,
+  renderOptions?: RenderOptions | undefined
+) => renderPrompt(confirm, options.message, leadingSymbol, trailingSymbol, renderOptions)
+
 const renderConfirmNextFrame = Effect.fnUntraced(function*(state: ConfirmState, options: ConfirmOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.prefix, figures.primaryColor)
-  const trailingSymbol = annotateSymbol(figures, figures.pointerSmall, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
+  const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
   // Marking these explicitly as present with `!` because they always will be
   // and there is really no value in adding a `DeepRequired` type helper just
   // for these internal cases
   const confirmMessage = state.value
     ? options.placeholder.defaultConfirm!
     : options.placeholder.defaultDeny!
-  const confirm = Ansi.annotate(figures.colors, confirmMessage, figures.mutedColor)
-  const promptMsg = renderPrompt(confirm, options.message, leadingSymbol, trailingSymbol, figures)
+  const confirm = Ansi.annotate(confirmMessage, figures.mutedColor)
+  const promptMsg = renderConfirmOutput(confirm, leadingSymbol, trailingSymbol, options)
   return Ansi.cursorHide + promptMsg
 })
 
 const renderConfirmSubmission = Effect.fnUntraced(function*(value: boolean, options: ConfirmOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-  const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+  const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
   const confirmMessage = value ? options.label.confirm : options.label.deny
-  const promptMsg = renderPrompt(confirmMessage, options.message, leadingSymbol, trailingSymbol, figures)
+  const promptMsg = renderConfirmOutput(confirmMessage, leadingSymbol, trailingSymbol, options)
   return promptMsg + "\n"
 })
 
@@ -1719,9 +1714,7 @@ const handleDateClear = (options: DateOptionsReq) => {
     const figures = yield* getTheme(options)
     const resetCurrentLine = Ansi.eraseLine + Ansi.cursorLeft
     const parts = Arr.reduce(state.dateParts, "", (doc, part) => doc + part.toString())
-    const promptText = renderPrompt(parts, options.message, figures.prefix, figures.pointerSmall, figures, {
-      plain: true
-    })
+    const promptText = renderDateOutput(figures.prefix, figures.pointerSmall, parts, options, { plain: true })
     const errorText = Option.isSome(state.error)
       ? Arr.match(state.error.value.split(NEWLINE_REGEXP), {
         onEmpty: () => "",
@@ -1737,8 +1730,8 @@ const renderDateError = (state: DateState, pointer: string, theme: Theme): strin
   if (Option.isSome(state.error)) {
     const errorLines = state.error.value.split(NEWLINE_REGEXP)
     if (Arr.isReadonlyArrayNonEmpty(errorLines)) {
-      const prefix = annotateSymbol(theme, pointer, theme.errorColor)
-      const lines = Arr.map(errorLines, (str) => annotateErrorLine(theme, str))
+      const prefix = annotateSymbol(pointer, theme.errorColor)
+      const lines = Arr.map(errorLines, (str) => annotateErrorLine(str, theme.errorColor))
       return Ansi.cursorSavePosition + "\n" + separateSymbol(prefix, lines.join("\n")) + Ansi.cursorRestorePosition
     }
   }
@@ -1753,29 +1746,37 @@ const renderParts = (state: DateState, theme: Theme, submitted: boolean = false)
       const partDoc = part.toString()
       if (currentIndex === state.cursor && !submitted) {
         const annotation = Ansi.combine(Ansi.underlined, theme.primaryColor)
-        return doc + Ansi.annotate(theme.colors, partDoc, annotation)
+        return doc + Ansi.annotate(partDoc, annotation)
       }
       return doc + partDoc
     }
   )
 }
 
+const renderDateOutput = (
+  leadingSymbol: string,
+  trailingSymbol: string,
+  parts: string,
+  options: DateOptionsReq,
+  renderOptions?: RenderOptions | undefined
+) => renderPrompt(parts, options.message, leadingSymbol, trailingSymbol, renderOptions)
+
 const renderDateNextFrame = Effect.fnUntraced(function*(state: DateState, options: DateOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.prefix, figures.primaryColor)
-  const trailingSymbol = annotateSymbol(figures, figures.pointerSmall, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
+  const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
   const parts = renderParts(state, figures)
-  const promptMsg = renderPrompt(parts, options.message, leadingSymbol, trailingSymbol, figures)
+  const promptMsg = renderDateOutput(leadingSymbol, trailingSymbol, parts, options)
   const errorMsg = renderDateError(state, figures.pointerSmall, figures)
   return Ansi.cursorHide + promptMsg + errorMsg
 })
 
 const renderDateSubmission = Effect.fnUntraced(function*(state: DateState, options: DateOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-  const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+  const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
   const parts = renderParts(state, figures, true)
-  const promptMsg = renderPrompt(parts, options.message, leadingSymbol, trailingSymbol, figures)
+  const promptMsg = renderDateOutput(leadingSymbol, trailingSymbol, parts, options)
   return promptMsg + "\n"
 })
 
@@ -2363,13 +2364,12 @@ const handleFileClear = (options: FileOptionsReq) => {
     const resolvedPathText = separateSymbol(figures.pointerSmall, resolvedPath)
     const isConfirming = showConfirmation(state.confirm)
     const promptText = isConfirming
-      ? renderPrompt("(Y/n)", CONFIRM_MESSAGE, figures.prefix, figures.pointerSmall, figures, { plain: true })
+      ? renderPrompt("(Y/n)", CONFIRM_MESSAGE, figures.prefix, figures.pointerSmall, { plain: true })
       : renderPrompt(
         renderFileFilter(state, figures, { plain: true }),
         options.message,
         figures.tick,
         figures.ellipsis,
-        figures,
         {
           plain: true
         }
@@ -2395,7 +2395,6 @@ const renderPrompt = (
   message: string,
   leadingSymbol: string,
   trailingSymbol: string,
-  theme: Theme,
   options?: RenderOptions | undefined
 ) => {
   const prefix = leadingSymbol.length === 0 ? "" : leadingSymbol + " "
@@ -2411,12 +2410,13 @@ const renderPrompt = (
     }
     return output
   }
+  const annotate = options?.plain === true
+    ? (line: string) => line
+    : annotateLine
   return Arr.match(message.split(NEWLINE_REGEXP), {
     onEmpty: () => renderLine(""),
     onNonEmpty: (promptLines) => {
-      const lines = options?.plain === true
-        ? promptLines
-        : Arr.map(promptLines, (line) => Ansi.annotate(theme.colors, line, Ansi.bold))
+      const lines = Arr.map(promptLines, (line) => annotate(line))
       return renderLine(lines.join("\n"))
     }
   })
@@ -2438,7 +2438,7 @@ const renderPrefix = (
   if (state.cursor === currentIndex) {
     return renderOptions?.plain === true
       ? figures.pointer + prefix
-      : annotateSymbol(figures, figures.pointer, figures.primaryColor) + prefix
+      : annotateSymbol(figures.pointer, figures.primaryColor) + prefix
   }
   return prefix + " ".repeat(figures.pointer.length)
 }
@@ -2453,7 +2453,7 @@ const renderFileName = (
     return file
   }
   return isSelected
-    ? Ansi.annotate(theme.colors, file, Ansi.combine(Ansi.underlined, theme.primaryColor))
+    ? Ansi.annotate(file, Ansi.combine(Ansi.underlined, theme.primaryColor))
     : file
 }
 
@@ -2461,10 +2461,10 @@ const renderFileFilter = (state: FileState, theme: Theme, renderOptions?: Render
   const filterValue = state.query.length === 0
     ? renderOptions?.plain === true
       ? FILE_FILTER_PLACEHOLDER
-      : Ansi.annotate(theme.colors, FILE_FILTER_PLACEHOLDER, theme.mutedColor)
+      : Ansi.annotate(FILE_FILTER_PLACEHOLDER, theme.mutedColor)
     : renderOptions?.plain === true
     ? state.query
-    : Ansi.annotate(theme.colors, state.query, Ansi.combine(Ansi.underlined, theme.primaryColor))
+    : Ansi.annotate(state.query, Ansi.combine(Ansi.underlined, theme.primaryColor))
   return `[${FILE_FILTER_LABEL}: ${filterValue}]`
 }
 
@@ -2479,7 +2479,7 @@ const renderFiles = (
   if (length === 0) {
     return renderOptions?.plain === true
       ? FILE_EMPTY_MESSAGE
-      : Ansi.annotate(figures.colors, FILE_EMPTY_MESSAGE, figures.mutedColor)
+      : Ansi.annotate(FILE_EMPTY_MESSAGE, figures.mutedColor)
   }
   const toDisplay = entriesToDisplay(state.cursor, length, options.maxPerPage)
   const documents: Array<string> = []
@@ -2498,44 +2498,28 @@ const renderFileNextFrame = Effect.fnUntraced(function*(state: FileState, option
   const currentPath = yield* resolveCurrentPath(state.path, options)
   const selectedPath = state.files[state.cursor]
   const resolvedPath = selectedPath === undefined ? currentPath : path.resolve(currentPath, selectedPath)
-  const resolvedPathMsg = Ansi.annotate(
-    figures.colors,
-    separateSymbol(figures.pointerSmall, resolvedPath),
-    figures.mutedColor
-  )
+  const resolvedPathMsg = Ansi.annotate(separateSymbol(figures.pointerSmall, resolvedPath), figures.mutedColor)
 
   if (showConfirmation(state.confirm)) {
-    const leadingSymbol = annotateSymbol(figures, figures.prefix, figures.primaryColor)
-    const trailingSymbol = annotateSymbol(figures, figures.pointerSmall, figures.mutedColor)
-    const confirm = Ansi.annotate(figures.colors, "(Y/n)", figures.mutedColor)
-    const promptMsg = renderPrompt(confirm, CONFIRM_MESSAGE, leadingSymbol, trailingSymbol, figures)
+    const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
+    const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
+    const confirm = Ansi.annotate("(Y/n)", figures.mutedColor)
+    const promptMsg = renderPrompt(confirm, CONFIRM_MESSAGE, leadingSymbol, trailingSymbol)
     return Ansi.cursorHide + promptMsg + "\n" + resolvedPathMsg
   }
-  const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-  const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
-  const promptMsg = renderPrompt(
-    renderFileFilter(state, figures),
-    options.message,
-    leadingSymbol,
-    trailingSymbol,
-    figures
-  )
+  const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+  const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
+  const promptMsg = renderPrompt(renderFileFilter(state, figures), options.message, leadingSymbol, trailingSymbol)
   const files = renderFiles(state, state.files, figures, options)
   return Ansi.cursorHide + promptMsg + "\n" + resolvedPathMsg + "\n" + files
 })
 
 const renderFileSubmission = Effect.fnUntraced(function*(state: FileState, value: string, options: FileOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-  const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
-  const promptMsg = renderPrompt(
-    renderFileFilter(state, figures),
-    options.message,
-    leadingSymbol,
-    trailingSymbol,
-    figures
-  )
-  return promptMsg + " " + Ansi.annotate(figures.colors, value, figures.submittedColor) + "\n"
+  const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+  const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
+  const promptMsg = renderPrompt(renderFileFilter(state, figures), options.message, leadingSymbol, trailingSymbol)
+  return promptMsg + " " + Ansi.annotate(value, figures.submittedColor) + "\n"
 })
 
 const handleFileRender = (options: FileOptionsReq) => {
@@ -2736,8 +2720,8 @@ const renderMultiSelectError = (
         if (renderOptions?.plain === true) {
           return separateSymbol(pointer, errorLines.join("\n"))
         }
-        const prefix = annotateSymbol(theme, pointer, theme.errorColor)
-        const lines = Arr.map(errorLines, (str) => annotateErrorLine(theme, str))
+        const prefix = annotateSymbol(pointer, theme.errorColor)
+        const lines = Arr.map(errorLines, (str) => annotateErrorLine(str, theme.errorColor))
         return Ansi.cursorSavePosition + "\n" + separateSymbol(prefix, lines.join("\n")) + Ansi.cursorRestorePosition
       }
     })
@@ -2755,7 +2739,7 @@ const renderChoiceDescription = <A>(
     const text = theme.descriptionSeparator + choice.description
     return renderOptions?.plain === true
       ? text
-      : Ansi.annotate(theme.colors, text, theme.mutedColor)
+      : Ansi.annotate(text, theme.mutedColor)
   }
   return ""
 }
@@ -2771,7 +2755,7 @@ const renderMultiSelectTitle = (
   if (renderOptions?.plain === true || !isHighlighted) {
     return title
   }
-  return Ansi.annotate(theme.colors, title, Ansi.combine(Ansi.underlined, theme.primaryColor))
+  return Ansi.annotate(title, Ansi.combine(Ansi.underlined, theme.primaryColor))
 }
 
 const renderMultiSelectChoices = <A>(
@@ -2817,7 +2801,7 @@ const renderMultiSelectChoices = <A>(
       const isSelected = state.selectedIndices.has(choiceIndex)
       const checkbox = isSelected ? figures.checkboxOn : figures.checkboxOff
       const annotatedCheckbox = isHighlighted && renderOptions?.plain !== true
-        ? Ansi.annotate(figures.colors, checkbox, figures.primaryColor)
+        ? Ansi.annotate(checkbox, figures.primaryColor)
         : checkbox
       const selectChoice = choice as SelectChoice<A>
       const title = renderChoiceTitle(selectChoice, isHighlighted, figures, renderOptions)
@@ -2837,9 +2821,9 @@ const renderMultiSelectNextFrame = Effect.fnUntraced(
   function*<A>(state: MultiSelectState, options: SelectOptionsReq<A>) {
     const figures = yield* getTheme(options)
     const choices = renderMultiSelectChoices(state, options, figures)
-    const leadingSymbol = annotateSymbol(figures, figures.prefix, figures.primaryColor)
-    const trailingSymbol = annotateSymbol(figures, figures.pointerSmall, figures.mutedColor)
-    const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options, figures)
+    const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
+    const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
+    const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options)
     const error = renderMultiSelectError(state, figures.pointer, figures)
     return Ansi.cursorHide + withSelectHeader(promptMsg, choices) + error
   }
@@ -2852,10 +2836,10 @@ const renderMultiSelectSubmission = Effect.fnUntraced(
       options.choices[index].title
     )
     const selectedText = selectedChoices.join(", ")
-    const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-    const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
-    const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options, figures) ?? leadingSymbol
-    return promptMsg + " " + Ansi.annotate(figures.colors, selectedText, figures.submittedColor) + "\n"
+    const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+    const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
+    const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options) ?? leadingSymbol
+    return promptMsg + " " + Ansi.annotate(selectedText, figures.submittedColor) + "\n"
   }
 )
 
@@ -2913,7 +2897,7 @@ const handleMultiSelectClear = <A>(options: SelectOptionsReq<A>) =>
     const columns = yield* terminal.columns
     const figures = yield* getTheme(options)
     const clearPrompt = Ansi.eraseLine + Ansi.cursorLeft
-    const promptText = renderSelectOutput(figures.prefix, figures.pointerSmall, options, figures, { plain: true })
+    const promptText = renderSelectOutput(figures.prefix, figures.pointerSmall, options, { plain: true })
     const choicesText = renderMultiSelectChoices(state, options, figures, { plain: true })
     const errorText = renderMultiSelectError(state, figures.pointer, figures, { plain: true })
     const clearOutput = clearOutputWithError(withSelectHeader(promptText, choicesText), columns, errorText)
@@ -3007,7 +2991,7 @@ const renderNumberInput = (
   const annotation = Option.isSome(state.error) ?
     theme.errorColor :
     Ansi.combine(Ansi.underlined, theme.primaryColor)
-  return Ansi.annotate(theme.colors, value, annotation)
+  return Ansi.annotate(value, annotation)
 }
 
 const renderNumberError = (
@@ -3023,8 +3007,8 @@ const renderNumberError = (
         if (renderOptions?.plain === true) {
           return separateSymbol(pointer, errorLines.join("\n"))
         }
-        const prefix = annotateSymbol(theme, pointer, theme.errorColor)
-        const lines = Arr.map(errorLines, (str) => annotateErrorLine(theme, str))
+        const prefix = annotateSymbol(pointer, theme.errorColor)
+        const lines = Arr.map(errorLines, (str) => annotateErrorLine(str, theme.errorColor))
         return Ansi.cursorSavePosition + "\n" + separateSymbol(prefix, lines.join("\n")) + Ansi.cursorRestorePosition
       }
     })
@@ -3042,13 +3026,13 @@ const renderNumberOutput = (
   submitted: boolean = false
 ) => {
   const value = renderNumberInput(state, submitted, theme, renderOptions)
-  return renderPrompt(value, options.message, leadingSymbol, trailingSymbol, theme, renderOptions)
+  return renderPrompt(value, options.message, leadingSymbol, trailingSymbol, renderOptions)
 }
 
 const renderNumberNextFrame = Effect.fnUntraced(function*(state: NumberState, options: IntOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.prefix, figures.primaryColor)
-  const trailingSymbol = annotateSymbol(figures, figures.pointerSmall, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
+  const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
   const errorMsg = renderNumberError(state, figures.pointerSmall, figures)
   const promptMsg = renderNumberOutput(state, leadingSymbol, trailingSymbol, options, figures)
   return promptMsg + errorMsg
@@ -3056,8 +3040,8 @@ const renderNumberNextFrame = Effect.fnUntraced(function*(state: NumberState, op
 
 const renderNumberSubmission = Effect.fnUntraced(function*(nextState: NumberState, options: IntOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-  const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+  const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
   const promptMsg = renderNumberOutput(nextState, leadingSymbol, trailingSymbol, options, figures, undefined, true)
   return promptMsg + "\n"
 })
@@ -3315,12 +3299,11 @@ const renderSelectOutput = <A>(
   leadingSymbol: string,
   trailingSymbol: string,
   options: SelectOptionsReq<A>,
-  theme: Theme,
   renderOptions?: RenderOptions | undefined
 ): string | undefined =>
   options.message === undefined
     ? undefined
-    : renderPrompt("", options.message, leadingSymbol, trailingSymbol, theme, renderOptions)
+    : renderPrompt("", options.message, leadingSymbol, trailingSymbol, renderOptions)
 
 const withSelectHeader = (header: string | undefined, body: string): string =>
   header === undefined ? body : header + "\n" + body
@@ -3334,10 +3317,10 @@ const renderAutoCompleteFilter = <A>(
   const filterValue = state.query.length === 0
     ? renderOptions?.plain === true
       ? options.filterPlaceholder
-      : Ansi.annotate(theme.colors, options.filterPlaceholder, theme.mutedColor)
+      : Ansi.annotate(options.filterPlaceholder, theme.mutedColor)
     : renderOptions?.plain === true
     ? state.query
-    : Ansi.annotate(theme.colors, state.query, Ansi.combine(Ansi.underlined, theme.primaryColor))
+    : Ansi.annotate(state.query, Ansi.combine(Ansi.underlined, theme.primaryColor))
   return `[${options.filterLabel}: ${filterValue}]`
 }
 
@@ -3350,7 +3333,7 @@ const renderAutoCompleteOutput = <A>(
   renderOptions?: RenderOptions | undefined
 ) => {
   const filter = renderAutoCompleteFilter(state, options, theme, renderOptions)
-  return renderPrompt(filter, options.message, leadingSymbol, trailingSymbol, theme, renderOptions)
+  return renderPrompt(filter, options.message, leadingSymbol, trailingSymbol, renderOptions)
 }
 
 const renderChoicePrefix = <A>(
@@ -3374,11 +3357,11 @@ const renderChoicePrefix = <A>(
   if (choices[currentIndex].disabled) {
     const annotation = Ansi.combine(Ansi.bold, figures.mutedColor)
     return state === currentIndex
-      ? annotateSymbol(figures, figures.pointer, annotation) + prefix
+      ? annotateSymbol(figures.pointer, annotation) + prefix
       : prefix + " ".repeat(figures.pointer.length)
   }
   return state === currentIndex
-    ? annotateSymbol(figures, figures.pointer, figures.primaryColor) + prefix
+    ? annotateSymbol(figures.pointer, figures.primaryColor) + prefix
     : prefix + " ".repeat(figures.pointer.length)
 }
 
@@ -3405,11 +3388,11 @@ const renderAutoCompleteChoicePrefix = <A>(
   if (choice.disabled) {
     const annotation = Ansi.combine(Ansi.bold, figures.mutedColor)
     return state.index === choiceIndex
-      ? annotateSymbol(figures, figures.pointer, annotation) + prefix
+      ? annotateSymbol(figures.pointer, annotation) + prefix
       : prefix + " ".repeat(figures.pointer.length)
   }
   return state.index === choiceIndex
-    ? annotateSymbol(figures, figures.pointer, figures.primaryColor) + prefix
+    ? annotateSymbol(figures.pointer, figures.primaryColor) + prefix
     : prefix + " ".repeat(figures.pointer.length)
 }
 
@@ -3425,11 +3408,11 @@ const renderChoiceTitle = <A>(
   const title = choice.title
   if (isSelected) {
     return choice.disabled
-      ? Ansi.annotate(theme.colors, title, Ansi.combine(Ansi.underlined, theme.mutedColor))
-      : Ansi.annotate(theme.colors, title, Ansi.combine(Ansi.underlined, theme.primaryColor))
+      ? Ansi.annotate(title, Ansi.combine(Ansi.underlined, theme.mutedColor))
+      : Ansi.annotate(title, Ansi.combine(Ansi.underlined, theme.primaryColor))
   }
   return choice.disabled
-    ? Ansi.annotate(theme.colors, title, Ansi.combine(Ansi.strikethrough, theme.mutedColor))
+    ? Ansi.annotate(title, Ansi.combine(Ansi.strikethrough, theme.mutedColor))
     : title
 }
 
@@ -3462,7 +3445,7 @@ const renderAutoCompleteChoices = <A>(
   if (state.filtered.length === 0) {
     return renderOptions?.plain === true
       ? options.emptyMessage
-      : Ansi.annotate(figures.colors, options.emptyMessage, figures.mutedColor)
+      : Ansi.annotate(options.emptyMessage, figures.mutedColor)
   }
   const cursor = autoCompleteCursor(state)
   const toDisplay = entriesToDisplay(cursor, state.filtered.length, options.maxPerPage)
@@ -3482,9 +3465,9 @@ const renderAutoCompleteChoices = <A>(
 const renderSelectNextFrame = Effect.fnUntraced(function*<A>(state: SelectState, options: SelectOptionsReq<A>) {
   const figures = yield* getTheme(options)
   const choices = renderSelectChoices(state, options, figures)
-  const leadingSymbol = annotateSymbol(figures, figures.prefix, figures.primaryColor)
-  const trailingSymbol = annotateSymbol(figures, figures.pointerSmall, figures.mutedColor)
-  const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options, figures)
+  const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
+  const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
+  const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options)
   return Ansi.cursorHide + withSelectHeader(promptMsg, choices)
 })
 
@@ -3494,8 +3477,8 @@ const renderAutoCompleteNextFrame = Effect.fnUntraced(function*<A>(
 ) {
   const figures = yield* getTheme(options)
   const choices = renderAutoCompleteChoices(state, options, figures)
-  const leadingSymbol = annotateSymbol(figures, figures.prefix, figures.primaryColor)
-  const trailingSymbol = annotateSymbol(figures, figures.pointerSmall, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
+  const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
   const promptMsg = renderAutoCompleteOutput(state, leadingSymbol, trailingSymbol, options, figures)
   return Ansi.cursorHide + promptMsg + "\n" + choices
 })
@@ -3503,10 +3486,10 @@ const renderAutoCompleteNextFrame = Effect.fnUntraced(function*<A>(
 const renderSelectSubmission = Effect.fnUntraced(function*<A>(state: SelectState, options: SelectOptionsReq<A>) {
   const figures = yield* getTheme(options)
   const selected = options.choices[state].title
-  const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-  const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
-  const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options, figures) ?? leadingSymbol
-  return promptMsg + " " + Ansi.annotate(figures.colors, selected, figures.submittedColor) + "\n"
+  const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+  const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
+  const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options) ?? leadingSymbol
+  return promptMsg + " " + Ansi.annotate(selected, figures.submittedColor) + "\n"
 })
 
 const renderAutoCompleteSubmission = Effect.fnUntraced(function*<A>(
@@ -3515,10 +3498,10 @@ const renderAutoCompleteSubmission = Effect.fnUntraced(function*<A>(
 ) {
   const figures = yield* getTheme(options)
   const selected = options.choices[state.index].title
-  const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-  const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+  const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
   const promptMsg = renderAutoCompleteOutput(state, leadingSymbol, trailingSymbol, options, figures)
-  return promptMsg + " " + Ansi.annotate(figures.colors, selected, figures.submittedColor) + "\n"
+  return promptMsg + " " + Ansi.annotate(selected, figures.submittedColor) + "\n"
 })
 
 const processSelectCursorUp = <A>(state: SelectState, choices: SelectOptionsReq<A>["choices"]) => {
@@ -3604,7 +3587,7 @@ const handleSelectClear = <A>(options: SelectOptionsReq<A>) =>
     const columns = yield* terminal.columns
     const figures = yield* getTheme(options)
     const clearPrompt = Ansi.eraseLine + Ansi.cursorLeft
-    const promptText = renderSelectOutput(figures.prefix, figures.pointerSmall, options, figures, { plain: true })
+    const promptText = renderSelectOutput(figures.prefix, figures.pointerSmall, options, { plain: true })
     const choicesText = renderSelectChoices(state, options, figures, { plain: true })
     const clearOutput = eraseText(withSelectHeader(promptText, choicesText), columns)
     return clearOutput + clearPrompt
@@ -3776,10 +3759,10 @@ const renderTextInput = (
       return ""
     }
     case "password": {
-      return annotateSymbol(theme, theme.passwordMask.repeat(text.length), annotation)
+      return annotateSymbol(theme.passwordMask.repeat(text.length), annotation)
     }
     case "text": {
-      return Ansi.annotate(theme.colors, text, annotation)
+      return Ansi.annotate(text, annotation)
     }
   }
 }
@@ -3797,8 +3780,8 @@ const renderTextError = (
         if (renderOptions?.plain === true) {
           return separateSymbol(pointer, errorLines.join("\n"))
         }
-        const prefix = annotateSymbol(theme, pointer, theme.errorColor)
-        const lines = Arr.map(errorLines, (str) => annotateErrorLine(theme, str))
+        const prefix = annotateSymbol(pointer, theme.errorColor)
+        const lines = Arr.map(errorLines, (str) => annotateErrorLine(str, theme.errorColor))
         return Ansi.cursorSavePosition + "\n" + separateSymbol(prefix, lines.join("\n")) + Ansi.cursorRestorePosition
       }
     })
@@ -3816,13 +3799,13 @@ const renderTextOutput = (
   submitted: boolean = false
 ) => {
   const value = renderTextInput(nextState, options, theme, submitted, renderOptions)
-  return renderPrompt(value, options.message, leadingSymbol, trailingSymbol, theme, renderOptions)
+  return renderPrompt(value, options.message, leadingSymbol, trailingSymbol, renderOptions)
 }
 
 const renderTextNextFrame = Effect.fnUntraced(function*(state: TextState, options: TextOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.prefix, figures.primaryColor)
-  const trailingSymbol = annotateSymbol(figures, figures.pointerSmall, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
+  const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
   const promptMsg = renderTextOutput(state, leadingSymbol, trailingSymbol, options, figures)
   const errorMsg = renderTextError(state, figures.pointerSmall, figures)
   const cursorWidth = options.type === "password" ? figures.passwordMask.length : 1
@@ -3832,8 +3815,8 @@ const renderTextNextFrame = Effect.fnUntraced(function*(state: TextState, option
 
 const renderTextSubmission = Effect.fnUntraced(function*(state: TextState, options: TextOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-  const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+  const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
   const promptMsg = renderTextOutput(state, leadingSymbol, trailingSymbol, options, figures, undefined, true)
   return promptMsg + "\n"
 })
@@ -4026,9 +4009,7 @@ const handleToggleClear = Effect.fnUntraced(function*(options: ToggleOptionsReq)
   const figures = yield* getTheme(options)
   const clearPrompt = Ansi.eraseLine + Ansi.cursorLeft
   const toggleText = options.active + " " + separateSymbol(figures.toggleSeparator, options.inactive)
-  const promptText = renderPrompt(toggleText, options.message, figures.prefix, figures.pointerSmall, figures, {
-    plain: true
-  })
+  const promptText = renderPrompt(toggleText, options.message, figures.prefix, figures.pointerSmall, { plain: true })
   const clearOutput = eraseText(promptText, columns)
   return clearOutput + clearPrompt
 })
@@ -4039,35 +4020,44 @@ const renderToggle = (
   theme: Theme,
   submitted: boolean = false
 ) => {
-  const separator = annotateSymbol(theme, theme.toggleSeparator, theme.mutedColor)
+  const separator = annotateSymbol(theme.toggleSeparator, theme.mutedColor)
   const selectedAnnotation = Ansi.combine(
     Ansi.underlined,
     submitted ? theme.submittedColor : theme.primaryColor
   )
   const inactive = value
     ? options.inactive
-    : Ansi.annotate(theme.colors, options.inactive, selectedAnnotation)
+    : Ansi.annotate(options.inactive, selectedAnnotation)
   const active = value
-    ? Ansi.annotate(theme.colors, options.active, selectedAnnotation)
+    ? Ansi.annotate(options.active, selectedAnnotation)
     : options.active
   return active + " " + separateSymbol(separator, inactive)
 }
 
+const renderToggleOutput = (
+  toggle: string,
+  leadingSymbol: string,
+  trailingSymbol: string,
+  options: ToggleOptionsReq
+) => {
+  return renderPrompt(toggle, options.message, leadingSymbol, trailingSymbol)
+}
+
 const renderToggleNextFrame = Effect.fnUntraced(function*(state: ToggleState, options: ToggleOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.prefix, figures.primaryColor)
-  const trailingSymbol = annotateSymbol(figures, figures.pointerSmall, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
+  const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
   const toggle = renderToggle(state, options, figures)
-  const promptMsg = renderPrompt(toggle, options.message, leadingSymbol, trailingSymbol, figures)
+  const promptMsg = renderToggleOutput(toggle, leadingSymbol, trailingSymbol, options)
   return Ansi.cursorHide + promptMsg
 })
 
 const renderToggleSubmission = Effect.fnUntraced(function*(value: boolean, options: ToggleOptionsReq) {
   const figures = yield* getTheme(options)
-  const leadingSymbol = annotateSymbol(figures, figures.tick, figures.successColor)
-  const trailingSymbol = annotateSymbol(figures, figures.ellipsis, figures.mutedColor)
+  const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
+  const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
   const toggle = renderToggle(value, options, figures, true)
-  const promptMsg = renderPrompt(toggle, options.message, leadingSymbol, trailingSymbol, figures)
+  const promptMsg = renderToggleOutput(toggle, leadingSymbol, trailingSymbol, options)
   return promptMsg + "\n"
 })
 

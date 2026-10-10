@@ -440,9 +440,6 @@ importers:
       effect:
         specifier: workspace:^
         version: link:../../effect
-      tinybench:
-        specifier: ^6.2.0
-        version: 6.2.0
 
   packages/platform/deno:
     dependencies:
@@ -477,9 +474,6 @@ importers:
       effect:
         specifier: workspace:^
         version: link:../../effect
-      tinybench:
-        specifier: ^6.2.0
-        version: 6.2.0
 
   packages/platform/node:
     dependencies:
@@ -527,9 +521,6 @@ importers:
       tar:
         specifier: ^7.5.22
         version: 7.5.22
-      testcontainers:
-        specifier: ^12.2.0
-        version: 12.2.0(supports-color@10.2.2)
       tinybench:
         specifier: ^6.2.0
         version: 6.2.0

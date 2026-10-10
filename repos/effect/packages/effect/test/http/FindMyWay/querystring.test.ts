@@ -36,11 +36,3 @@ it("handles %", () => {
     "%": ""
   })
 })
-
-it("normalizes duplicate path slashes without changing query slashes", () => {
-  const router = Router.make<boolean>()
-  router.on("GET", "/user/:id", true)
-  const result = router.find("GET", "//user//1?u=https://x.com/y")
-  assert.deepStrictEqual(result?.params, { id: "1" })
-  assert.deepStrictEqual(result?.searchParams, { u: "https://x.com/y" })
-})

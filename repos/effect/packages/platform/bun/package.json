@@ -1,7 +1,7 @@
 {
   "name": "@effect/platform-bun",
   "type": "module",
-  "version": "4.0.3",
+  "version": "4.0.2",
   "license": "MIT",
   "description": "Platform specific implementations for the Bun runtime",
   "homepage": "https://effect.website",
@@ -60,8 +60,7 @@
     "codegen": "effect-utils codegen",
     "build": "tsc -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
-    "check": "tsc -b tsconfig.json",
-    "benchmark:datagram": "bun benchmark/DatagramSocket.ts"
+    "check": "tsc -b tsconfig.json"
   },
   "peerDependencies": {
     "effect": "workspace:^"
@@ -71,7 +70,6 @@
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
-    "effect": "workspace:^",
-    "tinybench": "^6.2.0"
+    "effect": "workspace:^"
   }
 }

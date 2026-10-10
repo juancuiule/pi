@@ -94,7 +94,6 @@ type CompletionContext = typeof Complete.payloadSchema.Type["context"]
 
 interface QueuedServerNotification {
   readonly notification: McpCore.ServerNotification
-  listChangeRevision?: number | undefined
   readonly targetClientId?: number | undefined
   readonly delivered: Deferred.Deferred<void>
   readonly requestContext?: McpRequestContext["Service"] | undefined
@@ -104,7 +103,7 @@ interface QueuedServerNotification {
 const internalState = new WeakMap<object, {
   readonly core: McpCore.McpCore
   readonly notifications: Queue.Dequeue<QueuedServerNotification>
-  readonly notificationDelivery: { consumers: number; listChangeRevision: number }
+  readonly notificationDelivery: { consumers: number }
 }>()
 type ServerExtensions = NonNullable<ServerCapabilities["extensions"]>
 type ServerNotificationRequest<
@@ -322,8 +321,8 @@ export class McpServer extends Context.Service<McpServer, {
       readonly annotations: Context.Context<never>
     }> = []
     const notificationsQueue = yield* Queue.make<QueuedServerNotification>()
-    const notificationDelivery = { consumers: 0, listChangeRevision: 0 }
-    const pendingListChanges = new Map<string, QueuedServerNotification>()
+    const notificationDelivery = { consumers: 0 }
+    const pendingListChanges = new Set<string>()
     const dispatcher = (yield* Scheduler).makeDispatcher()
     const notifications = yield* RpcClient.makeNoSerialization(BroadcastServerNotificationRpcs, {
       spanPrefix: "McpServer/Notifications",
@@ -338,7 +337,7 @@ export class McpServer extends Context.Service<McpServer, {
             if (notification === undefined) {
               return Effect.void
             }
-            const queued: QueuedServerNotification = {
+            const queued = {
               notification,
               delivered,
               requestContext: Context.getOrUndefined(fiber.context, McpRequestContext),
@@ -346,19 +345,14 @@ export class McpServer extends Context.Service<McpServer, {
             }
             let enqueued = false
             if (message.tag.includes("list_changed")) {
-              const revision = ++notificationDelivery.listChangeRevision
-              const pending = pendingListChanges.get(message.tag)
-              if (pending !== undefined) {
-                // A coalesced change may be newer than an intervening subscription.
-                pending.listChangeRevision = revision
-              } else {
-                queued.listChangeRevision = revision
+              if (!pendingListChanges.has(message.tag)) {
                 enqueued = true
-                pendingListChanges.set(message.tag, queued)
+                const tag = message.tag
                 dispatcher.scheduleTask(() => {
-                  pendingListChanges.delete(message.tag)
                   Queue.offerUnsafe(notificationsQueue, queued)
+                  pendingListChanges.delete(message.tag)
                 }, 0)
+                pendingListChanges.add(tag)
               }
             } else {
               enqueued = true
@@ -657,14 +651,12 @@ const MCP_SESSION_ID_HEADER = "mcp-session-id"
 const MCP_PROTOCOL_VERSION_HEADER = "mcp-protocol-version"
 const MCP_INVALID_BATCH_METHOD = "invalid/json-rpc-batch"
 const cancelledResponses = new WeakMap<object, string | number>()
-const httpPostResponses = new WeakMap<HttpServerRequest.HttpServerRequest, { expected: number }>()
 const requestKey = (requestId: string | number): string => `${typeof requestId}:${requestId}`
 
 interface ActiveRequest {
   readonly requestId: RpcMessage.RequestId
   readonly prepared: McpRuntime.PreparedRequest
   readonly cancelled: boolean
-  readonly httpPost: { expected: number } | undefined
 }
 
 class McpClientKey extends Data.Class<{
@@ -724,7 +716,6 @@ const runWithRuntime = Effect.fnUntraced(function*(
     readonly websiteUrl?: string | undefined
     readonly icons?: ReadonlyArray<McpSchema.Icon> | undefined
     readonly extensions?: ServerExtensions | undefined
-    readonly allowSubscriptions?: boolean | undefined
   },
   runtime: McpRuntime.ServerRuntimeShape,
   transport: "custom" | "http" | "stdio"
@@ -816,12 +807,10 @@ const runWithRuntime = Effect.fnUntraced(function*(
         })
     })
   let writeFromClient!: (clientId: number, message: RpcMessage.FromClientEncoded) => Effect.Effect<void>
-  const { core, notificationDelivery, notifications } = internalState.get(server)!
   const handlers = yield* runtime.installHandlers({
-    core,
+    core: internalState.get(server)!.core,
     subscribeServerNotifications: PubSub.subscribe(serverNotifications),
-    getListChangeRevision: () => notificationDelivery.listChangeRevision,
-    ...(!protocol.supportsNotifications || options.allowSubscriptions === false ? {} : {
+    ...(!protocol.supportsNotifications ? {} : {
       sendNotification,
       markSubscriptionCancelled: (clientId: number, requestId: RpcMessage.RequestId) =>
         Effect.sync(() => {
@@ -859,13 +848,10 @@ const runWithRuntime = Effect.fnUntraced(function*(
             if (request._tag === "Interrupt") {
               // A cancelled reverse request may never receive a reply.
               removeReverseRequestClient(requestKey(request.requestId), key)
-              return sendNotification(key.profile.protocolVersion, key.clientId, {
-                tag: "notifications/cancelled",
-                payload: { requestId: request.requestId }
-              })
             }
-            // Effect RPC control messages are not part of the MCP protocol.
-            return Effect.void
+            // Ack & co are not part of FromServerEncoded, but the JSON-RPC
+            // serializer encodes them symmetrically for reverse control flow
+            return protocol.send(key.clientId, request as any)
           },
           supportsAck: true,
           supportsTransferables: false,
@@ -964,13 +950,12 @@ const runWithRuntime = Effect.fnUntraced(function*(
       if (response._tag === "Exit") {
         const requests = activeRequests.get(clientId)
         const key = requestKey(response.requestId)
-        const active = requests?.get(key)
+        const cancelled = requests?.get(key)?.cancelled
         if (requests !== undefined && requests.delete(key) && requests.size === 0) {
           activeRequests.delete(clientId)
         }
-        if (active?.cancelled === true) {
+        if (cancelled === true) {
           if (transport === "custom") return Effect.void
-          if (active.httpPost !== undefined) active.httpPost.expected--
           cancelledResponses.set(response, response.requestId)
           return protocol.send(clientId, response)
         }
@@ -1018,11 +1003,6 @@ const runWithRuntime = Effect.fnUntraced(function*(
         }
         switch (request._tag) {
           case "Request": {
-            if (httpRequest !== undefined && request.isNotification !== true) {
-              const httpPost = httpPostResponses.get(httpRequest) ?? { expected: 0 }
-              httpPost.expected++
-              httpPostResponses.set(httpRequest, httpPost)
-            }
             const headers = isHttp
               ? Context.getUnsafe(
                 Fiber.getCurrent()!.context,
@@ -1158,8 +1138,7 @@ const runWithRuntime = Effect.fnUntraced(function*(
                 requests.set(requestKey(request.id), {
                   requestId: RpcMessage.RequestId(request.id),
                   prepared,
-                  cancelled: false,
-                  httpPost: httpRequest === undefined ? undefined : httpPostResponses.get(httpRequest)
+                  cancelled: false
                 })
                 activeRequests.set(clientId, requests)
               }
@@ -1252,6 +1231,7 @@ const runWithRuntime = Effect.fnUntraced(function*(
     })
   }
 
+  const { notificationDelivery, notifications } = internalState.get(server)!
   yield* Effect.acquireRelease(
     Effect.sync(() => {
       notificationDelivery.consumers++
@@ -1264,9 +1244,9 @@ const runWithRuntime = Effect.fnUntraced(function*(
   const notificationTails = new Map<number, Deferred.Deferred<void>>()
   yield* Queue.take(notifications).pipe(
     Effect.flatMap(Effect.fnUntraced(function*(queued) {
-      const { delivered, listChangeRevision, notification, targetClientId, requestContext, requestHeaders } = queued
+      const { delivered, notification, targetClientId, requestContext, requestHeaders } = queued
       if (McpProtocolInternal.isSubscriptionServerNotification(notification)) {
-        yield* PubSub.publish(serverNotifications, { notification, targetClientId, listChangeRevision })
+        yield* PubSub.publish(serverNotifications, { notification, targetClientId })
       }
       const clientIds = yield* patchedProtocol.clientIds
       for (const clientId of clientStates.keys()) {
@@ -1442,7 +1422,6 @@ const layerWithRuntime = (options: {
   readonly websiteUrl?: string | undefined
   readonly icons?: ReadonlyArray<McpSchema.Icon> | undefined
   readonly extensions?: ServerExtensions | undefined
-  readonly allowSubscriptions?: boolean | undefined
 }, transport: "custom" | "http" | "stdio"): Layer.Layer<
   McpServer | McpServerClient,
   never,
@@ -1589,11 +1568,6 @@ const mcpStdioSerialization = (
  * holding a session id can end that session, so authenticate requests in the
  * surrounding router.
  *
- * Set `allowSubscriptions: false` to disable `v2026_07_28` subscriptions.
- * Discovery advertises `listChanged: false`, and `subscriptions/listen` returns
- * Method not found. Request-scoped progress and logs, legacy protocols, and
- * default subscription behavior are unchanged.
- *
  * `layerHttp` always implements the single-endpoint Streamable HTTP topology.
  * Using `v2024_11_05` here is a custom compatibility transport for that
  * revision's schema. It does not implement the historical two-endpoint
@@ -1618,7 +1592,6 @@ export const layerHttp = (options: {
   readonly extensions?: ServerExtensions | undefined
   readonly allowedOrigins?: ReadonlyArray<string> | undefined
   readonly allowSessionTermination?: boolean | undefined
-  readonly allowSubscriptions?: boolean | undefined
 }): Layer.Layer<McpServer | McpServerClient, Cause.IllegalArgumentError, HttpRouter.HttpRouter> => {
   const runtime = McpRuntime.layer(options.protocols)
   return layerWithRuntime(options, "http").pipe(
@@ -1685,30 +1658,17 @@ const layerMcpProtocolHttp = (options: {
         if (admission._tag === "Rejected") {
           return admission.response
         }
-        const toResponse = (response: HttpServerResponse.HttpServerResponse) => {
+        const response = Effect.map(httpEffect, (response) => {
           // Completed responses may already contain notifications followed by the result.
           const hasMultipleMessages = response.body._tag === "Uint8Array" &&
             response.body.body.subarray(0, -1).includes(10)
           return admission.isSubscription || response.body._tag === "Stream" || hasMultipleMessages
             ? toServerSentEvents(response, admission.isSubscription)
             : response
-        }
-        if (admission.acknowledge) {
-          return yield* Effect.catchCause(
-            Effect.map(httpEffect, toResponse),
-            () => Effect.succeed(HttpServerResponse.empty({ status: 202 }))
-          )
-        }
-        return yield* Effect.flatMap(httpEffect, (response) => {
-          if (response.body._tag !== "Uint8Array" || response.body.body.length > 0) {
-            return Effect.succeed(toResponse(response))
-          }
-          // Only fully cancelled request POSTs may return an empty SSE response.
-          // https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#sending-messages-to-the-server
-          return httpPostResponses.get(request)?.expected === 0
-            ? Effect.succeed(HttpServerResponse.stream(Stream.empty, { contentType: "text/event-stream" }))
-            : Effect.die(new Error("MCP request ended without writing its response"))
         })
+        return yield* admission.acknowledge
+          ? Effect.catchCause(response, () => Effect.succeed(HttpServerResponse.empty({ status: 202 })))
+          : response
       })
     })
     return protocol

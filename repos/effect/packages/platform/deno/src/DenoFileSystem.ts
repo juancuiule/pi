@@ -182,18 +182,13 @@ const makeFileInfo = (info: Deno.FileInfo): FileSystem.File.Info => ({
   blocks: Option.fromNullishOr(info.blocks)
 })
 
-/**
- * Deno lacks positional reads, so `native` serializes seek + I/O. Cancelled
- * entries are skipped; started I/O holds the queue until it settles, even
- * after interruption. Cursor operations must not run concurrently.
- */
+/** A file handle is stateful and must not be used concurrently. */
 class FileImpl implements FileSystem.File {
   readonly [FileSystem.FileTypeId]: typeof FileSystem.FileTypeId = FileSystem.FileTypeId
   private readonly file: Deno.FsFile
   private readonly append: boolean
   private position = BigInt(0)
   private nativePosition: bigint | undefined = undefined
-  private nativeQueue: Promise<unknown> = Promise.resolve()
 
   constructor(
     file: Deno.FsFile,
@@ -229,59 +224,41 @@ class FileImpl implements FileSystem.File {
     })
   }
 
-  private native<A>(signal: AbortSignal, evaluate: () => Promise<A>): Promise<A> {
-    const result = this.nativeQueue.then(() => signal.aborted ? Promise.reject(signal.reason) : evaluate())
-    this.nativeQueue = result.catch(() => undefined)
-    return result
-  }
-
-  private readChunk(method: string, buffer: Uint8Array, explicit: bigint | undefined) {
+  private readChunk(method: string, buffer: Uint8Array) {
     return Effect.suspend(() => {
-      if (explicit !== undefined && explicit < BigInt(0)) {
-        return Effect.fail(PlatformError.badArgument({
-          module: "FileSystem",
-          method,
-          description: "Cannot read before the start of the file"
-        }))
-      }
-      const position = explicit ?? this.position
+      const position = this.position
       return Effect.map(
         tryPromise(
           method,
           undefined,
-          (signal) =>
-            this.native(signal, async () => {
-              if (this.nativePosition !== position) {
-                this.file.seekSync(position, Deno.SeekMode.Start)
-              }
-              this.nativePosition = undefined
-              const bytesRead = (await this.file.read(buffer)) ?? 0
-              this.nativePosition = position + BigInt(bytesRead)
-              return bytesRead
-            })
+          async () => {
+            if (this.nativePosition !== position) {
+              this.file.seekSync(position, Deno.SeekMode.Start)
+            }
+            this.nativePosition = undefined
+            return await this.file.read(buffer)
+          }
         ),
         (bytesRead) => {
-          if (explicit === undefined) {
-            this.position = position + BigInt(bytesRead)
-          }
-          return bytesRead
+          this.position = this.nativePosition = position + BigInt(bytesRead ?? 0)
+          return bytesRead ?? 0
         }
       )
     })
   }
 
-  read(buffer: Uint8Array, options?: FileSystem.File.ReadOptions) {
-    return this.readChunk("read", buffer, options?.position)
+  read(buffer: Uint8Array) {
+    return this.readChunk("read", buffer)
   }
 
-  readAlloc(size: number, options?: FileSystem.File.ReadOptions) {
+  readAlloc(size: number) {
     return Effect.suspend(() => {
       try {
         if (!Number.isInteger(size) || size < 0) {
           throw new RangeError("size must be a non-negative integer")
         }
         const buffer = new Uint8Array(size)
-        return Effect.map(this.readChunk("readAlloc", buffer, options?.position), (bytesRead) => {
+        return Effect.map(this.readChunk("readAlloc", buffer), (bytesRead) => {
           if (bytesRead === 0) {
             return Option.none()
           }
@@ -317,22 +294,19 @@ class FileImpl implements FileSystem.File {
         tryPromise(
           method,
           undefined,
-          (signal) =>
-            this.native(signal, async () => {
-              if (!this.append && this.nativePosition !== position) {
-                this.file.seekSync(position, Deno.SeekMode.Start)
-              }
-              this.nativePosition = undefined
-              const bytesWritten = await this.file.write(buffer)
-              if (!this.append) {
-                this.nativePosition = position + BigInt(bytesWritten)
-              }
-              return bytesWritten
-            })
+          async () => {
+            if (!this.append && this.nativePosition !== position) {
+              this.file.seekSync(position, Deno.SeekMode.Start)
+            }
+            this.nativePosition = undefined
+            return await this.file.write(buffer)
+          }
         ),
         (bytesWritten) => {
-          if (!this.append) {
-            this.position = position + BigInt(bytesWritten)
+          if (this.append) {
+            this.nativePosition = undefined
+          } else {
+            this.position = this.nativePosition = position + BigInt(bytesWritten)
           }
           return bytesWritten
         }
@@ -366,13 +340,6 @@ class FileImpl implements FileSystem.File {
 }
 
 const open: FileSystem.FileSystem["open"] = (path, options) => {
-  if (options?.noFollow === true) {
-    return Effect.fail(PlatformError.badArgument({
-      module: "FileSystem",
-      method: "open",
-      description: "noFollow is not supported by Deno"
-    }))
-  }
   const append = options?.flag?.startsWith("a") ?? false
   return Effect.map(
     Effect.acquireRelease(

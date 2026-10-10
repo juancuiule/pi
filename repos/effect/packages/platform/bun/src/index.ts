@@ -6,12 +6,6 @@
 // @barrel: Auto-generated exports. Do not edit manually.
 
 /**
- * @stability experimental
- * @since 4.0.0
- */
-export * as BunAddressResolver from "./BunAddressResolver.ts"
-
-/**
  * @stability unstable
  * @since 4.0.0
  */
@@ -34,18 +28,6 @@ export * as BunClusterSocket from "./BunClusterSocket.ts"
  * @since 1.0.0
  */
 export * as BunCrypto from "./BunCrypto.ts"
-
-/**
- * @stability experimental
- * @since 4.0.0
- */
-export * as BunDatagramSocket from "./BunDatagramSocket.ts"
-
-/**
- * @stability experimental
- * @since 4.0.0
- */
-export * as BunDns from "./BunDns.ts"
 
 /**
  * @stability unstable
