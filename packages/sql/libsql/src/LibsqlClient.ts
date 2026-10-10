@@ -335,16 +335,10 @@ export const make = (
       rollbackSavepoint: (conn, id) => conn.executeRaw(`ROLLBACK TO SAVEPOINT effect_sql_${id};`, [])
     })
 
-    // Outside a transaction, hold the permit until the statement's scope
-    // closes, so no other fiber can begin a transaction while it runs.
-    const lease = Effect.as(
-      Effect.acquireRelease(semaphore.take(1), () => semaphore.release(1), { interruptible: true }),
-      connection as LibsqlConnection
-    )
     const acquirer = Effect.flatMap(
       Effect.serviceOption(LibsqlTransaction),
       Option.match({
-        onNone: () => lease,
+        onNone: () => semaphore.withPermits(1)(Effect.succeed(connection as LibsqlConnection)),
         onSome: ([conn]) => Effect.succeed(conn)
       })
     )

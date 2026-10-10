@@ -432,8 +432,9 @@ export class OtelSpan implements Tracer.Span {
     this.links = options.links
     this.kind = options.kind
     const active = contextApi.active()
-    const fromActive = options.root !== true && Option.isNone(options.parent)
-    this.parent = fromActive ? getOtelParent(traceApi, active, options.annotations) : options.parent
+    this.parent = options.root !== true
+      ? Option.orElse(options.parent, () => getOtelParent(traceApi, active, options.annotations))
+      : options.parent
     this.span = tracer.startSpan(
       options.name,
       {
@@ -446,12 +447,9 @@ export class OtelSpan implements Tracer.Span {
           : undefined as any,
         kind: kindMap[this.kind]
       },
-      Option.isNone(this.parent) ?
-        Otel.trace.deleteSpan(active) :
-        // Keep the active span object: some SDKs, such as Sentry, record children on it.
-        fromActive && !overridesTraceContext(options.annotations) ?
-        active :
-        populateContext(active, this.parent.value, options.annotations)
+      Option.isSome(this.parent) ?
+        populateContext(active, this.parent.value, options.annotations) :
+        Otel.trace.deleteSpan(active)
     )
     const spanContext = this.span.spanContext()
     this.spanId = spanContext.spanId
@@ -548,10 +546,6 @@ const getOtelParent = (
   }))
 }
 
-const overridesTraceContext = (annotations: Context.Context<never>): boolean =>
-  Context.getOrUndefined(annotations, OtelTraceFlags) !== undefined ||
-  Context.getOrUndefined(annotations, OtelTraceState) !== undefined
-
 const makeSpanContext = (
   span: Tracer.AnySpan,
   annotations?: Context.Context<never>
@@ -561,11 +555,8 @@ const makeSpanContext = (
     if (annotations === undefined) return otelParent
     const traceFlags = extractTraceService(span, annotations, OtelTraceFlags)
     const traceState = extractTraceService(span, annotations, OtelTraceState)
-    // Read fields explicitly because object spread skips prototype getters.
     return {
-      traceId: otelParent.traceId,
-      spanId: otelParent.spanId,
-      isRemote: otelParent.isRemote!,
+      ...otelParent,
       traceFlags: traceFlags ?? otelParent.traceFlags,
       traceState: traceState ?? otelParent.traceState!
     }

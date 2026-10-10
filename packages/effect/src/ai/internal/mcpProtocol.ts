@@ -382,8 +382,6 @@ export interface HandlerInstallationContext {
     never,
     Scope.Scope
   >
-  /** Current list-change revision; subscriptions ignore changes emitted at or before it. */
-  readonly getListChangeRevision?: (() => number) | undefined
   readonly sendNotification?: (
     protocolVersion: string,
     clientId: number,
@@ -421,7 +419,6 @@ export interface HandlerInstallationContext {
  */
 export interface CanonicalServerNotification {
   readonly notification: SubscriptionServerNotification
-  readonly listChangeRevision?: number | undefined
   readonly targetClientId?: number | undefined
 }
 

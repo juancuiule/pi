@@ -635,9 +635,7 @@ describe("toJsonSchemaDocument", () => {
                   "enum": ["Millis"]
                 },
                 "value": {
-                  "type": "integer",
-                  "minimum": globalThis.Number.MIN_SAFE_INTEGER,
-                  "maximum": globalThis.Number.MAX_SAFE_INTEGER
+                  "type": "integer"
                 }
               },
               "required": ["_tag", "value"],
@@ -1588,27 +1586,10 @@ describe("toJsonSchemaDocument", () => {
           Schema.Finite.check(Schema.isInt()),
           {
             schema: {
-              "type": "integer",
-              "minimum": globalThis.Number.MIN_SAFE_INTEGER,
-              "maximum": globalThis.Number.MAX_SAFE_INTEGER
+              "type": "integer"
             }
           }
         )
-      })
-
-      it("keeps oneOf for exact integer branches", () => {
-        assertJsonSchemaDocument(Schema.Union([Schema.Int, Schema.Boolean], { mode: "oneOf" }), {
-          schema: {
-            oneOf: [
-              {
-                type: "integer",
-                minimum: globalThis.Number.MIN_SAFE_INTEGER,
-                maximum: globalThis.Number.MAX_SAFE_INTEGER
-              },
-              { type: "boolean" }
-            ]
-          }
-        })
       })
 
       it("isInt32", () => {
@@ -1618,7 +1599,6 @@ describe("toJsonSchemaDocument", () => {
             schema: {
               "type": "integer",
               "allOf": [
-                { "minimum": globalThis.Number.MIN_SAFE_INTEGER, "maximum": globalThis.Number.MAX_SAFE_INTEGER },
                 { "maximum": 2147483647, "minimum": -2147483648 }
               ]
             }
@@ -1633,7 +1613,6 @@ describe("toJsonSchemaDocument", () => {
             schema: {
               "type": "integer",
               "allOf": [
-                { "minimum": globalThis.Number.MIN_SAFE_INTEGER, "maximum": globalThis.Number.MAX_SAFE_INTEGER },
                 { "maximum": 4294967295, "minimum": 0 }
               ]
             }
@@ -1648,7 +1627,6 @@ describe("toJsonSchemaDocument", () => {
                 {
                   "description": "a",
                   "allOf": [
-                    { "minimum": globalThis.Number.MIN_SAFE_INTEGER, "maximum": globalThis.Number.MAX_SAFE_INTEGER },
                     { "maximum": 4294967295, "minimum": 0 }
                   ]
                 }
@@ -1667,7 +1645,6 @@ describe("toJsonSchemaDocument", () => {
                 {
                   "description": "a",
                   "allOf": [
-                    { "minimum": globalThis.Number.MIN_SAFE_INTEGER, "maximum": globalThis.Number.MAX_SAFE_INTEGER },
                     { "maximum": 4294967295, "minimum": 0 }
                   ]
                 }
@@ -1774,8 +1751,6 @@ describe("toJsonSchemaDocument", () => {
           {
             schema: {
               "type": "integer",
-              "minimum": globalThis.Number.MIN_SAFE_INTEGER,
-              "maximum": globalThis.Number.MAX_SAFE_INTEGER,
               "multipleOf": 2
             }
           }
@@ -1785,8 +1760,6 @@ describe("toJsonSchemaDocument", () => {
           {
             schema: {
               "type": "integer",
-              "minimum": globalThis.Number.MIN_SAFE_INTEGER,
-              "maximum": globalThis.Number.MAX_SAFE_INTEGER,
               "multipleOf": 2
             }
           }

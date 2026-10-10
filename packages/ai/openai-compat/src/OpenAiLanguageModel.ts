@@ -190,10 +190,6 @@ declare module "effect/ai/Prompt" {
        * The status to send for the tool-call item.
        */
       readonly status?: MessageStatus | null
-      /**
-       * Provider-specific extra content to echo back with the tool call.
-       */
-      readonly extraContent?: Schema.JsonObject | null
     } | null
   }
 
@@ -428,10 +424,6 @@ declare module "effect/ai/Response" {
        * The OpenAI item ID associated with the tool call.
        */
       readonly itemId?: string | null
-      /**
-       * Provider-specific extra content returned with the tool call.
-       */
-      readonly extraContent?: Schema.JsonObject | null
     } | null
   }
 
@@ -968,14 +960,12 @@ const prepareMessages = Effect.fnUntraced(
                 }
 
                 const toolName = toolNameMapper.getProviderName(part.name)
-                const extraContent = getExtraContent(part)
 
                 messages.push({
                   type: "function_call",
                   name: toolName,
                   call_id: part.id,
                   arguments: JSON.stringify(part.params),
-                  ...(Predicate.isNotNull(extraContent) ? { extra_content: extraContent } : {}),
                   ...(Predicate.isNotNull(id) ? { id } : {}),
                   ...(Predicate.isNotNull(status) ? { status } : {})
                 })
@@ -1070,7 +1060,6 @@ type ActiveToolCall = {
   readonly id: string
   name: string
   arguments: string
-  extraContent: Schema.JsonObject | undefined
 }
 
 const makeResponse = Effect.fnUntraced(
@@ -1139,12 +1128,7 @@ const makeResponse = Effect.fnUntraced(
             id: toolId,
             name: toolName,
             params,
-            metadata: {
-              openai: {
-                ...makeItemIdMetadata(toolCall.id),
-                ...makeExtraContentMetadata(toolCall.extra_content ?? undefined)
-              }
-            }
+            metadata: { openai: { ...makeItemIdMetadata(toolCall.id) } }
           })
         }
       }
@@ -1236,12 +1220,7 @@ const makeStreamResponse = Effect.fnUntraced(
               id: toolCall.id,
               name: toolCall.name,
               params,
-              metadata: {
-                openai: {
-                  ...makeItemIdMetadata(toolCall.id),
-                  ...makeExtraContentMetadata(toolCall.extraContent)
-                }
-              }
+              metadata: { openai: { ...makeItemIdMetadata(toolCall.id) } }
             })
             hasToolCalls = true
           }
@@ -1303,7 +1282,7 @@ const makeStreamResponse = Effect.fnUntraced(
           parts.push({ type: "reasoning-delta", id: reasoningId, delta: reasoningDelta })
         }
 
-        if (Predicate.isNotNullish(choice.delta?.content) && choice.delta.content.length > 0) {
+        if (choice.delta?.content !== undefined && Predicate.isNotNull(choice.delta.content)) {
           if (reasoningStarted) {
             reasoningStarted = false
             parts.push({
@@ -1340,16 +1319,12 @@ const makeStreamResponse = Effect.fnUntraced(
               activeToolCalls[toolIndex] = {
                 id: toolId,
                 name: toolName,
-                arguments: argumentsDelta,
-                extraContent: deltaTool.extra_content ?? undefined
+                arguments: argumentsDelta
               }
               parts.push({ type: "tool-params-start", id: toolId, name: toolName })
             } else {
               activeToolCall.name = toolName
               activeToolCall.arguments = `${activeToolCall.arguments}${argumentsDelta}`
-              if (Predicate.isNotNullish(deltaTool.extra_content)) {
-                activeToolCall.extraContent = deltaTool.extra_content
-              }
             }
 
             if (argumentsDelta.length > 0) {
@@ -1829,8 +1804,7 @@ const toChatToolCall = (
   function: {
     name: item.name,
     arguments: item.arguments
-  },
-  ...(item.extra_content !== undefined ? { extra_content: item.extra_content } : undefined)
+  }
 })
 
 const toAssistantChatMessageContent = (
@@ -1936,16 +1910,10 @@ const getStatus = (
 const getEncryptedContent = (
   part: Prompt.ReasoningPart
 ): string | null => part.options.openai?.encryptedContent ?? null
-const getExtraContent = (
-  part: Prompt.ToolCallPart
-): Schema.JsonObject | null => part.options.openai?.extraContent ?? null
 
 const getImageDetail = (part: Prompt.FilePart): ImageDetail => part.options.openai?.imageDetail ?? "auto"
 
 const makeItemIdMetadata = (itemId: string | undefined) => itemId !== undefined ? { itemId } : undefined
-
-const makeExtraContentMetadata = (extraContent: Schema.JsonObject | undefined) =>
-  extraContent !== undefined ? { extraContent } : undefined
 
 const normalizeServiceTier = (
   serviceTier: string | undefined

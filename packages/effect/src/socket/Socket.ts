@@ -770,18 +770,13 @@ export interface WebSocketLike {
 }
 
 /**
- * Client options for Node and Bun WebSocket implementations, allowing
- * handshake headers and subprotocols to be supplied together.
+ * Common options understood by a WebSocket client implementation.
  *
  * @stability unstable
  * @category models
  * @since 4.0.0
  */
 export interface WebSocketClientOptions {
-  /**
-   * Subprotocols to offer in the opening handshake.
-   */
-  readonly protocols?: string | Array<string> | undefined
   /**
    * Headers to include in the opening handshake.
    *
@@ -833,7 +828,6 @@ export class WebSocketConstructor extends Context.Service<
 
 /**
  * Layer that provides `WebSocketConstructor` using `globalThis.WebSocket`.
- * Rejects client options objects, including those with handshake headers.
  *
  * @stability unstable
  * @category layers
@@ -851,8 +845,6 @@ export const layerWebSocketConstructorGlobal: Layer.Layer<WebSocketConstructor> 
 /**
  * Creates a `Socket` backed by a `WebSocketConstructor`, dialing the
  * WebSocket for each reader acquisition.
- * Optional handshake headers require a Node or Bun constructor; without
- * headers, protocols are passed directly for browser compatibility.
  *
  * @stability unstable
  * @category constructors
@@ -861,21 +853,13 @@ export const layerWebSocketConstructorGlobal: Layer.Layer<WebSocketConstructor> 
 export const makeWebSocket = (url: string | Effect.Effect<string>, options?: {
   readonly openTimeout?: Duration.Input | undefined
   readonly protocols?: string | Array<string> | undefined
-  readonly headers?: Readonly<Record<string, string>> | undefined
   readonly highWaterMark?: number | undefined
 }): Effect.Effect<Socket, never, WebSocketConstructor> =>
   WebSocketConstructor.use((makeWs) =>
     fromWebSocket(
       Effect.acquireRelease(
         (typeof url === "string" ? Effect.succeed(url) : url).pipe(
-          Effect.map((url) =>
-            makeWs(
-              url,
-              options?.headers === undefined
-                ? options?.protocols
-                : { protocols: options.protocols, headers: options.headers }
-            )
-          )
+          Effect.map((url) => makeWs(url, options?.protocols))
         ),
         (ws) => Effect.sync(() => ws.close(1000))
       ),
@@ -1152,7 +1136,6 @@ const defaultHighWaterMark = 64 * 1024
 /**
  * Creates a binary `Channel` backed by a WebSocket URL, requiring a
  * `WebSocketConstructor` service.
- * Supports subprotocols and, with a Node or Bun constructor, handshake headers.
  *
  * @stability unstable
  * @category constructors
@@ -1163,7 +1146,6 @@ export const makeWebSocketChannel = <IE = never>(
   options?: {
     readonly openTimeout?: Duration.Input | undefined
     readonly protocols?: string | Array<string> | undefined
-    readonly headers?: Readonly<Record<string, string>> | undefined
     readonly highWaterMark?: number | undefined
   }
 ): Channel.Channel<
@@ -1182,7 +1164,6 @@ export const makeWebSocketChannel = <IE = never>(
 /**
  * Layer that provides a `Socket` service backed by a WebSocket URL or URL
  * effect.
- * Supports subprotocols and, with a Node or Bun constructor, handshake headers.
  *
  * @stability unstable
  * @category layers
@@ -1193,7 +1174,6 @@ export const layerWebSocket: (
   options?: {
     readonly openTimeout?: Duration.Input | undefined
     readonly protocols?: string | Array<string> | undefined
-    readonly headers?: Readonly<Record<string, string>> | undefined
     readonly highWaterMark?: number | undefined
   } | undefined
 ) => Layer.Layer<Socket, never, WebSocketConstructor> = flow(makeWebSocket, Layer.effect(Socket))
