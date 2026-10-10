@@ -7,7 +7,6 @@ import type {
 } from "@earendil-works/chord";
 import { withoutAbortSignal } from "@earendil-works/chord/context";
 import type { Op } from "@earendil-works/chord/delta";
-import { errorMessage } from "../errors.ts";
 import type { JsonObject, WatchEnd, WatchHandle } from "../types.ts";
 
 export type ObservedDocumentValue = Readonly<JsonObject> | null;
@@ -60,7 +59,6 @@ export class CommittedStateSource<T = ObservedDocumentValue> implements Replicat
 		for (const attachment of [...this.#attachments]) attachment.publish(frame);
 	}
 
-	/** Stop publishing; the attached states keep their last value. A failure ends them the same way. */
 	closeSession(): void {
 		if (this.#closed) return;
 		for (const attachment of [...this.#attachments]) attachment.dispose();
@@ -156,30 +154,30 @@ type WatchFrame<T> = {
  */
 export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T> {
 	readonly #detach: () => void;
-	readonly #report: (error: unknown) => void;
 	readonly #replace: (() => T) | undefined;
-	readonly #closed = Promise.withResolvers<WatchEnd>();
+	readonly #closedPromise: Promise<WatchEnd>;
 	readonly #pending: WatchFrame<T>[] = [];
+	#resolveClosed!: (end: WatchEnd) => void;
 	#value: T;
 	#listener: ((value: T, ops: readonly Op[], context: Context) => Promise<void>) | undefined;
 	#started = false;
 	#scheduled = false;
 	#running = false;
+	#detached = false;
 	#retired = false;
-	/** Set once, by `#terminate()`. */
 	#end: WatchEnd | undefined;
+	#resolved = false;
 	#cancellationSignal: AbortSignal | undefined;
 	#cancellationListener: (() => void) | undefined;
 
-	/**
-	 * `report` gets a listener's throw, which also ends the watch. `replace` gives the value an overflow delivers; by
-	 * default the newest value.
-	 */
-	constructor(value: T, detach: () => void, report: (error: unknown) => void, replace?: () => T) {
+	/** `replace` gives the value an overflow delivers; by default the newest value. */
+	constructor(value: T, detach: () => void, replace?: () => T) {
 		this.#value = value;
 		this.#detach = detach;
-		this.#report = report;
 		this.#replace = replace;
+		this.#closedPromise = new Promise((resolve) => {
+			this.#resolveClosed = resolve;
+		});
 	}
 
 	get value(): T {
@@ -187,7 +185,7 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 	}
 
 	get closed(): Promise<WatchEnd> {
-		return this.#closed.promise;
+		return this.#closedPromise;
 	}
 
 	start(listener: (value: T, ops: readonly Op[], context: Context) => Promise<void>): void {
@@ -200,7 +198,7 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 
 	stop(): Promise<WatchEnd> {
 		this.#terminate({ reason: "stopped" });
-		return this.#closed.promise;
+		return this.#closedPromise;
 	}
 
 	observeCancellation(signal: AbortSignal): void {
@@ -216,11 +214,8 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		this.#terminate({ reason: "cancelled" });
 	}
 
-	/** End with `session_closed`, or with `session_failed` and the error when the Session failed. */
-	closeSession(failure?: { readonly error: unknown }): void {
-		this.#terminate(
-			failure === undefined ? { reason: "session_closed" } : { reason: "session_failed", error: failure.error },
-		);
+	closeSession(): void {
+		this.#terminate({ reason: "session_closed" });
 	}
 
 	advance(value: T, ops: readonly Op[], context: Context): void {
@@ -246,7 +241,10 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 	}
 
 	async #drain(): Promise<void> {
-		if (this.#running || this.#end !== undefined || !this.#started) return;
+		if (this.#running || this.#end !== undefined || !this.#started) {
+			this.#finishIfReady();
+			return;
+		}
 		this.#running = true;
 		try {
 			while (this.#end === undefined) {
@@ -258,7 +256,6 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 					await this.#listener!(frame.value, frame.ops, deliveryContext);
 				} catch (error) {
 					if (this.#end === undefined) {
-						this.#report(error);
 						this.#terminate({ reason: "listener_error", error: toError(error) });
 					}
 					break;
@@ -271,22 +268,34 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		} finally {
 			this.#running = false;
 			if (this.#end === undefined && this.#pending.length > 0) this.#schedule();
+			this.#finishIfReady();
 		}
 	}
 
-	/** End the watch, once: detach, drop pending frames, and settle `closed`. A callback already running keeps running. */
 	#terminate(end: WatchEnd): void {
 		if (this.#end !== undefined) return;
 		this.#end = end;
-		this.#detach();
+		this.#detachNow();
 		this.#pending.length = 0;
-		if (this.#cancellationListener !== undefined) {
-			this.#cancellationSignal?.removeEventListener("abort", this.#cancellationListener);
+		this.#finishIfReady();
+	}
+
+	#detachNow(): void {
+		if (this.#detached) return;
+		this.#detached = true;
+		this.#detach();
+	}
+
+	#finishIfReady(): void {
+		if (this.#resolved || this.#end === undefined) return;
+		this.#resolved = true;
+		if (this.#cancellationSignal !== undefined && this.#cancellationListener !== undefined) {
+			this.#cancellationSignal.removeEventListener("abort", this.#cancellationListener);
 		}
-		this.#closed.resolve(end);
+		this.#resolveClosed(this.#end);
 	}
 }
 
 function toError(error: unknown): Error {
-	return error instanceof Error ? error : new Error(errorMessage(error));
+	return error instanceof Error ? error : new Error(String(error));
 }

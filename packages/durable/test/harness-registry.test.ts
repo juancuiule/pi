@@ -26,7 +26,7 @@ function tool(name: string, extra: Partial<AppTool> = {}): AppTool {
 		name,
 		description: `${name} tool`,
 		parameters: Type.Object({}),
-		execute: async () => ({ output: [] }),
+		execute: async () => ({ content: [] }),
 		...extra,
 	};
 }

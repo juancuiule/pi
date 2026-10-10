@@ -1,6 +1,6 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { apply, type Op } from "@earendil-works/chord/delta";
-import { StorageRequestError } from "../../errors.ts";
+import { StorageRejected } from "../../errors.ts";
 import { idFromNumber, seqFromNumber } from "../../ids.ts";
 import type {
 	ConversationId,
@@ -68,8 +68,7 @@ const encodeIndexedString = (value: string): string => JSON.stringify(value);
 const cursorId = <I extends Id<string>>(cursor: Cursor | undefined): I | undefined => {
 	const after = cursor?.after;
 	if (after === undefined) return undefined;
-	if (typeof after !== "number" || !Number.isSafeInteger(after))
-		throw new StorageRequestError("Invalid storage cursor");
+	if (typeof after !== "number" || !Number.isSafeInteger(after)) throw new TypeError("Invalid storage cursor");
 	return idFromNumber<I>(after);
 };
 
@@ -282,12 +281,12 @@ export class SqliteStorage implements Storage {
 				: typeof idOrContext === "number"
 					? idFromNumber<EntryId>(idOrContext)
 					: undefined;
-		if (id === undefined) throw new StorageRequestError("Storage.entry() requires an entry ID");
+		if (id === undefined) throw new TypeError("Storage.entry() requires an entry ID");
 		let conversation: ConversationRecord | undefined;
 		if (context !== undefined) {
 			const conversationId = idFromNumber<ConversationId>(idOrConversationId);
 			conversation = await this.readConversation(conversationId);
-			if (conversation === undefined) throw new StorageRequestError(`Unknown conversation: ${conversationId}`);
+			if (conversation === undefined) throw new Error(`Unknown conversation: ${conversationId}`);
 		}
 		const row = await this.db.get<EntryJsonRow>("SELECT record, commit_seq FROM entries WHERE id = ?", id);
 		if (row === undefined) return undefined;
@@ -309,7 +308,7 @@ export class SqliteStorage implements Storage {
 		atOrBeforeEntryId: EntryId | undefined,
 	): Promise<(EntryRecord & { readonly head: EntryId }) | undefined> {
 		let conversation = await this.readConversation(conversationId);
-		if (conversation === undefined) throw new StorageRequestError(`Unknown conversation: ${conversationId}`);
+		if (conversation === undefined) throw new Error(`Unknown conversation: ${conversationId}`);
 		let upper: number | undefined = atOrBeforeEntryId;
 		while (true) {
 			const row =
@@ -338,7 +337,7 @@ export class SqliteStorage implements Storage {
 		const { order, after } = scanStart(query.order, cursor, "descending");
 		if (order === "ascending") return this.readEntriesAscending(query, limit, after);
 		let conversation = await this.readConversation(query.conversationId);
-		if (conversation === undefined) throw new StorageRequestError(`Unknown conversation: ${query.conversationId}`);
+		if (conversation === undefined) throw new Error(`Unknown conversation: ${query.conversationId}`);
 		let upper: number | undefined = query.maxEntryId;
 		if (after !== undefined) upper = Math.min(upper ?? Number.MAX_SAFE_INTEGER, after - 1);
 		const values: EntryRecord[] = [];
@@ -375,7 +374,7 @@ export class SqliteStorage implements Storage {
 	): Promise<Page<EntryRecord, Cursor>> {
 		const segments: { readonly conversationId: ConversationId; readonly upper: number | undefined }[] = [];
 		let conversation = await this.readConversation(query.conversationId);
-		if (conversation === undefined) throw new StorageRequestError(`Unknown conversation: ${query.conversationId}`);
+		if (conversation === undefined) throw new Error(`Unknown conversation: ${query.conversationId}`);
 		let upper: number | undefined = query.maxEntryId;
 		while (true) {
 			segments.push({ conversationId: conversation.id, upper });
@@ -613,7 +612,7 @@ export class SqliteStorage implements Storage {
 		if (row === undefined) return undefined;
 		const record = parseJson<DocumentRecord>(row.record);
 		if (at !== "current" && isCurrentOnly(record)) {
-			throw new StorageRequestError(`Document ${id} does not retain historical content`);
+			throw new Error(`Document ${id} does not retain historical content`);
 		}
 		if (!isAliveAt(record, at)) return undefined;
 		const upper = at === "current" ? Number.MAX_SAFE_INTEGER : at;
@@ -726,7 +725,7 @@ export class SqliteStorage implements Storage {
 		const liveCounts = new Map<string, number>();
 		for (const [id, action] of actions) {
 			if (action.copy !== undefined && actions.has(action.copy.id)) {
-				throw new Error(`Document copy ${id} source is changed in the copy batch`);
+				throw new StorageRejected(`Document copy ${id} source is changed in the copy batch`);
 			}
 			const row = await executor.get<JsonRow>("SELECT record FROM documents WHERE id = ?", id);
 			const existing = row === undefined ? undefined : parseJson<DocumentRecord>(row.record);
@@ -865,7 +864,8 @@ export class SqliteStorage implements Storage {
 					}
 					content = { kind: "base", version: stored.version, value: stored.value };
 				} catch (error) {
-					throw new Error(`Document copy ${id} was rejected`, { cause: error });
+					if (error instanceof StorageRejected) throw error;
+					throw new StorageRejected(`Document copy ${id} was rejected`, { cause: error });
 				}
 			}
 			let record: DocumentRecord;

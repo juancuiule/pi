@@ -181,7 +181,7 @@ function examples() {
 					const settled = await (await handle.submit(request, context)).wait(context);
 					if (settled.status !== "done" || settled.type !== "input")
 						throw new Error(`Subagent failed: ${settled.status}`);
-					return { output: [{ type: "text", text: await answerText(api, settled.answer, context) }] };
+					return { content: [{ type: "text", text: await answerText(api, settled.answer, context) }] };
 				},
 			}),
 		],
