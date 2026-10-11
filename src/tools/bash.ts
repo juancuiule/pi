@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-durable/tools";
 
 import { createAnsiStripper } from "../ansi.ts";
+import { withApproval } from "../approvals.ts";
 
 /** The raw (pre-strip) output stream of a bash call, for the console terminal's ANSI colors. */
 export interface AnsiDetails {
@@ -91,8 +92,8 @@ export const CodingTools = defineExtension({
   name: "coding-tools",
   tools: [
     createReadTool(),
-    createWriteTool(),
-    createEditTool(),
-    createColorBashTool(),
+    withApproval(createWriteTool()),
+    withApproval(createEditTool()),
+    withApproval(createColorBashTool()),
   ],
 });

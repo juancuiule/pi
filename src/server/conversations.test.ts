@@ -29,7 +29,7 @@ const setup = (
 };
 
 /** Poll `check` until it returns true, failing after `timeoutMs` (3 seconds by default). */
-const waitUntil = (check: Effect.Effect<boolean>, timeoutMs = 3000) =>
+const waitUntil = (check: Effect.Effect<boolean, unknown>, timeoutMs = 3000) =>
   Effect.gen(function* () {
     for (let attempt = 0; attempt < timeoutMs / 10; attempt += 1) {
       if (yield* check) {
@@ -85,13 +85,17 @@ describe(Conversations, () => {
         expect(sandboxes.live.size).toBe(1);
         yield* conversations.end(created.id);
         expect(sandboxes.live.size).toBe(0);
-        expect(yield* conversations.list).toHaveLength(0);
+        // Ended conversations stay listed: no longer live, never resumable.
+        const listed = yield* conversations.list;
+        expect(listed).toHaveLength(1);
+        expect(listed[0]?.status).toBe("ended");
+        expect(listed[0]?.endedReason).toBe("ended");
         return yield* Effect.exit(conversations.send(created.id, "again"));
       }).pipe(Effect.provide(layer))
     );
 
     expect(Exit.isFailure(exit)).toBeTruthy();
-    expect(JSON.stringify(exit)).toContain("ConversationNotFound");
+    expect(JSON.stringify(exit)).toContain("ConversationEnded");
   });
 
   it("ends a running conversation, stopping its run before the sandbox goes", async () => {
@@ -193,8 +197,15 @@ describe(Conversations, () => {
         const during = yield* conversations.list;
         expect(during).toHaveLength(1);
         expect(during[0]?.status).toBe("running");
+        // A swept shell conversation stays listed, ended because its sandbox was removed.
         yield* waitUntil(
-          conversations.list.pipe(Effect.map((all) => all.length === 0)),
+          conversations.list.pipe(
+            Effect.map(
+              (all) =>
+                all[0]?.status === "ended" &&
+                all[0]?.endedReason === "sandbox_removed"
+            )
+          ),
           15_000
         );
         expect(sandboxes.live.size).toBe(0);

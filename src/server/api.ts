@@ -8,7 +8,12 @@ import {
   HttpApiSchema,
 } from "effect/http-api";
 
-import { ConversationNotFound, SandboxLimitReached } from "../errors.ts";
+import {
+  ApprovalNotFound,
+  ConversationEnded,
+  ConversationNotFound,
+  SandboxLimitReached,
+} from "../errors.ts";
 
 export type { AssistantMessage, Message, Usage } from "@earendil-works/pi-ai";
 export type {
@@ -18,7 +23,12 @@ export type {
   ToolSlot,
   UsageState,
 } from "@earendil-works/pi-durable";
-export { ConversationNotFound, SandboxLimitReached } from "../errors.ts";
+export {
+  ApprovalNotFound,
+  ConversationEnded,
+  ConversationNotFound,
+  SandboxLimitReached,
+} from "../errors.ts";
 
 export const SandboxChoice = Schema.Literals(["none", "shell", "desktop"]);
 export type SandboxChoice = typeof SandboxChoice.Type;
@@ -29,8 +39,12 @@ export const ConversationSummary = Schema.Struct({
   sandboxId: Schema.optionalKey(Schema.String),
   vncUrl: Schema.optionalKey(Schema.String),
   title: Schema.String,
-  status: Schema.Literals(["running", "idle"]),
+  status: Schema.Literals(["running", "idle", "ended"]),
+  endedReason: Schema.optionalKey(
+    Schema.Literals(["ended", "sandbox_removed"])
+  ),
   createdAt: Schema.Number,
+  pendingApprovals: Schema.Number,
 });
 export type ConversationSummary = typeof ConversationSummary.Type;
 
@@ -47,6 +61,7 @@ export const Api = HttpApi.make("effect-pi")
         payload: Schema.Struct({
           sandbox: SandboxChoice,
           prompt: Schema.NonEmptyString,
+          approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
         }),
         success: ConversationSummary.pipe(HttpApiSchema.status(201)),
         error: SandboxLimitReached.pipe(HttpApiSchema.status(409)),
@@ -54,7 +69,7 @@ export const Api = HttpApi.make("effect-pi")
       HttpApiEndpoint.post("send", "/conversations/:id/messages", {
         params: ById,
         payload: Schema.Struct({ prompt: Schema.NonEmptyString }),
-        error: NotFound,
+        error: [NotFound, ConversationEnded.pipe(HttpApiSchema.status(409))],
       }),
       // One pi-durable AgentEvent per SSE message: a snapshot first, then each commit's events.
       HttpApiEndpoint.get("events", "/conversations/:id/events", {
@@ -65,6 +80,15 @@ export const Api = HttpApi.make("effect-pi")
       HttpApiEndpoint.delete("end", "/conversations/:id", {
         params: ById,
         error: NotFound,
+      }),
+      HttpApiEndpoint.post("approvals", "/conversations/:id/approvals", {
+        params: ById,
+        payload: Schema.Struct({
+          key: Schema.String,
+          decision: Schema.Literals(["approve", "deny", "always"]),
+        }),
+        success: HttpApiSchema.NoContent,
+        error: [NotFound, ApprovalNotFound.pipe(HttpApiSchema.status(404))],
       })
     )
   )

@@ -90,7 +90,14 @@ describe("HTTP API", () => {
           payload: { prompt: "again" },
         });
         yield* client.conversations.end({ params: { id: created.id } });
-        expect(yield* client.conversations.list()).toStrictEqual([]);
+        // Ended conversations stay listed.
+        expect(
+          (yield* client.conversations.list()).map((c) => [
+            c.id,
+            c.status,
+            c.endedReason,
+          ])
+        ).toStrictEqual([[created.id, "ended", "ended"]]);
         const info = yield* client.info.get();
         expect(info.model).toBe("faux/faux-1");
       }).pipe(

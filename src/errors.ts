@@ -11,3 +11,13 @@ export class SandboxLimitReached extends Schema.TaggedError<SandboxLimitReached>
   "SandboxLimitReached",
   { limit: Schema.Number }
 ) {}
+
+export class ConversationEnded extends Schema.TaggedError<ConversationEnded>()(
+  "ConversationEnded",
+  { id: Schema.Number, reason: Schema.Literals(["ended", "sandbox_removed"]) }
+) {}
+
+export class ApprovalNotFound extends Schema.TaggedError<ApprovalNotFound>()(
+  "ApprovalNotFound",
+  { key: Schema.String }
+) {}

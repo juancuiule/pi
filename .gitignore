@@ -4,3 +4,4 @@ screenshots/
 .env
 web/.next/
 web/next-env.d.ts
+data/

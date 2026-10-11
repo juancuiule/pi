@@ -3,6 +3,7 @@
 // Run: pnpm server
 import { createServer } from "node:http";
 
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Duration, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
@@ -31,8 +32,15 @@ if (configured === undefined) {
 }
 const modelName = `${setup.model.provider}/${setup.model.modelId}`;
 
+// Conversations survive restarts in a WAL SQLite file; the harness closes it on shutdown. The opener
+// creates the directory.
+const storage = await openNodeSqliteStorage(
+  process.env.EFFECT_PI_DB ?? "data/effect-pi.sqlite"
+);
+
 const AgentsLive = Agents.layer({
   ...setup,
+  storage,
   saveScreenshot: saveScreenshotsTo("screenshots"),
   skills,
 }).pipe(Layer.provide(DockerSandboxes.layer()));

@@ -16,15 +16,21 @@ import {
 } from "@earendil-works/pi-durable";
 import type {
   AgentEvent,
+  Cursor,
   Conversation,
   ConversationId,
   EntryId,
   Extension,
+  Storage,
 } from "@earendil-works/pi-durable";
 import { Context, Effect, Layer, Queue, Schema, Stream } from "effect";
 import type { Cause, Scope } from "effect";
 
-import { ConversationNotFound } from "./errors.ts";
+import { ApprovalDoc } from "./approvals.ts";
+import type { ApprovalPolicy } from "./approvals.ts";
+import { MetaDoc } from "./conversation-meta.ts";
+import type { StoredConversation } from "./conversation-meta.ts";
+import { ApprovalNotFound, ConversationNotFound } from "./errors.ts";
 import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
 import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
 import type { SaveScreenshot } from "./screenshots.ts";
@@ -140,6 +146,25 @@ export const extensionsFor = (
   }
 };
 
+// Top-level conversation ids, in paged scans of one commit each; pages are sequential because each
+// needs the previous cursor.
+const scanTopLevel = async (
+  harness: Harness,
+  cursor: Cursor | undefined,
+  ids: ConversationId[]
+): Promise<ConversationId[]> => {
+  const page = await harness.commit(
+    (tx) => tx.scanConversations({}, 500, cursor),
+    context
+  );
+  for (const record of page.items) {
+    if (record.owner === undefined) {
+      ids.push(record.id);
+    }
+  }
+  return page.next === undefined ? ids : scanTopLevel(harness, page.next, ids);
+};
+
 const askIn = (conversation: Conversation, tracing: AgentTracing) =>
   Effect.fn("AgentConversation.ask")(function* (prompt: string) {
     yield* Effect.annotateCurrentSpan({
@@ -207,11 +232,40 @@ export class Agents extends Context.Service<
      */
     start(options: {
       readonly sandbox: SandboxChoice;
+      readonly title?: string;
+      readonly createdAt?: number;
+      readonly approvals?: ApprovalPolicy;
     }): Effect.Effect<
       AgentConversation,
       AgentError | SandboxError,
       Scope.Scope
     >;
+    /**
+     * Take an existing conversation — one persisted by a previous run — in a new scope. Creates no sandbox;
+     * ended callers must check `meta.endedAt` first. Closing the scope aborts it, exactly like `start`'s.
+     */
+    attach(
+      id: ConversationId
+    ): Effect.Effect<
+      AgentConversation,
+      AgentError | ConversationNotFound,
+      Scope.Scope
+    >;
+    /**
+     * Record an approval decision on a root conversation's doc. `always` also flips the policy to
+     * `auto` and approves every other call waiting in the tree. Fails `ApprovalNotFound` when no call is waiting under `key`.
+     */
+    decide(
+      rootId: ConversationId,
+      key: string,
+      decision: "approve" | "deny" | "always"
+    ): Effect.Effect<void, AgentError | ApprovalNotFound>;
+    /** Count of calls waiting for approval in a conversation tree. */
+    pendingApprovals(id: ConversationId): Effect.Effect<number, AgentError>;
+    /** Every stored top-level conversation that has metadata, newest last order irrelevant to callers. */
+    readonly stored: Effect.Effect<readonly StoredConversation[], AgentError>;
+    /** Record `meta.endedAt` for a conversation; unknown ids settle silently like other doc writes. */
+    markEnded(id: ConversationId, at: number): Effect.Effect<void, AgentError>;
     /**
      * Watch a conversation, including a subagent's: a `snapshot` first, then the events of every later commit.
      * The watch starts when this effect completes, so the stream is single-use and must be run: finishing or
@@ -232,6 +286,8 @@ export class Agents extends Context.Service<
     readonly saveScreenshot?: SaveScreenshot;
     /** Skills every conversation can load (see `src/skills.ts`); copied into each sandbox. */
     readonly skills?: readonly Skill[];
+    /** Persistent storage; MemoryStorage keeps the ephemeral behaviour of tests and `pnpm start`. */
+    readonly storage?: Storage;
   }) =>
     Layer.effect(
       Agents,
@@ -261,7 +317,7 @@ export class Agents extends Context.Service<
           Effect.tryPromise({
             try: () =>
               Harness.open(
-                new MemoryStorage(),
+                options.storage ?? new MemoryStorage(),
                 {
                   models: options.models,
                   registry,
@@ -294,6 +350,18 @@ export class Agents extends Context.Service<
                       const child = await tx.doc(SandboxDoc, conversation.id);
                       child.sandbox = owner.sandbox;
                     }
+                    // Gated tools consult the root conversation's ApprovalDoc.
+                    const ownerApprovals = await tx.doc(
+                      ApprovalDoc,
+                      conversation.owner.conversationId
+                    );
+                    const childApprovals = await tx.doc(
+                      ApprovalDoc,
+                      conversation.id
+                    );
+                    childApprovals.root =
+                      ownerApprovals.root ??
+                      String(conversation.owner.conversationId);
                   },
                 },
                 context
@@ -303,8 +371,52 @@ export class Agents extends Context.Service<
           (opened) => Effect.promise(() => opened.close(context))
         );
 
+        // A run interrupted by a crash would resume against a sandbox that no longer exists, so every
+        // conversation with live work is aborted before the service answers. The first `abort` enables
+        // scheduling for the whole harness, so another conversation's pending task may start before its
+        // own abort mark lands — at worst one tool call failing against a missing sandbox, or one model
+        // request. Each abort waits until its conversation is idle.
+        yield* Effect.tryPromise({
+          try: async () => {
+            const inspection = await harness.inspect(context);
+            const ids = new Set<ConversationId>();
+            for (const task of inspection.tasks) {
+              if (task.record.conversationId !== undefined) {
+                ids.add(task.record.conversationId);
+              }
+            }
+            for (const submission of inspection.submissions) {
+              if (submission.conversationId !== undefined) {
+                ids.add(submission.conversationId);
+              }
+            }
+            await Promise.all(
+              [...ids].map(async (id) => {
+                const handle = await harness.conversation(id, context);
+                await handle?.abort(context);
+              })
+            );
+            // Pending approval entries left by a crash would show forever: the calls that created them
+            // are aborted, so clear them (and now-meaningless decisions) on every stored root doc.
+            const records = await scanTopLevel(harness, undefined, []);
+            await Promise.all(
+              records.map((id) =>
+                harness.commit(async (tx) => {
+                  const doc = await tx.doc(ApprovalDoc, id);
+                  doc.pending = {};
+                  doc.decisions = {};
+                }, context)
+              )
+            );
+          },
+          catch: (cause) => new AgentError({ cause }),
+        });
+
         const start = Effect.fn("Agents.start")(function* (startOptions: {
           readonly sandbox: SandboxChoice;
+          readonly title?: string;
+          readonly createdAt?: number;
+          readonly approvals?: ApprovalPolicy;
         }) {
           const choice = startOptions.sandbox;
           const sandbox =
@@ -349,6 +461,14 @@ export class Agents extends Context.Service<
                         const doc = await tx.doc(SandboxDoc, id);
                         doc.sandbox = sandbox;
                       }
+                      const meta = await tx.doc(MetaDoc, id);
+                      meta.meta = {
+                        title: startOptions.title ?? "",
+                        sandbox: choice,
+                        createdAt: startOptions.createdAt ?? Date.now(),
+                      };
+                      const approvals = await tx.doc(ApprovalDoc, id);
+                      approvals.policy = startOptions.approvals ?? "auto";
                     },
                   },
                   context
@@ -365,6 +485,119 @@ export class Agents extends Context.Service<
             send: sendIn(conversation, tracing),
           } satisfies AgentConversation;
         });
+
+        // Same surface as `start`, without creating anything: the recorded conversation keeps its stored
+        // sandbox reference, which is dead after a restart, so `sandbox` is `undefined` here.
+        const attach = Effect.fn("Agents.attach")(function* (
+          id: ConversationId
+        ) {
+          const handle = yield* Effect.tryPromise({
+            try: () => harness.conversation(id, context),
+            catch: (cause) => new AgentError({ cause }),
+          });
+          if (handle === undefined) {
+            return yield* new ConversationNotFound({ id: Number(id) });
+          }
+          yield* Effect.addFinalizer(() =>
+            Effect.ignore(Effect.tryPromise(() => handle.abort(context)))
+          );
+          return {
+            id: handle.id,
+            sandbox: undefined,
+            ask: askIn(handle, tracing),
+            send: sendIn(handle, tracing),
+          } satisfies AgentConversation;
+        });
+
+        const stored = Effect.gen(function* () {
+          const all = yield* Effect.tryPromise({
+            try: () => scanTopLevel(harness, undefined, []),
+            catch: (cause) => new AgentError({ cause }),
+          });
+
+          const conversations: StoredConversation[] = [];
+          for (const id of all) {
+            const doc = yield* Effect.tryPromise({
+              try: () => harness.snapshot(MetaDoc, id, context),
+              catch: (cause) => new AgentError({ cause }),
+            });
+            if (doc?.meta !== undefined) {
+              conversations.push({ id, meta: doc.meta });
+            }
+          }
+          return conversations;
+        }).pipe(Effect.withSpan("Agents.stored"));
+
+        const markEnded = Effect.fn("Agents.markEnded")(function* (
+          id: ConversationId,
+          at: number
+        ) {
+          yield* Effect.tryPromise({
+            try: () =>
+              harness.commit(async (tx) => {
+                const doc = await tx.doc(MetaDoc, id);
+                const { meta } = doc;
+                if (meta === undefined) {
+                  return;
+                }
+                doc.meta = { ...meta, endedAt: at };
+                // An ended conversation never needs approval again; the aborted calls' cleanup commits
+                // land too late to clear these themselves.
+                const approvals = await tx.doc(ApprovalDoc, id);
+                approvals.pending = {};
+                approvals.decisions = {};
+              }, context),
+            catch: (cause) => new AgentError({ cause }),
+          });
+        });
+
+        const decide = Effect.fn("Agents.decide")(function* (
+          rootId: ConversationId,
+          key: string,
+          decision: "approve" | "deny" | "always"
+        ) {
+          const found = yield* Effect.tryPromise({
+            try: () =>
+              harness.commit(async (tx) => {
+                const doc = await tx.doc(ApprovalDoc, rootId);
+                if (doc.pending[key] === undefined) {
+                  return false;
+                }
+                if (decision === "always") {
+                  // Parallel calls of the same round are already waiting; under `auto` none of them should.
+                  doc.policy = "auto";
+                  for (const waiting of Object.keys(doc.pending)) {
+                    doc.decisions[waiting] ??= "approve";
+                  }
+                }
+                doc.decisions[key] = decision === "deny" ? "deny" : "approve";
+                return true;
+              }, context),
+            catch: (cause) => new AgentError({ cause }),
+          });
+          if (!found) {
+            return yield* new ApprovalNotFound({ key });
+          }
+        });
+
+        const pendingApprovals = Effect.fn("Agents.pendingApprovals")(
+          function* (id: ConversationId) {
+            const count = yield* Effect.tryPromise({
+              try: async () => {
+                const own = await harness.snapshot(ApprovalDoc, id, context);
+                const rootId = Number(own?.root ?? id) as ConversationId;
+                const root = await harness.snapshot(
+                  ApprovalDoc,
+                  rootId,
+                  context
+                );
+                return Object.keys(root?.pending ?? {}).length;
+              },
+              catch: (cause) => new AgentError({ cause }),
+            });
+            return count;
+          }
+        );
 
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
@@ -403,7 +636,15 @@ export class Agents extends Context.Service<
           );
         });
 
-        return Agents.of({ start, events });
+        return Agents.of({
+          start,
+          attach,
+          decide,
+          pendingApprovals,
+          stored,
+          markEnded,
+          events,
+        });
       })
     );
 }

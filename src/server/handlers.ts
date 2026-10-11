@@ -16,7 +16,9 @@ const ConversationsHandlers = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const conversations = yield* Conversations;
     return handlers
-      .handle("list", () => conversations.list)
+      .handle("list", () =>
+        conversations.list.pipe(Effect.catchTag("AgentError", Effect.die))
+      )
       .handle("create", ({ payload }) =>
         conversations.create(payload).pipe(
           Effect.catchTags({
@@ -36,7 +38,12 @@ const ConversationsHandlers = HttpApiBuilder.group(
           Effect.catchTag("AgentError", Effect.die)
         )
       )
-      .handle("end", ({ params }) => conversations.end(params.id));
+      .handle("end", ({ params }) => conversations.end(params.id))
+      .handle("approvals", ({ params, payload }) =>
+        conversations
+          .decide(params.id, payload.key, payload.decision)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      );
   })
 );
 
