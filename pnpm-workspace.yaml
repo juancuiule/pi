@@ -1,5 +1,13 @@
+packages:
+  - "."
+  - web
+
 allowBuilds:
   "@google/genai": true
   esbuild: true
   protobufjs: true
   lefthook: true
+
+# Effect packages are released in lockstep; keep this one on effect's version.
+overrides:
+  "@effect/platform-node-shared": 4.0.2

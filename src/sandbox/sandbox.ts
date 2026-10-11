@@ -5,7 +5,10 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Context, Schema } from "effect";
 import type { Effect } from "effect";
 
-/** `shell`: a Linux userland for bash and file tools. `desktop`: the same plus a graphical desktop. */
+/**
+ * `shell`: a Linux userland for bash and file tools.
+ * `desktop`: the same plus a graphical desktop.
+ **/
 export type SandboxKind = "shell" | "desktop";
 
 /** What the user picks when a conversation starts. */

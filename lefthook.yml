@@ -6,13 +6,13 @@ pre-commit:
   jobs:
     # Fix and re-stage the staged files first, so the checks below see the final content
     - name: format
-      glob: "*.{js,mjs,cjs,ts,mts,cts,json,jsonc,md,yml,yaml}"
+      glob: "*.{js,mjs,cjs,ts,mts,cts,tsx,jsx,json,jsonc,md,yml,yaml}"
       exclude:
         - "repos/**"
       run: pnpm format {staged_files}
       stage_fixed: true
     - name: lint
-      glob: "*.{js,mjs,cjs,ts,mts,cts}"
+      glob: "*.{js,mjs,cjs,ts,mts,cts,tsx,jsx}"
       exclude:
         - "repos/**"
       run: pnpm lint:fix {staged_files}
@@ -25,6 +25,8 @@ pre-commit:
             run: pnpm typecheck
           - name: test
             run: pnpm test
+          - name: web
+            run: pnpm --filter web check
 
 pre-push:
   jobs:

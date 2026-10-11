@@ -6,6 +6,7 @@ import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import type { Extension } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 
+import { withApproval } from "../approvals.ts";
 import { SandboxDoc } from "../sandbox/sandbox.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
 
@@ -344,10 +345,10 @@ export const desktopExtension = (
     name: "desktop",
     tools: [
       screenshotTool(options.saveScreenshot),
-      click,
-      typeText,
-      key,
-      scroll,
-      drag,
+      withApproval(click),
+      withApproval(typeText),
+      withApproval(key),
+      withApproval(scroll),
+      withApproval(drag),
     ],
   });

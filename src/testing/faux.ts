@@ -7,6 +7,7 @@ import {
   fauxText,
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
+import type { Storage } from "@earendil-works/pi-durable";
 import { Effect, Layer } from "effect";
 
 import { Agents } from "../agents.ts";
@@ -16,7 +17,11 @@ import { localSandboxes } from "./sandboxes.ts";
 
 export const fauxAgents = (
   responses: FauxResponseStep[],
-  options: { readonly skills?: readonly Skill[] } = {}
+  options: {
+    readonly skills?: readonly Skill[];
+    /** Persistent storage, so a rebuilt layer sees earlier conversations (restart tests). */
+    readonly storage?: Storage;
+  } = {}
 ) => {
   const models = createModels();
   const faux = fauxProvider();
