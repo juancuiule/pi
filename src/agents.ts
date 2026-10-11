@@ -21,7 +21,6 @@ import type {
   EntryId,
   Extension,
 } from "@earendil-works/pi-durable";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { Context, Effect, Layer, Queue, Schema, Stream } from "effect";
 import type { Cause, Scope } from "effect";
 
@@ -31,6 +30,7 @@ import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
 import type { SaveScreenshot } from "./screenshots.ts";
 import { installSkills, skillsExtension } from "./skills.ts";
 import type { Skill } from "./skills.ts";
+import { CodingTools } from "./tools/bash.ts";
 import { Calculator } from "./tools/calculator.ts";
 import { desktopExtension } from "./tools/desktop.ts";
 import { makeAgentTracing } from "./tracing.ts";
