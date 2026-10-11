@@ -18,5 +18,5 @@
     "allowImportingTsExtensions": true
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "repos"]
+  "exclude": ["node_modules", "repos", "web"]
 }
