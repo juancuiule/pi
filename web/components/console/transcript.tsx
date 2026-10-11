@@ -11,7 +11,8 @@ import {
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
-import { subagentIdOf } from "@/lib/subagent";
+import { toolResultOf } from "@/lib/conversation-state";
+import { subagentIdFor } from "@/lib/subagent";
 import { isNearBottom, userParts } from "@/lib/transcript";
 
 import { SubagentStream } from "./subagent";
@@ -234,11 +235,13 @@ export const Transcript = ({
   // oxlint-disable-next-line unicorn/consistent-function-scoping -- refers to `Transcript` itself (no-use-before-define forbids hoisting it)
   const renderExtra: RenderExtra = (call, tool) => {
     const id =
-      call.name === "subagent" ? subagentIdOf(tool?.details) : undefined;
+      call.name === "subagent" ? subagentIdFor(state, call.id) : undefined;
     return id === undefined ? null : (
       <SubagentStream
         id={id}
-        running={tool?.status !== "done"}
+        running={
+          tool?.status !== "done" && toolResultOf(state, call.id) === undefined
+        }
         render={(child) => <Transcript state={child} nested />}
       />
     );
