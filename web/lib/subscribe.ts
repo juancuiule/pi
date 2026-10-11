@@ -4,10 +4,11 @@ import { Api } from "effect-pi/api";
 import { FetchHttpClient } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 
+import { makeSharedSubscriptions } from "./refcount";
 import { useConversationStore } from "./store";
 
 /** Feed a conversation's events into the store until the returned function is called or the conversation ends. */
-export const subscribeToConversation = (id: number): (() => void) => {
+const startSubscription = (id: number): (() => void) => {
   const { apply, markEnded } = useConversationStore.getState();
   const subscribe = Effect.gen(function* () {
     const client = yield* HttpApiClient.make(Api, {
@@ -36,3 +37,7 @@ export const subscribeToConversation = (id: number): (() => void) => {
     Effect.runFork(Fiber.interrupt(fiber));
   };
 };
+
+/** Shared per id: any number of callers get one stream; the last unsubscribe interrupts it. */
+export const subscribeToConversation =
+  makeSharedSubscriptions(startSubscription);
