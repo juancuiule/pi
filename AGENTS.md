@@ -45,6 +45,10 @@ Use pnpm, never npm or yarn.
 - `pnpm sandbox:build` builds the Docker sandbox images; `pnpm test:docker` runs the `*.docker.test.ts` integration tests against real containers (not part of `pnpm check` or the hooks)
 - `pnpm langfuse:up` / `pnpm langfuse:down` start and stop a local Langfuse (see Observability)
 - `pnpm check` runs all of the above; run it after code changes
+- `pnpm server` runs the HTTP server (`server.ts`, `:4000`)
+- `pnpm dev` runs the server in watch mode plus the web console on `:3001`
+- `pnpm --filter web <script>` runs a web script
+- `pnpm check` also runs `web`'s typecheck and tests
 
 Lefthook (`lefthook.yml`) runs these as git hooks: pre-commit formats and lint-fixes staged files, then runs typecheck and tests; pre-push runs `pnpm check`. Fix failures instead of skipping hooks.
 
@@ -88,3 +92,18 @@ Agents are traced with Effect spans, exported to Langfuse over OTLP.
 - `src/langfuse.ts`: the OTLP exporter, enabled when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set (`LANGFUSE_BASE_URL` defaults to `http://localhost:3000`). Without them spans go to Effect's default tracer, which exports nothing.
 - `docker/langfuse/`: Langfuse's official compose file, bound to localhost. `pnpm langfuse:up` runs `init-env.ts` first, which writes random secrets and a headless-initialized org, project, API keys and user to `docker/langfuse/.env`, and the app's keys to `.env` (both git-ignored); it prints the login.
 - Langfuse v4 serves observations at `/api/public/v2/observations` (pass `fields=core,basic,io,usage,model`); `/api/public/traces` is gone.
+
+## Web console
+
+- `server.ts` (`:4000`, bound to 127.0.0.1): `Conversations` with 3 sandboxes at most and a 1s graceful-shutdown timeout, so open SSE streams don't delay sandbox removal. Stopping the server removes all sandboxes.
+- `src/server/`:
+  - `conversations.ts`: `Conversations`, the registry with one `Scope` per conversation. A sweep runs every minute and closes conversations idle for 30 minutes. It skips running conversations and any whose first run has not ended.
+  - `api.ts`: the `HttpApi` definition, shared with `web/` as `effect-pi/api`, with no runtime pi imports;
+  - `handlers.ts`;
+  - `faux.ts`: echo model, used when no model is configured.
+- Events: `Agents.events(id)` wraps pi-durable's `watchEvents` and attaches its watch when the effect runs, not when the stream is run. The returned stream is single-use and must be run; interrupting it stops the watch. SSE sends one `AgentEvent` per message, `snapshot` first. The `subagent` tool reports `details.conversationId`.
+- `web/`: Next.js App Router, shadcn, and TanStack Query for REST (`web/lib/queries.ts`). A Zustand store (`web/lib/store.ts`) is fed by the pure `applyEvent` in `web/lib/conversation-state.ts`.
+  - `web/lib/subscribe.ts` and `refcount.ts`: one shared SSE subscription per conversation id, stopped when its last caller unsubscribes. It reconnects after a drop and stops on a 404 (`ConversationNotFound`).
+  - `terminal.ts`, `vnc.ts` and `subagent.ts`: pure helpers for the terminal text, the noVNC URL and subagent ids.
+- `web/next.config.ts` rewrites `/api/*` to `:4000` with compression off, so SSE isn't buffered.
+- Without a browser, the UI is checked by `pnpm --filter web build` plus the tests.
