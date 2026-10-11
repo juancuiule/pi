@@ -144,4 +144,23 @@ describe("Agents.events", () => {
 
     expect(childTexts).toStrictEqual(["7"]);
   });
+
+  it("keeps working after a watcher is interrupted", async () => {
+    const { layer } = fauxAgents([fauxAssistantMessage([fauxText("ok")])]);
+
+    const answer = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const conversation = yield* agents.start({ sandbox: "none" });
+          const stream = yield* agents.events(conversation.id);
+          // Takes the snapshot, then the stream is interrupted, which stops its watch.
+          yield* stream.pipe(Stream.take(1), Stream.runDrain);
+          return yield* conversation.ask("hi");
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(answer).toBe("ok");
+  });
 });

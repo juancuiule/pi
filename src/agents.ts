@@ -214,7 +214,8 @@ export class Agents extends Context.Service<
     >;
     /**
      * Watch a conversation, including a subagent's: a `snapshot` first, then the events of every later commit.
-     * Interrupting the stream stops the watch.
+     * The watch starts when this effect completes, so the stream is single-use and must be run: finishing or
+     * interrupting it stops the watch, and a stream that is never run keeps it until the harness closes.
      */
     events(
       id: ConversationId
@@ -362,6 +363,7 @@ export class Agents extends Context.Service<
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
         ) {
+          // Only an existence check; the watch below reads the conversation itself.
           const handle = yield* Effect.tryPromise({
             try: () => harness.conversation(id, context),
             catch: (cause) => new AgentError({ cause }),
@@ -369,24 +371,29 @@ export class Agents extends Context.Service<
           if (handle === undefined) {
             return yield* new ConversationNotFound({ id: Number(id) });
           }
-          // Attached now, not when the stream is run: events committed after this call are never missed. The watch
-          // stops when the stream ends or is interrupted.
-          const queue = yield* Queue.unbounded<AgentEvent, Cause.Done>();
-          const watch = yield* Effect.tryPromise({
-            try: () => watchEvents(harness, id, context),
-            catch: (cause) => new AgentError({ cause }),
-          });
-          Queue.offerUnsafe(queue, watch.snapshot);
-          watch.start((batch) => {
-            Queue.offerAllUnsafe(queue, batch);
-            return Promise.resolve();
-          });
-          void (async () => {
-            await watch.closed;
-            Queue.endUnsafe(queue);
-          })();
-          return Stream.fromQueue(queue).pipe(
-            Stream.ensuring(Effect.promise(() => watch.stop()))
+          // Attached now, not when the stream is run: events committed after this call are never missed. The attach
+          // and wiring are uninterruptible, so an interrupt can never leave a watch without an owner; from then on
+          // the stream's finalizer stops it.
+          return yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              const queue = yield* Queue.unbounded<AgentEvent, Cause.Done>();
+              const watch = yield* Effect.tryPromise({
+                try: () => watchEvents(harness, id, context),
+                catch: (cause) => new AgentError({ cause }),
+              });
+              Queue.offerUnsafe(queue, watch.snapshot);
+              watch.start((batch) => {
+                Queue.offerAllUnsafe(queue, batch);
+                return Promise.resolve();
+              });
+              void (async () => {
+                await watch.closed;
+                Queue.endUnsafe(queue);
+              })();
+              return Stream.fromQueue(queue).pipe(
+                Stream.ensuring(Effect.promise(() => watch.stop()))
+              );
+            })
           );
         });
 
