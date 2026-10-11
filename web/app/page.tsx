@@ -1,14 +1,15 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
 import { ConversationHeader } from "@/components/console/conversation-header";
+import { DesktopPanel } from "@/components/console/desktop-panel";
 import { MessageInput } from "@/components/console/message-input";
 import { NewConversation } from "@/components/console/new-conversation";
 import { Sidebar } from "@/components/console/sidebar";
 import { Transcript } from "@/components/console/transcript";
-import { Card } from "@/components/ui/card";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -17,6 +18,15 @@ import {
 import { useConversations } from "@/lib/queries";
 import { useConversationStore } from "@/lib/store";
 import { useConversationEvents } from "@/lib/use-conversation-events";
+
+// xterm touches `window`, so the terminal never renders on the server.
+const TerminalPanel = dynamic(
+  async () => {
+    const mod = await import("@/components/console/terminal-panel");
+    return mod.TerminalPanel;
+  },
+  { ssr: false }
+);
 
 const parseId = (value: string | null): number | undefined => {
   const id = value === null ? Number.NaN : Number(value);
@@ -68,10 +78,14 @@ const Console = () => {
       {showSandbox ? (
         <>
           <ResizableHandle />
-          <ResizablePanel defaultSize="35%" minSize="15%">
-            <Card className="m-2 h-[calc(100%-1rem)] items-center justify-center">
-              Sandbox panel
-            </Card>
+          <ResizablePanel defaultSize="35%" minSize="15%" collapsible>
+            <div className="m-2 h-[calc(100%-1rem)] overflow-hidden rounded-lg border">
+              {conversation.sandbox === "desktop" ? (
+                <DesktopPanel vncUrl={conversation.vncUrl} />
+              ) : (
+                <TerminalPanel state={state} />
+              )}
+            </div>
           </ResizablePanel>
         </>
       ) : null}
