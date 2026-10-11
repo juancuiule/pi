@@ -46,6 +46,8 @@ interface Live {
   readonly createdAt: number;
   status: ConversationStatus;
   lastActivity: number;
+  /** True from registration until the first run ends: `status` is still "idle" until `run_start` is consumed. */
+  firstRunPending: boolean;
 }
 
 const summaryOf = (id: number, live: Live): ConversationSummary => ({
@@ -189,6 +191,7 @@ export class Conversations extends Context.Service<
                 createdAt: now,
                 status: "idle",
                 lastActivity: now,
+                firstRunPending: true,
               };
               live.set(Number(conversation.id), created);
               yield* release;
@@ -205,6 +208,9 @@ export class Conversations extends Context.Service<
                       Effect.gen(function* () {
                         const time = yield* Clock.currentTimeMillis;
                         created.status = statusAfter(created.status, event);
+                        if (event.type === "run_end") {
+                          created.firstRunPending = false;
+                        }
                         created.lastActivity = time;
                       })
                     ),
@@ -231,6 +237,7 @@ export class Conversations extends Context.Service<
           const now = yield* Clock.currentTimeMillis;
           const idle = [...live.entries()].flatMap(([id, entry]) =>
             entry.status === "idle" &&
+            !entry.firstRunPending &&
             now - entry.lastActivity >= options.idleTimeoutMs
               ? [id]
               : []

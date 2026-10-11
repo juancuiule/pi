@@ -28,10 +28,10 @@ const setup = (
   };
 };
 
-/** Poll `check` until it returns true, failing after 3 seconds. */
-const waitUntil = (check: Effect.Effect<boolean>) =>
+/** Poll `check` until it returns true, failing after `timeoutMs` (3 seconds by default). */
+const waitUntil = (check: Effect.Effect<boolean>, timeoutMs = 3000) =>
   Effect.gen(function* () {
-    for (let attempt = 0; attempt < 300; attempt += 1) {
+    for (let attempt = 0; attempt < timeoutMs / 10; attempt += 1) {
       if (yield* check) {
         return;
       }
@@ -129,7 +129,7 @@ describe(Conversations, () => {
 
   it("sweeps idle conversations but never a running one", async () => {
     const { layer, sandboxes } = setup(
-      [callTool("bash", { command: "sleep 0.4" }), echoToolResult],
+      [callTool("bash", { command: "sleep 2" }), echoToolResult],
       { idleTimeoutMs: 50, sweepEveryMs: 10 }
     );
 
@@ -137,16 +137,45 @@ describe(Conversations, () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         yield* conversations.create({ sandbox: "shell", prompt: "sleep" });
-        // Past the idle timeout, but the bash call is still running.
-        yield* Effect.sleep("200 millis");
-        expect(yield* conversations.list).toHaveLength(1);
+        // Wait until the run is observably in progress, so the check below
+        // does not depend on how fast the bash call started.
         yield* waitUntil(
-          conversations.list.pipe(Effect.map((all) => all.length === 0))
+          conversations.list.pipe(
+            Effect.map((all) => all.some((c) => c.status === "running"))
+          ),
+          10_000
+        );
+        // Several idle timeouts later the bash call (2s) is still running.
+        yield* Effect.sleep("300 millis");
+        const during = yield* conversations.list;
+        expect(during).toHaveLength(1);
+        expect(during[0]?.status).toBe("running");
+        yield* waitUntil(
+          conversations.list.pipe(Effect.map((all) => all.length === 0)),
+          15_000
         );
         expect(sandboxes.live.size).toBe(0);
       }).pipe(Effect.provide(layer))
     );
-  });
+  }, 30_000);
+
+  it("does not sweep a new conversation before its first run has ended", async () => {
+    // idleTimeoutMs 0: without the guard, the first sweep would close the
+    // conversation while its status is still the initial "idle".
+    const { layer } = setup(
+      [callTool("bash", { command: "sleep 1" }), echoToolResult],
+      { idleTimeoutMs: 0, sweepEveryMs: 1 }
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        yield* conversations.create({ sandbox: "shell", prompt: "sleep" });
+        yield* Effect.sleep("200 millis");
+        expect(yield* conversations.list).toHaveLength(1);
+      }).pipe(Effect.provide(layer))
+    );
+  }, 30_000);
 
   it("removes every sandbox when the layer is torn down", async () => {
     const { layer, sandboxes } = setup([answer("a"), answer("b")]);
