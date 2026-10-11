@@ -5,7 +5,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { NodeHttpServer } from "@effect/platform-node";
 import { Effect, Exit, Layer, Stream } from "effect";
-import { HttpRouter } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 import { describe, expect, it } from "vitest";
 
@@ -41,6 +41,32 @@ const server = (responses: FauxResponseStep[], maxSandboxes = 3) =>
   serverWith(fauxAgents(responses).layer, maxSandboxes);
 
 describe("HTTP API", () => {
+  it("refuses requests from a non-loopback origin", async () => {
+    const statuses = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpClient.HttpClient;
+        const post = (origin: string) =>
+          client
+            .execute(
+              HttpClientRequest.post("/api/conversations").pipe(
+                HttpClientRequest.setHeader("origin", origin),
+                HttpClientRequest.bodyJsonUnsafe({
+                  sandbox: "none",
+                  prompt: "hi",
+                })
+              )
+            )
+            .pipe(Effect.map((response) => response.status));
+        return [
+          yield* post("https://evil.example"),
+          yield* post("http://localhost:3001"),
+        ];
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("ok")])])))
+    );
+
+    expect(statuses).toStrictEqual([403, 201]);
+  });
+
   it("creates a conversation and streams its events over SSE", async () => {
     const events = await Effect.runPromise(
       Effect.gen(function* () {

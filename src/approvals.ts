@@ -4,6 +4,7 @@
 import { defineDoc } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
+  DocumentWatch,
   ToolRegistration,
 } from "@earendil-works/pi-durable";
 
@@ -52,30 +53,29 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
   execute: async (args, api, context) => {
     const own = await api.snapshot(ApprovalDoc, api.conversationId, context);
     const rootId = Number(own?.root ?? api.conversationId) as ConversationId;
-    const root = await api.snapshot(ApprovalDoc, rootId, context);
-    if (root?.policy !== "ask") {
-      return tool.execute(args, api, context);
-    }
-
     const key = approvalKey(api.conversationId, api.callId);
-    await api.commit(async (tx) => {
+    // Reading the policy and registering happen in one commit, so an "always" decision cannot land
+    // between them and leave this call waiting under a policy that is already `auto`.
+    const gated = await api.commit(async (tx) => {
       const doc = await tx.doc(ApprovalDoc, rootId);
+      if (doc.policy !== "ask") {
+        return false;
+      }
       doc.pending[key] = {
         conversationId: String(api.conversationId),
         callId: api.callId,
         tool: tool.name,
         requestedAt: Date.now(),
       };
+      return true;
     }, context);
-    await api.details({ approval: "pending", approvalKey: key }, context);
-
-    const watch = await api.watchDoc(ApprovalDoc, rootId, context);
-    // Fail closed: without a watch there is no way a decision can arrive, so the tool must not run.
-    if (watch === undefined) {
-      throw new Error("Could not wait for approval.");
+    if (!gated) {
+      return tool.execute(args, api, context);
     }
+
     const signal = context.abortSignal;
-    // Declared before the try so the finally can always detach the listener.
+    // Declared before the try so the finally can always detach the listener and stop the watch.
+    let watch: DocumentWatch<ApprovalState> | undefined;
     const waiting = Promise.withResolvers<"approve" | "deny">();
     const onAbort = () => {
       waiting.reject(
@@ -83,16 +83,23 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
       );
     };
     try {
-      let decision = watch.value?.decisions[key];
+      await api.details({ approval: "pending", approvalKey: key }, context);
+      const opened = await api.watchDoc(ApprovalDoc, rootId, context);
+      // Fail closed: without a watch there is no way a decision can arrive, so the tool must not run.
+      if (opened === undefined) {
+        throw new Error("Could not wait for approval.");
+      }
+      watch = opened;
+      let decision = opened.value?.decisions[key];
       if (decision === undefined) {
         signal?.throwIfAborted();
         signal?.addEventListener("abort", onAbort, { once: true });
         // A closed watch (session close, retired doc) settles with no decision.
         void (async () => {
-          await watch.closed;
+          await opened.closed;
           waiting.reject(new Error("Approval watch closed."));
         })();
-        watch.start((value) => {
+        opened.start((value) => {
           const found = value?.decisions[key];
           if (found === undefined) {
             return Promise.resolve();
@@ -103,7 +110,7 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
         decision = await waiting.promise;
       }
       signal?.removeEventListener("abort", onAbort);
-      await watch.stop();
+      await opened.stop();
       if (decision === "deny") {
         await api.details({ approval: "denied" }, context);
         throw new Error(DENIED);
@@ -115,7 +122,7 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
       return await tool.execute(args, api, context);
     } finally {
       signal?.removeEventListener("abort", onAbort);
-      await watch.stop().catch((): void => undefined);
+      await watch?.stop().catch((): void => undefined);
       // Best-effort cleanup: the call may have been aborted, which makes the commit fail.
       await api
         .commit(async (tx) => {

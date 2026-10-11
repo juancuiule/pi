@@ -361,6 +361,22 @@ describe("tool approvals", () => {
       tool.execute({}, api as never, { abortSignal: undefined } as never)
     ).rejects.toThrow("Could not wait for approval");
     expect(ran).toBeFalsy();
+    // The failed call is not left listed as awaiting approval.
+    expect(doc.pending).toStrictEqual({});
+  });
+
+  it("runs without waiting when always lands between the policy snapshot and registering", async () => {
+    // The committed doc is already `auto`, while a snapshot taken a moment earlier still says `ask`.
+    const doc = { policy: "auto", pending: {}, decisions: {} };
+    let ran = false;
+    const api = {
+      ...fakeApi(doc),
+      snapshot: () => Promise.resolve({ ...doc, policy: "ask" }),
+    };
+    const tool = withApproval(fakeTool(() => (ran = true)));
+    await tool.execute({}, api as never, { abortSignal: undefined } as never);
+    expect(ran).toBeTruthy();
+    expect(doc.pending).toStrictEqual({});
   });
 
   it("stops a pending call cleanly when the conversation ends", async () => {

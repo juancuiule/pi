@@ -6,6 +6,7 @@ import { HttpApiBuilder } from "effect/http-api";
 
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
+import { loopbackOnly } from "./loopback.ts";
 
 // AgentEvents are plain JSON (they are what pi-durable commits); the cast only names that for the SSE schema.
 const asJson = (event: AgentEvent) => event as unknown as Schema.Json;
@@ -54,5 +55,6 @@ const infoHandlers = (info: { readonly model: string }) =>
 
 export const apiLayer = (info: { readonly model: string }) =>
   HttpApiBuilder.layer(Api).pipe(
-    Layer.provide(Layer.mergeAll(ConversationsHandlers, infoHandlers(info)))
+    Layer.provide(Layer.mergeAll(ConversationsHandlers, infoHandlers(info))),
+    Layer.merge(loopbackOnly)
   );

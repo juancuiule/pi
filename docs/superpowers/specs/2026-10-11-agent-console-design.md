@@ -12,8 +12,8 @@ A local, single-user web UI to run several agent conversations at once, each wit
 2. A separate long-running Effect HTTP server owns the harness and the sandboxes. Next.js is UI only.
 3. The frontend is a `web/` package in the existing pnpm workspace.
 4. The UI streams full event detail per turn. A pass that shows only meaningful text comes later.
-5. Conversations live in memory until "End", an idle timeout, or server shutdown. They are not persisted.
-6. Local only, no auth.
+5. Conversations persist in a SQLite file (`EFFECT_PI_DB`) and stay listed after "End", an idle timeout, or a restart. A sandbox does not survive any of those: a shell/desktop conversation is then `ended` (`sandbox_removed`), while a chat (`sandbox: "none"`) resumes on its next prompt. Work still running at startup is aborted.
+6. Local only, no auth. The server binds to 127.0.0.1 and refuses any request whose `Host`, `Origin` or `X-Forwarded-Host` is not loopback (`src/server/loopback.ts`), so other websites cannot drive it from the browser.
 7. The model comes from the environment (`src/models.ts`), and the UI shows which one. Without one, the server uses a faux echo model.
 8. Transport: SSE `GET /api/conversations/:id/events` for events, `POST` for prompts.
 9. The wire format is pi-durable's `AgentEvent` (from `watchEvents`) as-is: a `snapshot` event, then events per commit. Each SSE message carries one event.
@@ -24,11 +24,12 @@ A local, single-user web UI to run several agent conversations at once, each wit
 14. Faux model fallback when no model is configured.
 15. Tests: server integration tests through `HttpApiClient` against the real server layer (faux model, local sandboxes), in `pnpm check`. Web: typecheck, lint, and unit tests of the event reducer.
 16. HTTP API:
-    - `GET /api/conversations` lists live root conversations (id, sandbox, sandboxId, vncUrl, title, status, createdAt).
-    - `POST /api/conversations { sandbox, prompt }` creates a conversation and sends the first prompt.
+    - `GET /api/conversations` lists root conversations, live and stored (id, sandbox, sandboxId, vncUrl, title, status, endedReason, pendingApprovals, createdAt).
+    - `POST /api/conversations { sandbox, prompt, approvals? }` creates a conversation and sends the first prompt.
     - `POST /api/conversations/:id/messages { prompt }` sends a follow-up.
     - `GET /api/conversations/:id/events` is SSE: `snapshot`, then events. It also works for subagent conversations.
-    - `DELETE /api/conversations/:id` ends the conversation and removes its sandbox.
+    - `DELETE /api/conversations/:id` ends the conversation and removes its sandbox; it stays listed as ended.
+    - `POST /api/conversations/:id/approvals { key, decision }` approves, denies or "always" approves a gated tool call.
     - `GET /api/info` returns the model.
     - The title is the first prompt, truncated to 60 characters.
 17. Schema-first `HttpApi` in `src/server/`, entry `server.ts` (`pnpm server`). `web/` imports the API definition from the root package (`effect-pi/api`) and derives a typed client.
@@ -47,4 +48,4 @@ A local, single-user web UI to run several agent conversations at once, each wit
 
 ## Later
 
-Cleaner event format, steer toggle, interactive shell (WebSocket + PTY), persistence, XState, Playwright.
+Cleaner event format, steer toggle, interactive shell (WebSocket + PTY), sandboxes that survive a restart, XState, Playwright.

@@ -63,6 +63,8 @@ interface Live {
   lastActivity: number;
   /** True from registration until the first run ends: `status` is still "idle" until `run_start` is consumed. */
   firstRunPending: boolean;
+  /** Held by sends and by `close`, so no send is admitted after the scope starts closing. */
+  readonly lock: Semaphore.Semaphore;
 }
 
 /** A stored conversation: metadata only, no live scope. */
@@ -194,15 +196,28 @@ export class Conversations extends Context.Service<
             if (entry === undefined) {
               return Effect.void;
             }
-            live.delete(id);
-            stored.set(id, {
-              meta: {
-                ...entry.meta,
-                ...(endedAt === undefined ? {} : { endedAt }),
-              },
-            });
-            return Scope.close(entry.scope, Exit.void);
+            return Effect.suspend(() => {
+              if (live.get(id) !== entry) {
+                return Effect.void;
+              }
+              live.delete(id);
+              stored.set(id, {
+                meta: {
+                  ...entry.meta,
+                  ...(endedAt === undefined ? {} : { endedAt }),
+                },
+              });
+              return Scope.close(entry.scope, Exit.void);
+            }).pipe(entry.lock.withPermit);
           });
+
+        // Submit to a live entry unless `close` got to it first; `false` means it is no longer live.
+        const sendLive = (id: number, entry: Live, prompt: string) =>
+          Effect.suspend(() =>
+            live.get(id) === entry
+              ? entry.conversation.send(prompt).pipe(Effect.as(true))
+              : Effect.succeed(false)
+          ).pipe(entry.lock.withPermit);
 
         // Register a live entry and start the fiber that tracks its status; the same steps `create`
         // takes after `start` and `send` takes after `attach`.
@@ -296,19 +311,32 @@ export class Conversations extends Context.Service<
                 status: "idle",
                 lastActivity: now,
                 firstRunPending: true,
+                lock: yield* Semaphore.make(1),
               };
               const id = Number(conversation.id);
               live.set(id, created);
               stored.delete(id);
               yield* release;
-              // A failure from here on must not leave the conversation, and its sandbox, registered.
+              // A failure from here on must not leave the conversation, and its sandbox, registered. The
+              // conversation is already persisted and cannot be deleted, so it is marked ended: it stays
+              // listed as ended instead of as a resumable chat that never got its first prompt.
               return yield* restore(
                 Effect.gen(function* () {
                   yield* track(created);
-                  yield* conversation.send(input.prompt);
+                  yield* sendLive(id, created, input.prompt);
                   return summaryOfLive(id, created);
                 })
-              ).pipe(Effect.onError(() => close(id)));
+              ).pipe(
+                Effect.onError(() =>
+                  Effect.gen(function* () {
+                    const endedAt = yield* Clock.currentTimeMillis;
+                    yield* close(id, endedAt);
+                    yield* Effect.ignore(
+                      agents.markEnded(id as ConversationId, endedAt)
+                    );
+                  })
+                )
+              );
             })
           );
         });
@@ -351,6 +379,7 @@ export class Conversations extends Context.Service<
                 status: "idle",
                 lastActivity: now,
                 firstRunPending: false,
+                lock: yield* Semaphore.make(1),
               };
               live.set(id, revived);
               stored.delete(id);
@@ -365,8 +394,12 @@ export class Conversations extends Context.Service<
           prompt: string
         ) {
           const liveEntry = live.get(id);
-          if (liveEntry !== undefined) {
-            return yield* liveEntry.conversation.send(prompt);
+          // A live entry that closed while this send waited falls through to the stored rules below.
+          if (
+            liveEntry !== undefined &&
+            (yield* sendLive(id, liveEntry, prompt))
+          ) {
+            return;
           }
           const storedEntry = stored.get(id);
           if (storedEntry === undefined) {
@@ -382,7 +415,11 @@ export class Conversations extends Context.Service<
             });
           }
           const revived = yield* resume(id, storedEntry);
-          return yield* revived.conversation.send(prompt);
+          if (yield* sendLive(id, revived, prompt)) {
+            return;
+          }
+          // Only End closes a just-resumed conversation (the sweep waits for it to go idle).
+          return yield* new ConversationEnded({ id, reason: "ended" });
         });
 
         const end = Effect.fn("Conversations.end")(function* (id: number) {
