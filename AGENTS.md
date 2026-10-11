@@ -37,12 +37,13 @@ To update: `git subtree pull --prefix=repos/pi https://github.com/earendil-works
 
 Use pnpm, never npm or yarn.
 
-- `pnpm start [--sandbox none|shell|desktop] [prompt]` runs `index.ts` (Node strips the types); the model comes from the environment, see Models below, and a faux model runs when none is configured
+- `pnpm start [--sandbox none|shell|desktop] [prompt]` runs `index.ts` with `.env` loaded (Node strips the types); the model comes from the environment, see Models below, and a faux model runs when none is configured
 - `pnpm typecheck` runs `tsc` (TypeScript 7)
 - `pnpm lint` / `pnpm lint:fix` run oxlint with the Ultracite core and vitest presets (`oxlint.config.ts`)
 - `pnpm format` / `pnpm format:check` run oxfmt with the Ultracite preset (`oxfmt.config.ts`)
 - `pnpm test` runs vitest over `src/**/*.test.ts`; tests use pi-ai's faux provider, never a real model, and local-directory sandboxes (`src/testing/sandboxes.ts`)
 - `pnpm sandbox:build` builds the Docker sandbox images; `pnpm test:docker` runs the `*.docker.test.ts` integration tests against real containers (not part of `pnpm check` or the hooks)
+- `pnpm langfuse:up` / `pnpm langfuse:down` start and stop a local Langfuse (see Observability)
 - `pnpm check` runs all of the above; run it after code changes
 
 Lefthook (`lefthook.yml`) runs these as git hooks: pre-commit formats and lint-fixes staged files, then runs typecheck and tests; pre-push runs `pnpm check`. Fix failures instead of skipping hooks.
@@ -69,3 +70,12 @@ The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "n
 - `OLLAMA_URL`: the Ollama server, `http://192.168.1.20:11434` by default (a LAN machine).
 
 Ollama goes through its OpenAI-compatible API. The model's tools, vision, thinking and context size are read from Ollama's `/api/show` at startup; a model without `num_ctx` set is assumed to have a 4096-token context.
+
+## Observability
+
+Agents are traced with Effect spans, exported to Langfuse over OTLP.
+
+- `src/tracing.ts`: pi-durable runs model requests and tool calls outside Effect, so a `tracing` extension (selected by every conversation) opens and closes their spans from `GenerationTask` and `ToolTask` hooks. Spans nest under the `AgentConversation.ask` span of their conversation; a subagent's spans go under the tool call that created it, in the same Langfuse session. Attributes follow Langfuse's OpenTelemetry mapping (`langfuse.observation.*`); base64 data such as screenshots is replaced by its size.
+- `src/langfuse.ts`: the OTLP exporter, enabled when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set (`LANGFUSE_BASE_URL` defaults to `http://localhost:3000`). Without them spans go to Effect's default tracer, which exports nothing.
+- `docker/langfuse/`: Langfuse's official compose file, bound to localhost. `pnpm langfuse:up` runs `init-env.ts` first, which writes random secrets and a headless-initialized org, project, API keys and user to `docker/langfuse/.env`, and the app's keys to `.env` (both git-ignored); it prints the login.
+- Langfuse v4 serves observations at `/api/public/v2/observations` (pass `fields=core,basic,io,usage,model`); `/api/public/traces` is gone.

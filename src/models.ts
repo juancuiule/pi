@@ -144,7 +144,7 @@ const pickProvider = (
 };
 
 /** The model the environment asks for, or `undefined` when it names none. */
-export const modelFromEnv = Effect.fn("modelFromEnv")(function* (
+export const modelFromEnv = Effect.fnUntraced(function* (
   env: NodeJS.ProcessEnv
 ) {
   const provider = yield* pickProvider(env);

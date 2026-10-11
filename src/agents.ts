@@ -32,6 +32,8 @@ import type {
 import type { SaveScreenshot } from "./screenshots.ts";
 import { Calculator } from "./tools/calculator.ts";
 import { desktopExtension } from "./tools/desktop.ts";
+import { makeAgentTracing } from "./tracing.ts";
+import type { AgentTracing } from "./tracing.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -135,23 +137,33 @@ export const extensionsFor = (
   }
 };
 
-const askIn = (conversation: Conversation) =>
-  Effect.fn("AgentConversation.ask")((prompt: string) =>
-    Effect.tryPromise({
-      try: async () => {
-        const submission = await conversation.submit(
-          { type: "input", content: prompt },
-          context
-        );
-        const settled = await submission.wait(context);
-        if (settled.status !== "done" || settled.type !== "input") {
-          throw new Error(`Run failed: ${settled.status}`);
-        }
-        return answerText(conversation, settled.answer);
-      },
-      catch: (cause) => new AgentError({ cause }),
-    })
-  );
+const askIn = (conversation: Conversation, tracing: AgentTracing) =>
+  Effect.fn("AgentConversation.ask")(function* (prompt: string) {
+    yield* Effect.annotateCurrentSpan({
+      "langfuse.observation.type": "agent",
+      "langfuse.observation.input": prompt,
+      "langfuse.session.id": String(conversation.id),
+    });
+    const answer = yield* tracing.traced(
+      conversation.id,
+      Effect.tryPromise({
+        try: async () => {
+          const submission = await conversation.submit(
+            { type: "input", content: prompt },
+            context
+          );
+          const settled = await submission.wait(context);
+          if (settled.status !== "done" || settled.type !== "input") {
+            throw new Error(`Run failed: ${settled.status}`);
+          }
+          return answerText(conversation, settled.answer);
+        },
+        catch: (cause) => new AgentError({ cause }),
+      })
+    );
+    yield* Effect.annotateCurrentSpan("langfuse.observation.output", answer);
+    return answer;
+  });
 
 export interface AgentConversation {
   readonly id: ConversationId;
@@ -187,6 +199,9 @@ export class Agents extends Context.Service<
       Effect.gen(function* () {
         const sandboxes = yield* Sandboxes;
         const registry = createRegistry();
+        // Spans for model requests and tool calls use the tracer this layer is built with.
+        const tracing = makeAgentTracing(yield* Effect.context<never>());
+        registry.install(tracing.extension);
         const desktop = desktopExtension(
           options.saveScreenshot === undefined
             ? {}
@@ -222,6 +237,10 @@ export class Agents extends Context.Service<
                     if (conversation.owner === undefined) {
                       return;
                     }
+                    tracing.childConversation(
+                      conversation.id,
+                      conversation.owner
+                    );
                     const owner = await tx.doc(
                       SandboxDoc,
                       conversation.owner.conversationId
@@ -260,7 +279,10 @@ export class Agents extends Context.Service<
                   ownership: { kind: "ownerless" },
                   agent: {
                     model: { ...options.model },
-                    extensions: extensionsFor(choice, desktop),
+                    extensions: [
+                      ...extensionsFor(choice, desktop),
+                      tracing.extension,
+                    ],
                   },
                   // Recorded in the creating commit, so no tool call can run before the sandbox is known.
                   init: async (tx, id) => {
@@ -277,7 +299,7 @@ export class Agents extends Context.Service<
           return {
             id: conversation.id,
             sandbox,
-            ask: askIn(conversation),
+            ask: askIn(conversation, tracing),
           } satisfies AgentConversation;
         });
 

@@ -8,7 +8,7 @@
   "type": "module",
   "main": "index.ts",
   "scripts": {
-    "start": "node index.ts",
+    "start": "node --env-file-if-exists=.env index.ts",
     "typecheck": "tsc",
     "lint": "oxlint --disable-nested-config",
     "lint:fix": "oxlint --disable-nested-config --fix",
@@ -18,7 +18,9 @@
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
     "prepare": "lefthook install",
     "test:docker": "DOCKER_TESTS=1 vitest run",
-    "sandbox:build": "docker build -t effect-pi/sandbox-shell -f docker/sandbox/shell.Dockerfile docker/sandbox && docker build -t effect-pi/sandbox-desktop -f docker/sandbox/desktop.Dockerfile docker/sandbox"
+    "sandbox:build": "docker build -t effect-pi/sandbox-shell -f docker/sandbox/shell.Dockerfile docker/sandbox && docker build -t effect-pi/sandbox-desktop -f docker/sandbox/desktop.Dockerfile docker/sandbox",
+    "langfuse:up": "node docker/langfuse/init-env.ts && docker compose -f docker/langfuse/docker-compose.yml -p langfuse up -d",
+    "langfuse:down": "docker compose -f docker/langfuse/docker-compose.yml -p langfuse down"
   },
   "dependencies": {
     "@earendil-works/chord": "^1.1.0",

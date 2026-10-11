@@ -14,6 +14,7 @@ import {
 import { Effect, Layer } from "effect";
 
 import { Agents } from "./src/agents.ts";
+import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromEnv } from "./src/models.ts";
 import * as DockerSandboxes from "./src/sandbox/docker.ts";
 import type { SandboxChoice } from "./src/sandbox/sandbox.ts";
@@ -118,16 +119,28 @@ const program = Effect.scoped(
     yield* Effect.log(`user: ${prompt}`);
     const answer = yield* conversation.ask(prompt);
     yield* Effect.log(`agent: ${answer}`);
+    yield* Effect.annotateCurrentSpan({
+      "langfuse.observation.input": prompt,
+      "langfuse.observation.output": answer,
+    });
     if (conversation.sandbox?.kind === "desktop") {
       yield* Effect.log(
         `screenshots: ${screenshotDir(SCREENSHOTS, conversation.sandbox.id)}`
       );
     }
   })
+).pipe(
+  // The trace root: one trace per run, tagged with the sandbox.
+  Effect.withSpan(`effect-pi ${sandbox}`, {
+    attributes: { "langfuse.trace.tags": [sandbox] },
+  })
 );
 
+// Agents is built with the Langfuse tracer, so the spans pi-durable's hooks create are exported too.
+const MainLive = Layer.provideMerge(AgentsLive, langfuseLayer(process.env));
+
 try {
-  await Effect.runPromise(program.pipe(Effect.provide(AgentsLive)));
+  await Effect.runPromise(program.pipe(Effect.provide(MainLive)));
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
