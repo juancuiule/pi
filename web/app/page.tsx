@@ -58,7 +58,8 @@ const Console = () => {
         {selectedId === undefined ? (
           <NewConversation onCreated={select} />
         ) : (
-          <div className="flex h-full min-h-0 flex-col">
+          // Keyed, so a draft or a take-control mode stays with its conversation.
+          <div key={selectedId} className="flex h-full min-h-0 flex-col">
             {conversation === undefined ? null : (
               <ConversationHeader
                 conversation={conversation}
@@ -79,7 +80,10 @@ const Console = () => {
         <>
           <ResizableHandle />
           <ResizablePanel defaultSize="35%" minSize="15%" collapsible>
-            <div className="m-2 h-[calc(100%-1rem)] overflow-hidden rounded-lg border">
+            <div
+              key={selectedId}
+              className="m-2 h-[calc(100%-1rem)] overflow-hidden rounded-lg border"
+            >
               {conversation.sandbox === "desktop" ? (
                 <DesktopPanel vncUrl={conversation.vncUrl} />
               ) : (
