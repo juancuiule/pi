@@ -7,8 +7,13 @@
   "author": "",
   "type": "module",
   "main": "index.ts",
+  "exports": {
+    "./api": "./src/server/api.ts"
+  },
   "scripts": {
     "start": "node --env-file-if-exists=.env index.ts",
+    "server": "node --env-file-if-exists=.env server.ts",
+    "dev:server": "node --watch --env-file-if-exists=.env server.ts",
     "typecheck": "tsc",
     "lint": "oxlint --disable-nested-config",
     "lint:fix": "oxlint --disable-nested-config --fix",
@@ -27,6 +32,7 @@
     "@earendil-works/pi-ai": "^1.1.0",
     "@earendil-works/pi-durable": "^1.1.0",
     "@earendil-works/pi-env": "1.1.0",
+    "@effect/platform-node": "4.0.2",
     "effect": "^4.0.2",
     "yaml": "^2.9.1"
   },
