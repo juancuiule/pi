@@ -11,7 +11,7 @@ export const echoModel = () => {
   const models = createModels();
   const faux = fauxProvider();
   models.setProvider(faux.provider);
-  // Faux responses are a queue; each answer queues the next one.
+  // Faux responses are a queue; each answer queues one more.
   const echo: FauxResponseStep = (request) => {
     faux.appendResponses([echo]);
     const last = request.messages.findLast((m) => m.role === "user");
@@ -23,6 +23,8 @@ export const echoModel = () => {
             .join("");
     return fauxAssistantMessage([fauxText(`echo: ${text}`)]);
   };
-  faux.setResponses([echo]);
+  // The provider takes a step from the queue at once but runs it, which queues the next one, a microtask later;
+  // spare copies keep requests that arrive in the same tick from finding the queue empty.
+  faux.setResponses(Array.from({ length: 8 }, () => echo));
   return { models, model: { provider: "faux", modelId: "faux-1" } };
 };
