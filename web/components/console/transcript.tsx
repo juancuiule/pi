@@ -2,6 +2,7 @@
 
 import type { AssistantMessage, EntryRecord } from "effect-pi/api";
 import { useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 
 import {
   Collapsible,
@@ -9,18 +10,28 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ConversationState } from "@/lib/conversation-state";
+import type { ConversationState, ToolRun } from "@/lib/conversation-state";
+import { subagentIdOf } from "@/lib/subagent";
 import { isNearBottom, userParts } from "@/lib/transcript";
 
+import { SubagentStream } from "./subagent";
 import { ToolCall } from "./tool-call";
+import type { ToolCallBlock } from "./tool-call";
+
+type RenderExtra = (
+  call: ToolCallBlock,
+  tool: ToolRun | undefined
+) => ReactNode;
 
 const AssistantBlocks = ({
   message,
   state,
+  renderExtra,
   caret,
 }: {
   message: AssistantMessage;
   state: ConversationState;
+  renderExtra: RenderExtra;
   caret?: boolean;
 }) => (
   <div className="flex flex-col gap-2">
@@ -54,7 +65,14 @@ const AssistantBlocks = ({
           );
         }
         case "toolCall": {
-          return <ToolCall key={block.id} call={block} state={state} />;
+          return (
+            <ToolCall
+              key={block.id}
+              call={block}
+              state={state}
+              renderExtra={renderExtra}
+            />
+          );
         }
         default: {
           return null;
@@ -67,9 +85,11 @@ const AssistantBlocks = ({
 const Entry = ({
   entry,
   state,
+  renderExtra,
 }: {
   entry: EntryRecord;
   state: ConversationState;
+  renderExtra: RenderExtra;
 }) => {
   const message = entry.model?.[0];
   if (message === undefined) {
@@ -101,7 +121,13 @@ const Entry = ({
       );
     }
     case "assistant": {
-      return <AssistantBlocks message={message} state={state} />;
+      return (
+        <AssistantBlocks
+          message={message}
+          state={state}
+          renderExtra={renderExtra}
+        />
+      );
     }
     default: {
       return null;
@@ -109,12 +135,56 @@ const Entry = ({
   }
 };
 
-export const Transcript = ({
+const Body = ({
   state,
-  ended = false,
+  ended,
+  renderExtra,
 }: {
   state: ConversationState;
-  ended?: boolean;
+  ended: boolean;
+  renderExtra: RenderExtra;
+}) => (
+  <>
+    {state.entries.map((entry) => (
+      <Entry
+        key={entry.id}
+        entry={entry}
+        state={state}
+        renderExtra={renderExtra}
+      />
+    ))}
+    {state.streaming === undefined ? null : (
+      <AssistantBlocks
+        message={state.streaming}
+        state={state}
+        renderExtra={renderExtra}
+        caret
+      />
+    )}
+    {state.failures.map((failure) => (
+      <p key={failure} role="alert" className="text-destructive text-sm">
+        {failure}
+      </p>
+    ))}
+    {state.running && state.streaming === undefined ? (
+      <p className="text-muted-foreground animate-pulse text-sm">Working…</p>
+    ) : null}
+    {ended ? (
+      <p className="bg-muted rounded-md px-3 py-2 text-center text-sm">
+        This conversation has ended.
+      </p>
+    ) : null}
+  </>
+);
+
+const ScrollingTranscript = ({
+  state,
+  ended,
+  renderExtra,
+}: {
+  state: ConversationState;
+  ended: boolean;
+  renderExtra: RenderExtra;
 }) => {
   const viewport = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
@@ -145,28 +215,43 @@ export const Transcript = ({
   return (
     <ScrollArea ref={root} className="min-h-0 flex-1">
       <div className="flex flex-col gap-3 p-4">
-        {state.entries.map((entry) => (
-          <Entry key={entry.id} entry={entry} state={state} />
-        ))}
-        {state.streaming === undefined ? null : (
-          <AssistantBlocks message={state.streaming} state={state} caret />
-        )}
-        {state.failures.map((failure) => (
-          <p key={failure} role="alert" className="text-destructive text-sm">
-            {failure}
-          </p>
-        ))}
-        {state.running && state.streaming === undefined ? (
-          <p className="text-muted-foreground animate-pulse text-sm">
-            Working…
-          </p>
-        ) : null}
-        {ended ? (
-          <p className="bg-muted rounded-md px-3 py-2 text-center text-sm">
-            This conversation has ended.
-          </p>
-        ) : null}
+        <Body state={state} ended={ended} renderExtra={renderExtra} />
       </div>
     </ScrollArea>
+  );
+};
+
+export const Transcript = ({
+  state,
+  ended = false,
+  nested = false,
+}: {
+  state: ConversationState;
+  ended?: boolean;
+  /** Inside a subagent card: no scroll area, no auto-scroll, no ended banner. */
+  nested?: boolean;
+}) => {
+  // oxlint-disable-next-line unicorn/consistent-function-scoping -- refers to `Transcript` itself (no-use-before-define forbids hoisting it)
+  const renderExtra: RenderExtra = (call, tool) => {
+    const id =
+      call.name === "subagent" ? subagentIdOf(tool?.details) : undefined;
+    return id === undefined ? null : (
+      <SubagentStream
+        id={id}
+        running={tool?.status !== "done"}
+        render={(child) => <Transcript state={child} nested />}
+      />
+    );
+  };
+  return nested ? (
+    <div className="border-border ml-2 flex flex-col gap-3 border-l-2 py-2 pl-3">
+      <Body state={state} ended={false} renderExtra={renderExtra} />
+    </div>
+  ) : (
+    <ScrollingTranscript
+      state={state}
+      ended={ended}
+      renderExtra={renderExtra}
+    />
   );
 };
