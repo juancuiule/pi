@@ -103,7 +103,6 @@ Agents are traced with Effect spans, exported to Langfuse over OTLP.
   - `faux.ts`: echo model, used when no model is configured.
 - Events: `Agents.events(id)` wraps pi-durable's `watchEvents` and attaches its watch when the effect runs, not when the stream is run. The returned stream is single-use and must be run; interrupting it stops the watch. SSE sends one `AgentEvent` per message, `snapshot` first. The `subagent` tool reports `details.conversationId`.
 - `web/`: Next.js App Router, shadcn, and TanStack Query for REST (`web/lib/queries.ts`). A Zustand store (`web/lib/store.ts`) is fed by the pure `applyEvent` in `web/lib/conversation-state.ts`.
-  - `web/lib/subscribe.ts` and `refcount.ts`: one shared SSE subscription per conversation id, stopped when its last caller unsubscribes. It reconnects after a drop and stops on a 404 (`ConversationNotFound`).
+  - `web/lib/subscribe.ts` and `refcount.ts`: one shared SSE subscription per conversation id, stopped when its last caller unsubscribes. It reconnects after a drop and stops on a 404 (`ConversationNotFound`). Each subscription holds one of the browser's 6 connections per host, so subagent cards subscribe only while open.
   - `terminal.ts`, `vnc.ts` and `subagent.ts`: pure helpers for the terminal text, the noVNC URL and subagent ids.
 - `web/next.config.ts` rewrites `/api/*` to `127.0.0.1:4000` with compression off, so SSE isn't buffered, and `experimental.proxyTimeout` at a day: the proxy otherwise cuts any stream silent for 30s, and the server sends no heartbeat.
-- Without a browser, the UI is checked by `pnpm --filter web build` plus the tests.
