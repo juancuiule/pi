@@ -4,6 +4,7 @@ import {
   clickCommand,
   dragCommand,
   keyCommand,
+  normalizeKeys,
   scrollCommand,
   typeCommand,
 } from "./desktop.ts";
@@ -48,6 +49,17 @@ describe("desktop commands", () => {
       "ctrl+l",
       "Return",
     ]);
+  });
+
+  it.for([
+    ["ctrl+s Return", "ctrl+s Return"],
+    ['["Return"]', "Return"],
+    ['["ctrl+s", "enter"]', "ctrl+s Return"],
+    ["control+shift+t", "ctrl+shift+t"],
+    ['"Escape"', "Escape"],
+    ["ctrl+s, esc", "ctrl+s Escape"],
+  ] as const)("repairs the keys %j to %j", ([keys, expected]) => {
+    expect(normalizeKeys(keys)).toBe(expected);
   });
 
   it("maps scroll directions to X11 buttons 4 to 7", () => {

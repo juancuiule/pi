@@ -55,6 +55,60 @@ export const typeCommand = (text: string): string[] => [
   text,
 ];
 
+// Key names models use that are not X11 keysyms, lowercased.
+const KEY_ALIASES: Record<string, string> = {
+  enter: "Return",
+  return: "Return",
+  esc: "Escape",
+  escape: "Escape",
+  control: "ctrl",
+  cmd: "super",
+  command: "super",
+  win: "super",
+  meta: "super",
+  del: "Delete",
+  delete: "Delete",
+  backspace: "BackSpace",
+  tab: "Tab",
+  up: "Up",
+  down: "Down",
+  left: "Left",
+  right: "Right",
+  pageup: "Page_Up",
+  pagedown: "Page_Down",
+  home: "Home",
+  end: "End",
+};
+
+/**
+ * Repair key sequences the way models commonly get them wrong: a JSON array (`["ctrl+s", "Return"]`) instead of a
+ * space-separated string, surrounding quotes, and key names such as `enter` or `control` that xdotool does not know.
+ */
+export const normalizeKeys = (keys: string): string => {
+  let text = keys.trim();
+  if (text.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        text = parsed.map(String).join(" ");
+      }
+    } catch {
+      // Not JSON after all; use it as typed.
+    }
+  }
+  return text
+    .replaceAll(/["']/gu, "")
+    .split(/[\s,]+/u)
+    .filter((sequence) => sequence !== "")
+    .map((sequence) =>
+      sequence
+        .split("+")
+        .map((part) => KEY_ALIASES[part.toLowerCase()] ?? part)
+        .join("+")
+    )
+    .join(" ");
+};
+
 export const keyCommand = (keys: string): string[] => [
   "xdotool",
   "key",
@@ -229,6 +283,10 @@ const key = defineTool({
   parameters: Type.Object({
     keys: Type.String({ description: "Keys to press, in order" }),
   }),
+  prepareArguments: (args) => {
+    const { keys } = args as { keys?: unknown };
+    return { keys: typeof keys === "string" ? normalizeKeys(keys) : "" };
+  },
   execute: async (args, api, context) => {
     await run(api.env, keyCommand(args.keys), context);
     return done(`Pressed ${args.keys}.`);
