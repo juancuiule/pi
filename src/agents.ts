@@ -23,13 +23,11 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { Context, Effect, Layer, Schema } from "effect";
 import type { Scope } from "effect";
 
-import { SandboxDoc, Sandboxes } from "./sandbox/sandbox.ts";
-import type {
-  SandboxChoice,
-  SandboxError,
-  SandboxInfo,
-} from "./sandbox/sandbox.ts";
+import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
+import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
 import type { SaveScreenshot } from "./screenshots.ts";
+import { installSkills, skillsExtension } from "./skills.ts";
+import type { Skill } from "./skills.ts";
 import { Calculator } from "./tools/calculator.ts";
 import { desktopExtension } from "./tools/desktop.ts";
 import { makeAgentTracing } from "./tracing.ts";
@@ -193,6 +191,8 @@ export class Agents extends Context.Service<
     readonly model: AgentModel;
     /** Keep every desktop screenshot on the host as well; see `saveScreenshotsTo`. */
     readonly saveScreenshot?: SaveScreenshot;
+    /** Skills every conversation can load (see `src/skills.ts`); copied into each sandbox. */
+    readonly skills?: readonly Skill[];
   }) =>
     Layer.effect(
       Agents,
@@ -202,6 +202,12 @@ export class Agents extends Context.Service<
         // Spans for model requests and tool calls use the tracer this layer is built with.
         const tracing = makeAgentTracing(yield* Effect.context<never>());
         registry.install(tracing.extension);
+        const skills = options.skills ?? [];
+        const skillExtensions =
+          skills.length === 0 ? [] : [skillsExtension(skills)];
+        for (const extension of skillExtensions) {
+          registry.install(extension);
+        }
         const desktop = desktopExtension(
           options.saveScreenshot === undefined
             ? {}
@@ -272,6 +278,16 @@ export class Agents extends Context.Service<
                   ),
                   (created) => Effect.ignore(sandboxes.remove(created))
                 );
+          if (sandbox !== undefined && skills.length > 0) {
+            yield* Effect.tryPromise({
+              try: () => installSkills(sandboxes.env(sandbox), skills, context),
+              catch: (cause) =>
+                new SandboxError({
+                  message: `Could not copy skills into ${sandbox.id}`,
+                  cause,
+                }),
+            });
+          }
           const conversation = yield* Effect.tryPromise({
             try: () =>
               harness.createConversation(
@@ -281,6 +297,7 @@ export class Agents extends Context.Service<
                     model: { ...options.model },
                     extensions: [
                       ...extensionsFor(choice, desktop),
+                      ...skillExtensions,
                       tracing.extension,
                     ],
                   },

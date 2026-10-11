@@ -19,6 +19,7 @@ import { modelFromEnv } from "./src/models.ts";
 import * as DockerSandboxes from "./src/sandbox/docker.ts";
 import type { SandboxChoice } from "./src/sandbox/sandbox.ts";
 import { saveScreenshotsTo, screenshotDir } from "./src/screenshots.ts";
+import { expandSkillCommand, loadSkills } from "./src/skills.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -78,6 +79,13 @@ const fauxScripts: Record<SandboxChoice, FauxResponseStep[]> = {
 
 // Every desktop screenshot is kept in screenshots/<sandbox id>/, numbered in order.
 const SCREENSHOTS = "screenshots";
+
+// Skills from skills/<name>/SKILL.md; `/skill:<name> request` forces one.
+const { skills, problems } = loadSkills("skills");
+for (const problem of problems) {
+  console.warn(`skipped skill ${problem}`);
+}
+const message = expandSkillCommand(prompt, skills);
 const saveScreenshot = saveScreenshotsTo(SCREENSHOTS);
 
 const AgentsLive = Layer.unwrap(
@@ -87,7 +95,7 @@ const AgentsLive = Layer.unwrap(
       yield* Effect.log(
         `model: ${setup.model.provider}/${setup.model.modelId}`
       );
-      return Agents.layer({ ...setup, saveScreenshot });
+      return Agents.layer({ ...setup, saveScreenshot, skills });
     }
     yield* Effect.logWarning(
       "No model configured (MODEL_PROVIDER, ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY), using a scripted faux model"
@@ -100,6 +108,7 @@ const AgentsLive = Layer.unwrap(
       models,
       model: { provider: "faux", modelId: "faux-1" },
       saveScreenshot,
+      skills,
     });
   })
 ).pipe(Layer.provide(DockerSandboxes.layer()));
@@ -117,7 +126,7 @@ const program = Effect.scoped(
       yield* Effect.log(`watch the desktop: ${conversation.sandbox.vncUrl}`);
     }
     yield* Effect.log(`user: ${prompt}`);
-    const answer = yield* conversation.ask(prompt);
+    const answer = yield* conversation.ask(message);
     yield* Effect.log(`agent: ${answer}`);
     yield* Effect.annotateCurrentSpan({
       "langfuse.observation.input": prompt,

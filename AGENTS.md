@@ -61,6 +61,15 @@ The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "n
 - `Agents.layer({ saveScreenshot })` keeps every desktop screenshot on the host (`src/screenshots.ts`); `index.ts` saves them to `screenshots/<sandbox id>/001.png`, `002.png`, ... (git-ignored).
 - microsandbox can replace Docker for `shell` on Apple Silicon or Linux with KVM; it does not run on this Intel Mac. A new backend only implements the `Sandboxes` service.
 
+## Skills
+
+`skills/<name>/SKILL.md` folders are [Agent Skills](https://agentskills.io/specification); `skills/README.md` explains the format for authors.
+
+- `src/skills.ts` loads and validates them (`loadSkills`), lists names and descriptions in a `skills` system prompt section, and adds a `skill` tool that returns `SKILL.md` or a bundled file from the host, so skills work without a sandbox. `Agents.layer({ skills })` installs them; sandboxed conversations also get a copy at `.skills/<name>/` (`installSkills`, through the sandbox's `ExecutionEnv`), so bundled scripts run there.
+- `/skill:<name> <request>` as the prompt forces a skill (`expandSkillCommand`); `disable-model-invocation: true` hides a skill from the list.
+- pi-durable passes sections as `sections` on the system message, beside `content`; the provider assembles the prompt. Tests that inspect the prompt read `sections`.
+- A test loads `skills/` and fails on any problem, so edits to a skill are checked by `pnpm test`.
+
 ## Models
 
 `src/models.ts` picks the model from environment variables:

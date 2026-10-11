@@ -11,9 +11,13 @@ import { Effect, Layer } from "effect";
 
 import { Agents } from "../agents.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
+import type { Skill } from "../skills.ts";
 import { localSandboxes } from "./sandboxes.ts";
 
-export const fauxAgents = (responses: FauxResponseStep[]) => {
+export const fauxAgents = (
+  responses: FauxResponseStep[],
+  options: { readonly skills?: readonly Skill[] } = {}
+) => {
   const models = createModels();
   const faux = fauxProvider();
   models.setProvider(faux.provider);
@@ -25,6 +29,7 @@ export const fauxAgents = (responses: FauxResponseStep[]) => {
     layer: Agents.layer({
       models,
       model: { provider: "faux", modelId: "faux-1" },
+      ...options,
     }).pipe(Layer.provide(sandboxes.layer)),
   };
 };
