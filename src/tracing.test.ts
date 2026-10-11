@@ -99,6 +99,29 @@ describe("agent tracing", () => {
   });
 });
 
+describe("failed tool calls", () => {
+  it("records why the tool failed", async () => {
+    const { spans, tracer } = recordingTracer();
+    const { layer } = fauxAgents([
+      callTool("calculate", { op: "divide", a: 1, b: 0 }),
+      fauxAssistantMessage([fauxText("Cannot divide by zero.")]),
+    ]);
+
+    await Effect.runPromise(
+      ask("What is 1 / 0?").pipe(
+        Effect.provide(layer),
+        Effect.provideService(Tracer.Tracer, tracer)
+      )
+    );
+
+    const tool = spans.find((span) => span.name === "tool calculate");
+    expect({
+      level: tool?.attributes.get("langfuse.observation.level"),
+      message: tool?.attributes.get("langfuse.observation.status_message"),
+    }).toStrictEqual({ level: "ERROR", message: "Division by zero" });
+  });
+});
+
 describe(traceJson, () => {
   it("leaves images out", () => {
     const image = {

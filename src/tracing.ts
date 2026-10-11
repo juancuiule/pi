@@ -155,12 +155,23 @@ export const makeAgentTracing = (
           });
         },
         afterTool: (_call, result, api) => {
+          // A tool that throws has no content; its message is in the diagnostics.
+          const errors = (result.diagnostics ?? [])
+            .filter((diagnostic) => diagnostic.severity === "error")
+            .map((diagnostic) => diagnostic.message);
           end(
             api.taskId,
             {
-              "langfuse.observation.output": traceJson(result.content),
+              "langfuse.observation.output": traceJson(
+                result.content === undefined || result.content.length === 0
+                  ? errors
+                  : result.content
+              ),
               ...(result.isError === true
-                ? { "langfuse.observation.level": "ERROR" }
+                ? {
+                    "langfuse.observation.level": "ERROR",
+                    "langfuse.observation.status_message": errors.join("\n"),
+                  }
                 : {}),
             },
             result.isError !== true
