@@ -145,7 +145,7 @@ const askIn = (conversation: Conversation, tracing: AgentTracing) =>
     yield* Effect.annotateCurrentSpan({
       "langfuse.observation.type": "agent",
       "langfuse.observation.input": prompt,
-      "langfuse.session.id": String(conversation.id),
+      "langfuse.session.id": tracing.sessionOf(conversation.id),
     });
     const answer = yield* tracing.traced(
       conversation.id,
@@ -173,7 +173,7 @@ const sendIn = (conversation: Conversation, tracing: AgentTracing) =>
     yield* Effect.annotateCurrentSpan({
       "langfuse.observation.type": "agent",
       "langfuse.observation.input": prompt,
-      "langfuse.session.id": String(conversation.id),
+      "langfuse.session.id": tracing.sessionOf(conversation.id),
     });
     // Admitted without waiting: a busy conversation queues it as a follow-up, and the answer arrives as events.
     yield* tracing.traced(

@@ -32,6 +32,21 @@ const tree = (spans: readonly Tracer.NativeSpan[]) =>
     .filter((span) => !span.name.startsWith("Agents."))
     .map((span) => `${span.name} < ${parentName(span) ?? "-"}`);
 
+/** The Langfuse session of one run: a fresh Agents layer asking one prompt. */
+const sessionOfRun = async () => {
+  const { spans, tracer } = recordingTracer();
+  const { layer } = fauxAgents([fauxAssistantMessage([fauxText("hi")])]);
+  await Effect.runPromise(
+    ask("Say hi.").pipe(
+      Effect.provide(layer),
+      Effect.provideService(Tracer.Tracer, tracer)
+    )
+  );
+  return spans
+    .find((span) => span.name === "AgentConversation.ask")
+    ?.attributes.get("langfuse.session.id");
+};
+
 describe("agent tracing", () => {
   it("nests model requests and tool calls under the ask", async () => {
     const { spans, tracer } = recordingTracer();
@@ -96,6 +111,15 @@ describe("agent tracing", () => {
         .filter((session) => session !== undefined)
     );
     expect(sessions.size).toBe(1);
+  });
+
+  it("keeps separate runs in separate sessions, though conversation ids restart", async () => {
+    const first = await sessionOfRun();
+    const second = await sessionOfRun();
+
+    expect(first).toMatch(/^[0-9a-f]{8}-\d+$/u);
+    expect(second).toMatch(/^[0-9a-f]{8}-\d+$/u);
+    expect(first).not.toBe(second);
   });
 });
 

@@ -64,6 +64,8 @@ export interface AgentTracing {
     conversationId: ConversationId,
     effect: Effect.Effect<A, E, R>
   ): Effect.Effect<A, E, R>;
+  /** The Langfuse session of a conversation: unique per process, since conversation ids restart with each run. */
+  sessionOf(conversationId: ConversationId): string;
   /** A subagent's conversation: its spans go under the tool call that created it, in its owner's session. */
   childConversation(
     conversationId: ConversationId,
@@ -81,9 +83,11 @@ export const makeAgentTracing = (
   const run = Effect.runSyncWith(services);
   const parents = new Map<ConversationId, Tracer.AnySpan>();
   // Langfuse session per conversation: a subagent's conversation joins the session of the conversation it serves.
+  // Conversation ids restart with every process (MemoryStorage), so a per-process prefix keeps runs apart.
+  const runId = crypto.randomUUID().slice(0, 8);
   const sessions = new Map<ConversationId, string>();
   const sessionOf = (conversationId: ConversationId) =>
-    sessions.get(conversationId) ?? String(conversationId);
+    sessions.get(conversationId) ?? `${runId}-${conversationId}`;
   // One open span per task: a generation task makes one request at a time, a tool task is one call.
   const open = new Map<TaskId, Tracer.Span>();
 
@@ -183,6 +187,7 @@ export const makeAgentTracing = (
 
   return {
     extension,
+    sessionOf,
     traced: (conversationId, effect) =>
       Effect.flatMap(Effect.currentSpan.pipe(Effect.option), (span) => {
         if (span._tag === "Some") {
