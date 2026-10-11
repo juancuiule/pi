@@ -1176,14 +1176,12 @@ const ConversationsHandlers = HttpApiBuilder.group(
     return handlers
       .handle("list", () => conversations.list)
       .handle("create", ({ payload }) =>
-        conversations
-          .create(payload)
-          .pipe(
-            Effect.catchTags({
-              AgentError: Effect.die,
-              SandboxError: Effect.die,
-            })
-          )
+        conversations.create(payload).pipe(
+          Effect.catchTags({
+            AgentError: Effect.die,
+            SandboxError: Effect.die,
+          })
+        )
       )
       .handle("send", ({ params, payload }) =>
         conversations
