@@ -17,6 +17,7 @@ import { Agents } from "./src/agents.ts";
 import { modelFromEnv } from "./src/models.ts";
 import * as DockerSandboxes from "./src/sandbox/docker.ts";
 import type { SandboxChoice } from "./src/sandbox/sandbox.ts";
+import { saveScreenshotsTo, screenshotDir } from "./src/screenshots.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -74,6 +75,10 @@ const fauxScripts: Record<SandboxChoice, FauxResponseStep[]> = {
   ],
 };
 
+// Every desktop screenshot is kept in screenshots/<sandbox id>/, numbered in order.
+const SCREENSHOTS = "screenshots";
+const saveScreenshot = saveScreenshotsTo(SCREENSHOTS);
+
 const AgentsLive = Layer.unwrap(
   Effect.gen(function* () {
     const setup = yield* modelFromEnv(process.env);
@@ -81,7 +86,7 @@ const AgentsLive = Layer.unwrap(
       yield* Effect.log(
         `model: ${setup.model.provider}/${setup.model.modelId}`
       );
-      return Agents.layer(setup);
+      return Agents.layer({ ...setup, saveScreenshot });
     }
     yield* Effect.logWarning(
       "No model configured (MODEL_PROVIDER, ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY), using a scripted faux model"
@@ -93,6 +98,7 @@ const AgentsLive = Layer.unwrap(
     return Agents.layer({
       models,
       model: { provider: "faux", modelId: "faux-1" },
+      saveScreenshot,
     });
   })
 ).pipe(Layer.provide(DockerSandboxes.layer()));
@@ -112,6 +118,11 @@ const program = Effect.scoped(
     yield* Effect.log(`user: ${prompt}`);
     const answer = yield* conversation.ask(prompt);
     yield* Effect.log(`agent: ${answer}`);
+    if (conversation.sandbox?.kind === "desktop") {
+      yield* Effect.log(
+        `screenshots: ${screenshotDir(SCREENSHOTS, conversation.sandbox.id)}`
+      );
+    }
   })
 );
 

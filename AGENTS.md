@@ -57,6 +57,7 @@ The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "n
 - The sandbox is removed when the scope around `start` closes.
 - The sandbox choice also selects extensions (`extensionsFor`): `shell` adds pi's `CodingTools`, `desktop` adds those plus the desktop tools in `src/tools/desktop.ts`.
 - Backend: local Docker (`src/sandbox/docker.ts`, images in `docker/sandbox/`). Each container gets the `@earendil-works/pi-env` daemon and is reached through `RemoteExecutionEnv` over `docker exec -i`. The desktop image follows E2B's desktop template (XFCE, Xvfb, xdotool, scrot, noVNC on 6080) and publishes noVNC on a random localhost port (`SandboxInfo.vncUrl`).
+- `Agents.layer({ saveScreenshot })` keeps every desktop screenshot on the host (`src/screenshots.ts`); `index.ts` saves them to `screenshots/<sandbox id>/001.png`, `002.png`, ... (git-ignored).
 - microsandbox can replace Docker for `shell` on Apple Silicon or Linux with KVM; it does not run on this Intel Mac. A new backend only implements the `Sandboxes` service.
 
 ## Models

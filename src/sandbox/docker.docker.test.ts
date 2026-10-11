@@ -1,5 +1,8 @@
 // Integration tests against real Docker containers. Run with `pnpm test:docker` after `pnpm sandbox:build`.
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
@@ -13,6 +16,8 @@ import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents.ts";
+import { saveScreenshotsTo } from "../screenshots.ts";
+import type { SaveScreenshot } from "../screenshots.ts";
 import { ask, callTool, echoToolResult } from "../testing/faux.ts";
 import * as DockerSandboxes from "./docker.ts";
 import { Sandboxes } from "./sandbox.ts";
@@ -22,7 +27,10 @@ const containerExists = (name: string) =>
     encoding: "utf-8",
   }).trim() !== "";
 
-const dockerAgents = (responses: FauxResponseStep[]) => {
+const dockerAgents = (
+  responses: FauxResponseStep[],
+  saveScreenshot?: SaveScreenshot
+) => {
   const models = createModels();
   const faux = fauxProvider();
   models.setProvider(faux.provider);
@@ -30,6 +38,7 @@ const dockerAgents = (responses: FauxResponseStep[]) => {
   return Agents.layer({
     models,
     model: { provider: "faux", modelId: "faux-1" },
+    ...(saveScreenshot === undefined ? {} : { saveScreenshot }),
   }).pipe(Layer.provide(DockerSandboxes.layer()));
 };
 
@@ -63,27 +72,36 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       expect(containerExists(name)).toBeFalsy();
     });
 
-    it("gives the model a PNG screenshot of the desktop", async () => {
-      const layer = dockerAgents([
-        callTool("desktop_screenshot", {}),
-        (request) => {
-          const result = request.messages.findLast(
-            (m) => m.role === "toolResult"
-          );
-          const image = result?.content.find((c) => c.type === "image");
-          const header =
-            image === undefined
-              ? ""
-              : Buffer.from(image.data, "base64").subarray(1, 4).toString();
-          return fauxAssistantMessage([fauxText(header)]);
-        },
-      ]);
+    it("gives the model a PNG screenshot of the desktop and keeps it on the host", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "effect-pi-screenshots-"));
+      const layer = dockerAgents(
+        [
+          callTool("desktop_screenshot", {}),
+          (request) => {
+            const result = request.messages.findLast(
+              (m) => m.role === "toolResult"
+            );
+            const image = result?.content.find((c) => c.type === "image");
+            const header =
+              image === undefined
+                ? ""
+                : Buffer.from(image.data, "base64").subarray(1, 4).toString();
+            return fauxAssistantMessage([fauxText(header)]);
+          },
+        ],
+        saveScreenshotsTo(root)
+      );
 
       const answer = await Effect.runPromise(
         ask("Look at the screen.", "desktop").pipe(Effect.provide(layer))
       );
 
       expect(answer).toBe("PNG");
+      // One folder for the sandbox, holding the one screenshot.
+      const [sandboxDir] = readdirSync(root);
+      const saved = readFileSync(path.join(root, sandboxDir ?? "", "001.png"));
+      expect(saved.subarray(1, 4).toString()).toBe("PNG");
+      rmSync(root, { recursive: true, force: true });
     });
 
     it("moves the mouse where the model clicks", async () => {

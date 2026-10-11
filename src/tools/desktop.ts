@@ -6,6 +6,9 @@ import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import type { Extension } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 
+import { SandboxDoc } from "../sandbox/sandbox.ts";
+import type { SaveScreenshot } from "../screenshots.ts";
+
 const SCREENSHOT_PATH = "/tmp/effect-pi-screenshot.png";
 
 export type MouseButton = "left" | "middle" | "right";
@@ -143,30 +146,41 @@ const coordinate = (description: string) =>
 
 // ─── Tools ───────────────────────────────────────────────────────────────────
 
-const screenshot = defineTool({
-  name: "desktop_screenshot",
-  description:
-    "Take a screenshot of the desktop. Do this before acting and after each action to see the result. Coordinates for the other desktop tools are pixels in this image.",
-  parameters: Type.Object({}),
-  replay: "safe",
-  execute: async (_args, api, context) => {
-    const env = requireEnv(api.env);
-    await run(env, ["scrot", "--overwrite", SCREENSHOT_PATH], context);
-    const image = await env.readBinaryFile(SCREENSHOT_PATH, context);
-    if (!image.ok) {
-      throw new Error(`Could not read the screenshot: ${image.error.message}`);
-    }
-    return {
-      content: [
-        {
-          type: "image",
-          data: Buffer.from(image.value).toString("base64"),
-          mimeType: "image/png",
-        },
-      ],
-    };
-  },
-});
+const screenshotTool = (save: SaveScreenshot | undefined) =>
+  defineTool({
+    name: "desktop_screenshot",
+    description:
+      "Take a screenshot of the desktop. Do this before acting and after each action to see the result. Coordinates for the other desktop tools are pixels in this image.",
+    parameters: Type.Object({}),
+    replay: "safe",
+    execute: async (_args, api, context) => {
+      const env = requireEnv(api.env);
+      await run(env, ["scrot", "--overwrite", SCREENSHOT_PATH], context);
+      const image = await env.readBinaryFile(SCREENSHOT_PATH, context);
+      if (!image.ok) {
+        throw new Error(
+          `Could not read the screenshot: ${image.error.message}`
+        );
+      }
+      const doc = await api.snapshot(SandboxDoc, api.conversationId, context);
+      const savedTo = await save?.(image.value, {
+        sandboxId: doc?.sandbox?.id ?? `conversation-${api.conversationId}`,
+        conversationId: api.conversationId,
+        callId: api.callId,
+      });
+      return {
+        content: [
+          {
+            type: "image",
+            data: Buffer.from(image.value).toString("base64"),
+            mimeType: "image/png",
+          },
+        ],
+        // Not shown to the model; where the host kept the image.
+        ...(savedTo === undefined ? {} : { details: { savedTo } }),
+      };
+    },
+  });
 
 // Actions change the desktop, so a crash mid-call must not repeat them: no `replay: "safe"`.
 const click = defineTool({
@@ -264,7 +278,18 @@ const drag = defineTool({
   },
 });
 
-export const Desktop: Extension = defineExtension({
-  name: "desktop",
-  tools: [screenshot, click, typeText, key, scroll, drag],
-});
+/** The desktop tools. With `saveScreenshot`, every screenshot is also kept on the host. */
+export const desktopExtension = (
+  options: { readonly saveScreenshot?: SaveScreenshot } = {}
+): Extension =>
+  defineExtension({
+    name: "desktop",
+    tools: [
+      screenshotTool(options.saveScreenshot),
+      click,
+      typeText,
+      key,
+      scroll,
+      drag,
+    ],
+  });

@@ -29,8 +29,9 @@ import type {
   SandboxError,
   SandboxInfo,
 } from "./sandbox/sandbox.ts";
+import type { SaveScreenshot } from "./screenshots.ts";
 import { Calculator } from "./tools/calculator.ts";
-import { Desktop } from "./tools/desktop.ts";
+import { desktopExtension } from "./tools/desktop.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -114,7 +115,10 @@ export interface AgentModel {
 }
 
 /** The extensions a conversation runs with, by the sandbox the user picked. */
-export const extensionsFor = (choice: SandboxChoice): Extension[] => {
+export const extensionsFor = (
+  choice: SandboxChoice,
+  desktop: Extension = desktopExtension()
+): Extension[] => {
   switch (choice) {
     case "none": {
       return [Subagent, Calculator];
@@ -123,7 +127,7 @@ export const extensionsFor = (choice: SandboxChoice): Extension[] => {
       return [Subagent, Calculator, CodingTools];
     }
     case "desktop": {
-      return [Subagent, Calculator, CodingTools, Desktop];
+      return [Subagent, Calculator, CodingTools, desktop];
     }
     default: {
       throw new TypeError(`Unknown sandbox choice: ${choice satisfies never}`);
@@ -175,13 +179,20 @@ export class Agents extends Context.Service<
   static readonly layer = (options: {
     readonly models: MutableModels;
     readonly model: AgentModel;
+    /** Keep every desktop screenshot on the host as well; see `saveScreenshotsTo`. */
+    readonly saveScreenshot?: SaveScreenshot;
   }) =>
     Layer.effect(
       Agents,
       Effect.gen(function* () {
         const sandboxes = yield* Sandboxes;
         const registry = createRegistry();
-        for (const extension of extensionsFor("desktop")) {
+        const desktop = desktopExtension(
+          options.saveScreenshot === undefined
+            ? {}
+            : { saveScreenshot: options.saveScreenshot }
+        );
+        for (const extension of extensionsFor("desktop", desktop)) {
           registry.install(extension);
         }
 
@@ -249,7 +260,7 @@ export class Agents extends Context.Service<
                   ownership: { kind: "ownerless" },
                   agent: {
                     model: { ...options.model },
-                    extensions: extensionsFor(choice),
+                    extensions: extensionsFor(choice, desktop),
                   },
                   // Recorded in the creating commit, so no tool call can run before the sandbox is known.
                   init: async (tx, id) => {
