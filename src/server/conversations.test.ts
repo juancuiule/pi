@@ -3,7 +3,7 @@ import {
   fauxAssistantMessage,
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, Fiber, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
@@ -161,5 +161,28 @@ describe(Conversations, () => {
     );
 
     expect(sandboxes.live.size).toBe(0);
+  });
+
+  it("leaks neither a sandbox nor a cap slot when a create is interrupted", async () => {
+    const { layer, sandboxes } = setup([answer("a")], { maxSandboxes: 1 });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        for (const delay of [0, 1, 3, 6]) {
+          const fiber = yield* Effect.forkChild(
+            conversations.create({ sandbox: "shell", prompt: "x" })
+          );
+          yield* Effect.sleep(`${delay} millis`);
+          yield* Fiber.interrupt(fiber);
+          for (const summary of yield* conversations.list) {
+            yield* conversations.end(summary.id);
+          }
+          expect(sandboxes.live.size).toBe(0);
+        }
+        // The cap slot is free again.
+        yield* conversations.create({ sandbox: "shell", prompt: "y" });
+      }).pipe(Effect.provide(layer))
+    );
   });
 });

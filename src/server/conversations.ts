@@ -132,9 +132,7 @@ export class Conversations extends Context.Service<
             return Scope.close(entry.scope, Exit.void);
           });
 
-        yield* Effect.addFinalizer(() =>
-          Effect.forEach([...live.keys()], close, { discard: true })
-        );
+        const layerScope = yield* Scope.Scope;
 
         const reserveSandbox = (sandbox: SandboxChoice) =>
           Effect.suspend(() => {
@@ -157,53 +155,68 @@ export class Conversations extends Context.Service<
           readonly sandbox: SandboxChoice;
           readonly prompt: string;
         }) {
-          const reserved = yield* reserveSandbox(input.sandbox);
-          const scope = yield* Scope.make();
-          const conversation = yield* agents
-            .start({ sandbox: input.sandbox })
-            .pipe(
-              Scope.provide(scope),
-              Effect.onError(() => Scope.close(scope, Exit.void)),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  if (reserved) {
-                    creating -= 1;
-                  }
-                })
-              )
-            );
-          const id = Number(conversation.id);
-          const now = yield* Clock.currentTimeMillis;
-          const entry: Live = {
-            conversation,
-            scope,
-            sandbox: input.sandbox,
-            title: titleOf(input.prompt),
-            createdAt: now,
-            status: "idle",
-            lastActivity: now,
-          };
-          live.set(id, entry);
-          // A failure from here on must not leave the conversation, and its sandbox, registered.
-          return yield* Effect.gen(function* () {
-            // The conversation was just started, so it is always found.
-            const events = yield* agents
-              .events(conversation.id)
-              .pipe(Effect.orDie);
-            yield* events.pipe(
-              Stream.runForEach((event) =>
+          // Reserve, start and register cannot be interrupted between steps, or a sandbox would leak; only
+          // `start` itself may be interrupted, and then its scope and reservation are released here.
+          return yield* Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const reserved = yield* reserveSandbox(input.sandbox);
+              const release = Effect.sync(() => {
+                if (reserved) {
+                  creating -= 1;
+                }
+              });
+              const now = yield* Clock.currentTimeMillis;
+              // Forked from the layer's scope, so tearing the layer down closes it even mid-create.
+              const scope = yield* Scope.fork(layerScope);
+              const started = yield* Effect.exit(
+                restore(
+                  agents
+                    .start({ sandbox: input.sandbox })
+                    .pipe(Scope.provide(scope))
+                )
+              );
+              if (Exit.isFailure(started)) {
+                yield* Scope.close(scope, Exit.void);
+                yield* release;
+                return yield* Effect.failCause(started.cause);
+              }
+              const conversation = started.value;
+              const created: Live = {
+                conversation,
+                scope,
+                sandbox: input.sandbox,
+                title: titleOf(input.prompt),
+                createdAt: now,
+                status: "idle",
+                lastActivity: now,
+              };
+              live.set(Number(conversation.id), created);
+              yield* release;
+              const id = Number(conversation.id);
+              // A failure from here on must not leave the conversation, and its sandbox, registered.
+              return yield* restore(
                 Effect.gen(function* () {
-                  const time = yield* Clock.currentTimeMillis;
-                  entry.status = statusAfter(entry.status, event);
-                  entry.lastActivity = time;
+                  // The conversation was just started, so it is always found.
+                  const events = yield* agents
+                    .events(conversation.id)
+                    .pipe(Effect.orDie);
+                  yield* events.pipe(
+                    Stream.runForEach((event) =>
+                      Effect.gen(function* () {
+                        const time = yield* Clock.currentTimeMillis;
+                        created.status = statusAfter(created.status, event);
+                        created.lastActivity = time;
+                      })
+                    ),
+                    Effect.ignore,
+                    Effect.forkIn(created.scope)
+                  );
+                  yield* conversation.send(input.prompt);
+                  return summaryOf(id, created);
                 })
-              ),
-              Effect.ignore,
-              Effect.forkIn(scope)
-            );
-            yield* conversation.send(input.prompt);
-            return summaryOf(id, entry);
-          }).pipe(Effect.onError(() => close(id)));
+              ).pipe(Effect.onError(() => close(id)));
+            })
+          );
         });
 
         const find = (id: number) =>
