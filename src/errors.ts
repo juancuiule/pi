@@ -6,3 +6,8 @@ export class ConversationNotFound extends Schema.TaggedError<ConversationNotFoun
   "ConversationNotFound",
   { id: Schema.Number }
 ) {}
+
+export class SandboxLimitReached extends Schema.TaggedError<SandboxLimitReached>()(
+  "SandboxLimitReached",
+  { limit: Schema.Number }
+) {}
