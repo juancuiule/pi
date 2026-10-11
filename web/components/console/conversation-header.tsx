@@ -1,8 +1,10 @@
 "use client";
 
 import type { ConversationSummary } from "effect-pi/api";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { apiError } from "@/lib/api";
 import type { ConversationState } from "@/lib/conversation-state";
 import { totalUsage } from "@/lib/conversation-state";
 import { useEndConversation, useInfo } from "@/lib/queries";
@@ -25,8 +27,16 @@ export const ConversationHeader = ({
   const onEnd = () => {
     // oxlint-disable-next-line no-alert -- a native confirm is the intended guard for this destructive action
     if (window.confirm("End this conversation and remove its sandbox?")) {
-      end.mutate(conversation.id);
-      onEnded();
+      end.mutate(conversation.id, {
+        onSuccess: onEnded,
+        onError: (error) => {
+          // Already gone on the server: nothing left to end, so leave the conversation.
+          if (error.message === apiError({ _tag: "ConversationNotFound" })) {
+            onEnded();
+          }
+          toast.error(error.message);
+        },
+      });
     }
   };
 
@@ -47,8 +57,13 @@ export const ConversationHeader = ({
           {state.queued > 0 ? <span>{state.queued} queued</span> : null}
         </div>
       </div>
-      <Button variant="destructive" size="sm" onClick={onEnd}>
-        End
+      <Button
+        variant="destructive"
+        size="sm"
+        disabled={end.isPending}
+        onClick={onEnd}
+      >
+        {end.isPending ? "Ending…" : "End"}
       </Button>
     </header>
   );
