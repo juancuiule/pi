@@ -327,31 +327,37 @@ export class Agents extends Context.Service<
                 }),
             });
           }
-          const conversation = yield* Effect.tryPromise({
-            try: () =>
-              harness.createConversation(
-                {
-                  ownership: { kind: "ownerless" },
-                  agent: {
-                    model: { ...options.model },
-                    extensions: [
-                      ...extensionsFor(choice, desktop),
-                      ...skillExtensions,
-                      tracing.extension,
-                    ],
+          // Acquired after the sandbox, so closing the scope stops the run, its queued inputs and its subagents
+          // before the sandbox is removed.
+          const conversation = yield* Effect.acquireRelease(
+            Effect.tryPromise({
+              try: () =>
+                harness.createConversation(
+                  {
+                    ownership: { kind: "ownerless" },
+                    agent: {
+                      model: { ...options.model },
+                      extensions: [
+                        ...extensionsFor(choice, desktop),
+                        ...skillExtensions,
+                        tracing.extension,
+                      ],
+                    },
+                    // Recorded in the creating commit, so no tool call can run before the sandbox is known.
+                    init: async (tx, id) => {
+                      if (sandbox !== undefined) {
+                        const doc = await tx.doc(SandboxDoc, id);
+                        doc.sandbox = sandbox;
+                      }
+                    },
                   },
-                  // Recorded in the creating commit, so no tool call can run before the sandbox is known.
-                  init: async (tx, id) => {
-                    if (sandbox !== undefined) {
-                      const doc = await tx.doc(SandboxDoc, id);
-                      doc.sandbox = sandbox;
-                    }
-                  },
-                },
-                context
-              ),
-            catch: (cause) => new AgentError({ cause }),
-          });
+                  context
+                ),
+              catch: (cause) => new AgentError({ cause }),
+            }),
+            (created) =>
+              Effect.ignore(Effect.tryPromise(() => created.abort(context)))
+          );
           return {
             id: conversation.id,
             sandbox,

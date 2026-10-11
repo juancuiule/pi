@@ -3,7 +3,7 @@ import {
   fauxAssistantMessage,
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Effect, Exit, Fiber, Layer } from "effect";
+import { Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
@@ -93,6 +93,49 @@ describe(Conversations, () => {
     expect(Exit.isFailure(exit)).toBeTruthy();
     expect(JSON.stringify(exit)).toContain("ConversationNotFound");
   });
+
+  it("ends a running conversation, stopping its run before the sandbox goes", async () => {
+    const { layer, sandboxes, faux } = setup([
+      callTool("bash", { command: "sleep 5" }),
+      echoToolResult,
+    ]);
+
+    const started = Date.now();
+    const snapshot = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "sleep",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "running")
+          )
+        );
+        // The bash call is in progress: only its follow-up turn is still queued.
+        yield* waitUntil(
+          Effect.sync(() => faux.getPendingResponseCount() === 1)
+        );
+        yield* conversations.end(created.id);
+        expect(sandboxes.live.size).toBe(0);
+        // The harness still knows the conversation; its snapshot shows no run.
+        const events = yield* conversations.events(created.id);
+        return yield* events.pipe(Stream.runHead);
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(snapshot._tag === "Some" && snapshot.value.type).toBe("snapshot");
+    expect(
+      snapshot._tag === "Some" &&
+        snapshot.value.type === "snapshot" &&
+        snapshot.value.run
+    ).toBeUndefined();
+    // The follow-up model turn never ran, and End did not wait for the sleep.
+    expect(faux.getPendingResponseCount()).toBe(1);
+    expect(faux.state.callCount).toBe(1);
+    expect(Date.now() - started).toBeLessThan(5000);
+  }, 30_000);
 
   it("refuses sandboxes past the cap, even when created concurrently", async () => {
     const { layer } = setup([answer("a"), answer("b"), answer("c")], {

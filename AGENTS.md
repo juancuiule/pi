@@ -59,7 +59,7 @@ Some Ultracite rules are turned off in `oxlint.config.ts` because they conflict 
 The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "none" | "shell" | "desktop" })` in `src/agents.ts`.
 
 - The sandbox is created before the conversation and recorded in its `SandboxDoc` (`src/sandbox/sandbox.ts`) in the creating commit. The harness `env` function reads that document on every tool call; subagents inherit their owner's sandbox through `conversationCreated`.
-- The sandbox is removed when the scope around `start` closes.
+- When the scope around `start` closes, the conversation is aborted (its run, queued inputs and subagents stop), then the sandbox is removed. The server's End closes that scope.
 - The sandbox choice also selects extensions (`extensionsFor`): `shell` adds pi's `CodingTools`, `desktop` adds those plus the desktop tools in `src/tools/desktop.ts`.
 - Backend: local Docker (`src/sandbox/docker.ts`, images in `docker/sandbox/`). Each container gets the `@earendil-works/pi-env` daemon and is reached through `RemoteExecutionEnv` over `docker exec -i`. The desktop image follows E2B's desktop template (XFCE, Xvfb, xdotool, scrot, noVNC on 6080) and publishes noVNC on a random localhost port (`SandboxInfo.vncUrl`).
 - `Agents.layer({ saveScreenshot })` keeps every desktop screenshot on the host (`src/screenshots.ts`); `index.ts` saves them to `screenshots/<sandbox id>/001.png`, `002.png`, ... (git-ignored).
