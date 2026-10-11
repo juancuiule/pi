@@ -1,4 +1,4 @@
-// Test helpers: an Agents layer backed by pi-ai's scripted faux model.
+// Test helpers: an Agents layer backed by pi-ai's scripted faux model and local-directory sandboxes.
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import {
@@ -7,29 +7,37 @@ import {
   fauxText,
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 
 import { Agents } from "../agents.ts";
+import type { SandboxChoice } from "../sandbox/sandbox.ts";
+import { localSandboxes } from "./sandboxes.ts";
 
 export const fauxAgents = (responses: FauxResponseStep[]) => {
   const models = createModels();
   const faux = fauxProvider();
   models.setProvider(faux.provider);
   faux.setResponses(responses);
+  const sandboxes = localSandboxes();
   return {
     faux,
+    sandboxes,
     layer: Agents.layer({
       models,
       model: { provider: "faux", modelId: "faux-1" },
-    }),
+    }).pipe(Layer.provide(sandboxes.layer)),
   };
 };
 
-export const ask = (prompt: string) =>
-  Effect.gen(function* () {
-    const agents = yield* Agents;
-    return yield* agents.ask(prompt);
-  });
+/** Start a conversation with the given sandbox, ask one prompt, and end it. */
+export const ask = (prompt: string, sandbox: SandboxChoice = "none") =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const agents = yield* Agents;
+      const conversation = yield* agents.start({ sandbox });
+      return yield* conversation.ask(prompt);
+    })
+  );
 
 /** A model turn that calls one tool. */
 export const callTool = (

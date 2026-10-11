@@ -1,4 +1,5 @@
-// An Effect service over a pi-durable harness whose root agent can spawn subagents through a tool.
+// An Effect service over a pi-durable harness. Each conversation is started with the sandbox the user picks
+// (none, shell or desktop); its agent can spawn subagents, which share that sandbox.
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -14,12 +15,22 @@ import {
 } from "@earendil-works/pi-durable";
 import type {
   Conversation,
+  ConversationId,
   EntryId,
   Extension,
 } from "@earendil-works/pi-durable";
+import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { Context, Effect, Layer, Schema } from "effect";
+import type { Scope } from "effect";
 
+import { SandboxDoc, Sandboxes } from "./sandbox/sandbox.ts";
+import type {
+  SandboxChoice,
+  SandboxError,
+  SandboxInfo,
+} from "./sandbox/sandbox.ts";
 import { Calculator } from "./tools/calculator.ts";
+import { Desktop } from "./tools/desktop.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -102,10 +113,63 @@ export interface AgentModel {
   readonly modelId: string;
 }
 
+/** The extensions a conversation runs with, by the sandbox the user picked. */
+export const extensionsFor = (choice: SandboxChoice): Extension[] => {
+  switch (choice) {
+    case "none": {
+      return [Subagent, Calculator];
+    }
+    case "shell": {
+      return [Subagent, Calculator, CodingTools];
+    }
+    case "desktop": {
+      return [Subagent, Calculator, CodingTools, Desktop];
+    }
+    default: {
+      throw new TypeError(`Unknown sandbox choice: ${choice satisfies never}`);
+    }
+  }
+};
+
+const askIn = (conversation: Conversation) =>
+  Effect.fn("AgentConversation.ask")((prompt: string) =>
+    Effect.tryPromise({
+      try: async () => {
+        const submission = await conversation.submit(
+          { type: "input", content: prompt },
+          context
+        );
+        const settled = await submission.wait(context);
+        if (settled.status !== "done" || settled.type !== "input") {
+          throw new Error(`Run failed: ${settled.status}`);
+        }
+        return answerText(conversation, settled.answer);
+      },
+      catch: (cause) => new AgentError({ cause }),
+    })
+  );
+
+export interface AgentConversation {
+  readonly id: ConversationId;
+  /** The conversation's sandbox; `undefined` when started with `sandbox: "none"`. */
+  readonly sandbox: SandboxInfo | undefined;
+  ask(prompt: string): Effect.Effect<string, AgentError>;
+}
+
 export class Agents extends Context.Service<
   Agents,
   {
-    ask(prompt: string): Effect.Effect<string, AgentError>;
+    /**
+     * Start a conversation, creating its sandbox first. The sandbox is removed when the scope closes, so wrap a
+     * conversation's lifetime in `Effect.scoped`.
+     */
+    start(options: {
+      readonly sandbox: SandboxChoice;
+    }): Effect.Effect<
+      AgentConversation,
+      AgentError | SandboxError,
+      Scope.Scope
+    >;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -115,9 +179,11 @@ export class Agents extends Context.Service<
     Layer.effect(
       Agents,
       Effect.gen(function* () {
+        const sandboxes = yield* Sandboxes;
         const registry = createRegistry();
-        registry.install(Subagent);
-        registry.install(Calculator);
+        for (const extension of extensionsFor("desktop")) {
+          registry.install(extension);
+        }
 
         // The harness is opened when the layer is built and closed when it is torn down.
         const harness = yield* Effect.acquireRelease(
@@ -125,37 +191,86 @@ export class Agents extends Context.Service<
             try: () =>
               Harness.open(
                 new MemoryStorage(),
-                { models: options.models, registry },
+                {
+                  models: options.models,
+                  registry,
+                  // Every tool call runs in the sandbox its conversation recorded; without one there is no
+                  // environment, and the file, shell and desktop tools fail with an error result.
+                  env: async ({ conversationId, read }, envContext) => {
+                    const doc = await read.snapshot(
+                      SandboxDoc,
+                      conversationId,
+                      envContext
+                    );
+                    return doc?.sandbox === undefined
+                      ? undefined
+                      : sandboxes.env(doc.sandbox);
+                  },
+                  // A subagent's conversation works in its owner's sandbox.
+                  conversationCreated: async (tx, conversation) => {
+                    if (conversation.owner === undefined) {
+                      return;
+                    }
+                    const owner = await tx.doc(
+                      SandboxDoc,
+                      conversation.owner.conversationId
+                    );
+                    if (owner.sandbox !== undefined) {
+                      const child = await tx.doc(SandboxDoc, conversation.id);
+                      child.sandbox = owner.sandbox;
+                    }
+                  },
+                },
                 context
               ),
             catch: (cause) => new AgentError({ cause }),
           }),
           (opened) => Effect.promise(() => opened.close(context))
         );
-        const root = yield* Effect.tryPromise({
-          try: () =>
-            harness.root(context, { agent: { model: { ...options.model } } }),
-          catch: (cause) => new AgentError({ cause }),
+
+        const start = Effect.fn("Agents.start")(function* (startOptions: {
+          readonly sandbox: SandboxChoice;
+        }) {
+          const choice = startOptions.sandbox;
+          const sandbox =
+            choice === "none"
+              ? undefined
+              : yield* Effect.acquireRelease(
+                  sandboxes.create(
+                    choice,
+                    `effect-pi-${choice}-${crypto.randomUUID().slice(0, 8)}`
+                  ),
+                  (created) => Effect.ignore(sandboxes.remove(created))
+                );
+          const conversation = yield* Effect.tryPromise({
+            try: () =>
+              harness.createConversation(
+                {
+                  ownership: { kind: "ownerless" },
+                  agent: {
+                    model: { ...options.model },
+                    extensions: extensionsFor(choice),
+                  },
+                  // Recorded in the creating commit, so no tool call can run before the sandbox is known.
+                  init: async (tx, id) => {
+                    if (sandbox !== undefined) {
+                      const doc = await tx.doc(SandboxDoc, id);
+                      doc.sandbox = sandbox;
+                    }
+                  },
+                },
+                context
+              ),
+            catch: (cause) => new AgentError({ cause }),
+          });
+          return {
+            id: conversation.id,
+            sandbox,
+            ask: askIn(conversation),
+          } satisfies AgentConversation;
         });
 
-        const ask = Effect.fn("Agents.ask")((prompt: string) =>
-          Effect.tryPromise({
-            try: async () => {
-              const submission = await root.submit(
-                { type: "input", content: prompt },
-                context
-              );
-              const settled = await submission.wait(context);
-              if (settled.status !== "done" || settled.type !== "input") {
-                throw new Error(`Run failed: ${settled.status}`);
-              }
-              return answerText(root, settled.answer);
-            },
-            catch: (cause) => new AgentError({ cause }),
-          })
-        );
-
-        return Agents.of({ ask });
+        return Agents.of({ start });
       })
     );
 }

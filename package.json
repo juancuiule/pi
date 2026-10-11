@@ -16,7 +16,9 @@
     "format:check": "oxfmt --check",
     "test": "vitest run",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
-    "prepare": "lefthook install"
+    "prepare": "lefthook install",
+    "test:docker": "DOCKER_TESTS=1 vitest run",
+    "sandbox:build": "docker build -t effect-pi/sandbox-shell -f docker/sandbox/shell.Dockerfile docker/sandbox && docker build -t effect-pi/sandbox-desktop -f docker/sandbox/desktop.Dockerfile docker/sandbox"
   },
   "dependencies": {
     "@earendil-works/chord": "^1.1.0",
