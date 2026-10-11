@@ -4,7 +4,7 @@
 import { createServer } from "node:http";
 
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
-import { Effect, Layer } from "effect";
+import { Duration, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 
 import { Agents } from "./src/agents.ts";
@@ -46,7 +46,12 @@ const ConversationsLive = Conversations.layer({
 const ServerLive = HttpRouter.serve(apiLayer({ model: modelName })).pipe(
   Layer.provide(ConversationsLive),
   Layer.provide(
-    NodeHttpServer.layer(createServer, { port: PORT, host: "127.0.0.1" })
+    NodeHttpServer.layer(createServer, {
+      port: PORT,
+      host: "127.0.0.1",
+      // SSE connections never close on their own; do not wait for them (the default is 20s) before removing sandboxes.
+      gracefulShutdownTimeout: Duration.seconds(1),
+    })
   ),
   Layer.provide(langfuseLayer(process.env))
 );
