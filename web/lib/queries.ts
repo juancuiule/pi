@@ -25,8 +25,11 @@ export const useInfo = () =>
 export const useCreateConversation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { sandbox: SandboxChoice; prompt: string }) =>
-      runApi((c) => c.conversations.create({ payload })),
+    mutationFn: (payload: {
+      sandbox: SandboxChoice;
+      prompt: string;
+      approvals?: "ask" | "auto";
+    }) => runApi((c) => c.conversations.create({ payload })),
     onSuccess: (created: ConversationSummary) => {
       queryClient.setQueryData<readonly ConversationSummary[]>(LIST, (all) => [
         ...(all ?? []),
@@ -43,6 +46,17 @@ export const useSendMessage = (id: number) =>
         c.conversations.send({ params: { id }, payload: { prompt } })
       ),
   });
+
+export const useDecideApproval = (id: number) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: {
+      key: string;
+      decision: "approve" | "deny" | "always";
+    }) => runApi((c) => c.conversations.approvals({ params: { id }, payload })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: LIST }),
+  });
+};
 
 export const useEndConversation = () => {
   const queryClient = useQueryClient();

@@ -4,7 +4,7 @@ const API_URL = process.env.API_URL ?? "http://127.0.0.1:4000";
 
 const nextConfig: NextConfig = {
   // effect-pi/api is TypeScript source in the workspace
-  transpilePackages: ["effect-pi"],
+  transpilePackages: ["effect-pi", "@wterm/dom", "@wterm/react"],
   // Compression buffers responses, which would hold SSE events back
   compress: false,
   experimental: {

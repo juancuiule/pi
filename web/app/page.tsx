@@ -1,8 +1,11 @@
 "use client";
 
+import type { ConversationSummary } from "effect-pi/api";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
+import type { ReactNode } from "react";
+import { usePanelRef } from "react-resizable-panels";
 
 import { ConversationHeader } from "@/components/console/conversation-header";
 import { DesktopPanel } from "@/components/console/desktop-panel";
@@ -10,16 +13,20 @@ import { MessageInput } from "@/components/console/message-input";
 import { NewConversation } from "@/components/console/new-conversation";
 import { Sidebar } from "@/components/console/sidebar";
 import { Transcript } from "@/components/console/transcript";
+import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { useConversations } from "@/lib/queries";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { ApprovalContext } from "@/lib/approval-context";
+import { useConversations, useDecideApproval } from "@/lib/queries";
 import { useConversationStore } from "@/lib/store";
 import { useConversationEvents } from "@/lib/use-conversation-events";
+import { useMediaQuery } from "@/lib/use-media-query";
 
-// xterm touches `window`, so the terminal never renders on the server.
+// wterm loads its WASM at runtime, so the terminal never renders on the server.
 const TerminalPanel = dynamic(
   async () => {
     const mod = await import("@/components/console/terminal-panel");
@@ -28,10 +35,71 @@ const TerminalPanel = dynamic(
   { ssr: false }
 );
 
+const pageTitle = (conversation: ConversationSummary | undefined): string =>
+  conversation === undefined
+    ? "New conversation · effect-pi"
+    : `${conversation.pendingApprovals > 0 ? "(Approval needed) " : ""}${conversation.title} · effect-pi`;
+
+/** Ended when the SSE 404'd (unknown id) or the summary says so; the reason picks the notice copy. */
+const endedOf = (
+  gone: boolean,
+  conversation: ConversationSummary | undefined
+) => gone || conversation?.status === "ended";
+
 const parseId = (value: string | null): number | undefined => {
   const id = value === null ? Number.NaN : Number(value);
   return Number.isInteger(id) ? id : undefined;
 };
+
+const EndedNotice = ({
+  reason,
+  onNew,
+}: {
+  reason?: string;
+  onNew: () => void;
+}) => (
+  <div className="mx-auto flex w-full max-w-3xl items-center justify-center gap-3 px-4 pb-6">
+    <span className="text-muted-foreground text-sm">
+      {reason === "sandbox_removed"
+        ? "Its sandbox was removed, so this conversation can't continue."
+        : "This conversation has ended."}
+    </span>
+    <Button variant="outline" size="sm" onClick={onNew}>
+      New conversation
+    </Button>
+  </div>
+);
+
+const Composer = ({
+  id,
+  running,
+  ended,
+  reason,
+  onNew,
+}: {
+  id: number;
+  running: boolean;
+  ended: boolean;
+  reason?: string;
+  onNew: () => void;
+}) =>
+  ended ? (
+    <EndedNotice reason={reason} onNew={onNew} />
+  ) : (
+    <MessageInput id={id} running={running} />
+  );
+
+const NotFound = ({ onNew }: { onNew: () => void }) => (
+  <div className="flex h-full flex-col items-center justify-center gap-2 p-6">
+    <h1 className="text-base font-medium">Conversation not found</h1>
+    <p className="text-muted-foreground text-sm">
+      It may have ended, or the server restarted.
+    </p>
+    <Button variant="outline" size="sm" className="mt-2" onClick={onNew}>
+      New conversation
+    </Button>
+  </div>
+);
 
 const Console = () => {
   const router = useRouter();
@@ -39,61 +107,142 @@ const Console = () => {
   const select = (id: number) => router.push(`/?c=${id}`);
   const clear = () => router.push("/");
 
+  // Tailwind's md breakpoint: below it the sidebar is a Sheet and the side panel is hidden.
+  const isDesktop = useMediaQuery("(min-width: 48rem)");
+  const sidePanel = usePanelRef();
+  const [sideCollapsed, setSideCollapsed] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
   const state = useConversationEvents(selectedId);
-  const ended = useConversationStore((store) =>
+  const decideApproval = useDecideApproval(selectedId ?? 0);
+  const gone = useConversationStore((store) =>
     selectedId === undefined ? false : store.ended[selectedId] === true
   );
   const { data } = useConversations();
   const conversation = data?.find((c) => c.id === selectedId);
+  const ended = endedOf(gone, conversation);
   const showSandbox =
     conversation !== undefined && conversation.sandbox !== "none";
+  // Not in the loaded list and either not yet marked ended or nothing arrived to show anyway.
+  const notFound =
+    selectedId !== undefined &&
+    data !== undefined &&
+    conversation === undefined &&
+    !(ended && state.entries.length > 0);
+
+  const toggleSidePanel = () => {
+    const panel = sidePanel.current;
+    if (panel === null) {
+      return;
+    }
+    if (panel.isCollapsed()) {
+      panel.expand();
+    } else {
+      panel.collapse();
+    }
+  };
+
+  // While the list loads, show nothing: flashing a composer for a conversation that may not exist is worse.
+  let main: ReactNode = null;
+  if (selectedId === undefined) {
+    main = (
+      <NewConversation onCreated={select} onMenu={() => setMenuOpen(true)} />
+    );
+  } else if (data !== undefined) {
+    main = notFound ? (
+      <NotFound onNew={clear} />
+    ) : (
+      // Keyed, so a draft or a take-control mode stays with its conversation.
+      <ApprovalContext.Provider key={selectedId} value={decideApproval}>
+        <div className="flex h-full min-h-0 flex-col">
+          {conversation === undefined ? null : (
+            <ConversationHeader
+              conversation={conversation}
+              state={state}
+              onEnded={clear}
+              onMenu={() => setMenuOpen(true)}
+              sidePanel={
+                showSandbox && isDesktop
+                  ? {
+                      label:
+                        conversation.sandbox === "desktop"
+                          ? "desktop"
+                          : "terminal",
+                      collapsed: sideCollapsed,
+                      toggle: toggleSidePanel,
+                    }
+                  : undefined
+              }
+            />
+          )}
+          <Transcript state={state} />
+          <Composer
+            id={selectedId}
+            running={state.running}
+            ended={ended}
+            reason={conversation?.endedReason}
+            onNew={clear}
+          />
+        </div>
+      </ApprovalContext.Provider>
+    );
+  }
 
   return (
-    <ResizablePanelGroup orientation="horizontal" className="h-screen">
-      <ResizablePanel defaultSize="20%" minSize="12%">
-        <Sidebar selectedId={selectedId} onSelect={select} onNew={clear} />
-      </ResizablePanel>
-      <ResizableHandle />
-      <ResizablePanel minSize="30%">
-        {selectedId === undefined ? (
-          <NewConversation onCreated={select} />
-        ) : (
-          // Keyed, so a draft or a take-control mode stays with its conversation.
-          <div key={selectedId} className="flex h-full min-h-0 flex-col">
-            {conversation === undefined ? null : (
-              <ConversationHeader
-                conversation={conversation}
-                state={state}
-                onEnded={clear}
-              />
-            )}
-            <Transcript state={state} ended={ended} />
-            <MessageInput
-              id={selectedId}
-              running={state.running}
-              ended={ended}
-            />
-          </div>
-        )}
-      </ResizablePanel>
-      {showSandbox ? (
-        <>
-          <ResizableHandle />
-          <ResizablePanel defaultSize="35%" minSize="15%" collapsible>
-            <div
-              key={selectedId}
-              className="m-2 h-[calc(100%-1rem)] overflow-hidden rounded-lg border"
-            >
-              {conversation.sandbox === "desktop" ? (
-                <DesktopPanel vncUrl={conversation.vncUrl} />
-              ) : (
-                <TerminalPanel state={state} />
-              )}
-            </div>
+    <>
+      <title>{pageTitle(conversation)}</title>
+      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+        <SheetContent side="left" className="w-72">
+          <SheetTitle className="sr-only">Conversations</SheetTitle>
+          <Sidebar
+            selectedId={selectedId}
+            onSelect={(id) => {
+              setMenuOpen(false);
+              select(id);
+            }}
+            onNew={() => {
+              setMenuOpen(false);
+              clear();
+            }}
+          />
+        </SheetContent>
+      </Sheet>
+      {isDesktop === true ? (
+        <ResizablePanelGroup orientation="horizontal" className="h-dvh">
+          <ResizablePanel defaultSize="260px" minSize="220px" maxSize="420px">
+            <Sidebar selectedId={selectedId} onSelect={select} onNew={clear} />
           </ResizablePanel>
-        </>
+          <ResizableHandle />
+          <ResizablePanel minSize="30%">{main}</ResizablePanel>
+          {showSandbox ? (
+            <>
+              <ResizableHandle />
+              <ResizablePanel
+                panelRef={sidePanel}
+                defaultSize="35%"
+                minSize="15%"
+                collapsible
+                onResize={(size) => setSideCollapsed(size.asPercentage === 0)}
+              >
+                <div key={selectedId} className="h-full min-h-0">
+                  {conversation.sandbox === "desktop" ? (
+                    <DesktopPanel
+                      vncUrl={conversation.vncUrl}
+                      ended={conversation.status === "ended"}
+                    />
+                  ) : (
+                    <TerminalPanel state={state} />
+                  )}
+                </div>
+              </ResizablePanel>
+            </>
+          ) : null}
+        </ResizablePanelGroup>
       ) : null}
-    </ResizablePanelGroup>
+      {isDesktop === false ? (
+        <div className="flex h-dvh flex-col">{main}</div>
+      ) : null}
+    </>
   );
 };
 

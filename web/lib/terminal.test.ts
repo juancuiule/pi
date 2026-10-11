@@ -2,7 +2,7 @@ import type { AgentEvent, EntryRecord } from "effect-pi/api";
 import { describe, expect, it } from "vitest";
 
 import { applyEvent, initialState } from "./conversation-state";
-import { terminalText } from "./terminal";
+import { TERMINAL_RESET, terminalText, terminalWrite } from "./terminal";
 
 const entry = (id: number, message: unknown) =>
   ({
@@ -32,6 +32,12 @@ const result = (id: string, ...texts: string[]) => ({
   role: "toolResult",
   toolCallId: id,
   content: texts.map((text) => ({ type: "text", text })),
+});
+const resultWithAnsi = (id: string, text: string, ansi: string) => ({
+  role: "toolResult",
+  toolCallId: id,
+  content: [{ type: "text", text }],
+  details: { ansi },
 });
 
 describe(terminalText, () => {
@@ -123,5 +129,89 @@ describe(terminalText, () => {
   it("does not throw on a streaming tool call without arguments", () => {
     const state = run([{ role: "assistant", content: [call("a")] }]);
     expect(terminalText(state)).toBe("$ ");
+  });
+
+  it("prefers the raw ANSI stream in a finished call's details", () => {
+    const state = run([
+      { role: "assistant", content: [call("a", { command: "tput" })] },
+      resultWithAnsi("a", "red plain\n", "\u001B[31mred\u001B[0m plain\n"),
+    ]);
+    expect(terminalText(state)).toBe("$ tput\r\n\u001B[31mred\u001B[0m plain");
+  });
+
+  it("uses a running call's details.ansi over its live output", () => {
+    const state = run(
+      [
+        {
+          role: "assistant",
+          content: [call("a", { command: "make" })],
+        },
+      ],
+      {
+        type: "tool_execution_update",
+        toolCallId: "a",
+        toolName: "bash",
+        output: { set: "step 1" },
+        details: { ansi: "\u001B[36mstep 1\u001B[0m" },
+      } as AgentEvent
+    );
+    expect(terminalText(state)).toBe("$ make\r\n\u001B[36mstep 1\u001B[0m");
+  });
+
+  it("falls back to the sanitized content when there are no details", () => {
+    const state = run([
+      { role: "assistant", content: [call("a", { command: "ls" })] },
+      result("a", "file.txt\n"),
+    ]);
+    expect(terminalText(state)).toBe("$ ls\r\nfile.txt");
+  });
+
+  it("hides a call that is still waiting for approval", () => {
+    const state = run(
+      [
+        { role: "assistant", content: [call("a", { command: "ls" })] },
+        { role: "assistant", content: [call("b", { command: "pwd" })] },
+        result("b", "/work\n"),
+      ],
+      {
+        type: "tool_execution_update",
+        toolCallId: "a",
+        toolName: "bash",
+        details: { approval: "pending", approvalKey: "1:a" },
+      } as AgentEvent
+    );
+    expect(terminalText(state)).toBe("$ pwd\r\n/work");
+  });
+
+  it("hides a denied call", () => {
+    const state = run([
+      { role: "assistant", content: [call("a", { command: "rm -rf" })] },
+      {
+        role: "toolResult",
+        toolCallId: "a",
+        isError: true,
+        content: [{ type: "text", text: "The user denied this tool call." }],
+        details: { approval: "denied" },
+      },
+    ]);
+    expect(terminalText(state)).toBe("");
+  });
+});
+
+describe(terminalWrite, () => {
+  it("writes only the appended suffix", () => {
+    expect(terminalWrite("abc", "abcdef")).toBe("def");
+  });
+
+  it("writes nothing when the text is unchanged", () => {
+    expect(terminalWrite("abc", "abc")).toBe("");
+  });
+
+  it("resets and rewrites when a snapshot replaced the text", () => {
+    expect(terminalWrite("abc", "xyz")).toBe(`${TERMINAL_RESET}xyz`);
+  });
+
+  it("writes the full text when nothing was written before", () => {
+    expect(terminalWrite("", "hello")).toBe("hello");
   });
 });

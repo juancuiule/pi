@@ -1,13 +1,10 @@
 "use client";
 
+import { Collapsible } from "@base-ui/react/collapsible";
+import { Bot, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import type { ConversationState } from "@/lib/conversation-state";
 import { useConversationEvents } from "@/lib/use-conversation-events";
 
@@ -30,15 +27,15 @@ export const SubagentStream = ({
   // Each open card holds an SSE connection, and browsers allow 6 per host, so closed cards hold none.
   const [open, setOpen] = useState(running);
   return (
-    <div className="px-3">
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <div className="text-muted-foreground text-xs">
-          <CollapsibleTrigger>Subagent conversation #{id}</CollapsibleTrigger>
-        </div>
-        <CollapsibleContent>
-          {open ? <SubagentTranscript id={id} render={render} /> : null}
-        </CollapsibleContent>
-      </Collapsible>
-    </div>
+    <Collapsible.Root open={open} onOpenChange={setOpen}>
+      <Collapsible.Trigger className="text-muted-foreground group focus-visible:ring-ring/50 flex items-center gap-1.5 rounded-sm text-xs outline-none focus-visible:ring-2">
+        <Bot className="size-3.5" />
+        Subagent #{id}
+        <ChevronRight className="size-3.5 transition-transform duration-150 group-data-panel-open:rotate-90" />
+      </Collapsible.Trigger>
+      <Collapsible.Panel>
+        {open ? <SubagentTranscript id={id} render={render} /> : null}
+      </Collapsible.Panel>
+    </Collapsible.Root>
   );
 };

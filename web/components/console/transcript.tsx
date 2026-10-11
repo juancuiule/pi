@@ -1,20 +1,26 @@
 "use client";
 
+import { Collapsible } from "@base-ui/react/collapsible";
 import type { AssistantMessage, EntryRecord } from "effect-pi/api";
-import { useEffect, useRef } from "react";
+import {
+  ArrowDown,
+  Brain,
+  CircleAlert,
+  ChevronRight,
+  Info,
+  LoaderCircle,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { hasPendingApproval } from "@/lib/approval";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
 import { toolResultOf } from "@/lib/conversation-state";
 import { subagentIdFor } from "@/lib/subagent";
 import { isNearBottom, userParts } from "@/lib/transcript";
 
+import { Markdown } from "./markdown";
 import { SubagentStream } from "./subagent";
 import { ToolCall } from "./tool-call";
 import type { ToolCallBlock } from "./tool-call";
@@ -23,6 +29,44 @@ type RenderExtra = (
   call: ToolCallBlock,
   tool: ToolRun | undefined
 ) => ReactNode;
+
+const Caret = () => (
+  <span
+    aria-hidden
+    className="bg-foreground ml-0.5 inline-block h-4 w-2 translate-y-0.5 motion-safe:animate-pulse"
+  />
+);
+
+const Thinking = ({
+  thinking,
+  streaming = false,
+}: {
+  thinking: string;
+  /** The run's live block: show it's still going. */
+  streaming?: boolean;
+}) => (
+  <Collapsible.Root>
+    <Collapsible.Trigger className="text-muted-foreground group focus-visible:ring-ring/50 flex items-center gap-1.5 rounded-sm text-xs outline-none focus-visible:ring-2">
+      <Brain className="size-3.5" />
+      <span>
+        Thinking
+        {streaming ? "…" : ""}
+      </span>
+      {streaming ? (
+        <span
+          aria-hidden
+          className="bg-muted-foreground/40 h-1.5 w-8 rounded-full motion-safe:animate-pulse"
+        />
+      ) : null}
+      <ChevronRight className="size-3.5 transition-transform duration-150 group-data-panel-open:rotate-90" />
+    </Collapsible.Trigger>
+    <Collapsible.Panel>
+      <p className="border-border text-muted-foreground mt-1.5 border-l-2 pl-3 text-sm whitespace-pre-wrap">
+        {thinking}
+      </p>
+    </Collapsible.Panel>
+  </Collapsible.Root>
+);
 
 const AssistantBlocks = ({
   message,
@@ -34,54 +78,56 @@ const AssistantBlocks = ({
   state: ConversationState;
   renderExtra: RenderExtra;
   caret?: boolean;
-}) => (
-  <div className="flex flex-col gap-2">
-    {message.content.map((block, index) => {
-      const last = index === message.content.length - 1;
-      switch (block.type) {
-        case "text": {
-          return (
-            // oxlint-disable-next-line react/no-array-index-key -- blocks have no id; the list only grows
-            <p key={index} className="whitespace-pre-wrap">
-              {block.text}
-              {caret && last ? (
-                <span className="ml-0.5 animate-pulse">▍</span>
-              ) : null}
-            </p>
-          );
-        }
-        case "thinking": {
-          return (
-            // oxlint-disable-next-line react/no-array-index-key -- blocks have no id; the list only grows
-            <Collapsible key={index}>
-              <div className="text-muted-foreground text-xs">
-                <CollapsibleTrigger>Thinking</CollapsibleTrigger>
+}) => {
+  let lastTextIndex = -1;
+  for (const [index, block] of message.content.entries()) {
+    if (block.type === "text") {
+      lastTextIndex = index;
+    }
+  }
+  const lastIndex = message.content.length - 1;
+  return (
+    <div className="flex flex-col gap-3">
+      {message.content.map((block, index) => {
+        const streaming = caret === true && index === lastIndex;
+        switch (block.type) {
+          case "text": {
+            return (
+              // oxlint-disable-next-line react/no-array-index-key -- blocks have no id; the list only grows
+              <div key={index}>
+                <Markdown>{block.text}</Markdown>
+                {caret === true && index === lastTextIndex ? <Caret /> : null}
               </div>
-              <CollapsibleContent>
-                <p className="text-muted-foreground text-sm whitespace-pre-wrap">
-                  {block.thinking}
-                </p>
-              </CollapsibleContent>
-            </Collapsible>
-          );
+            );
+          }
+          case "thinking": {
+            return (
+              // oxlint-disable-next-line react/no-array-index-key -- blocks have no id; the list only grows
+              <Thinking
+                key={index}
+                thinking={block.thinking}
+                streaming={streaming}
+              />
+            );
+          }
+          case "toolCall": {
+            return (
+              <ToolCall
+                key={block.id}
+                call={block}
+                state={state}
+                renderExtra={renderExtra}
+              />
+            );
+          }
+          default: {
+            return null;
+          }
         }
-        case "toolCall": {
-          return (
-            <ToolCall
-              key={block.id}
-              call={block}
-              state={state}
-              renderExtra={renderExtra}
-            />
-          );
-        }
-        default: {
-          return null;
-        }
-      }
-    })}
-  </div>
-);
+      })}
+    </div>
+  );
+};
 
 const Entry = ({
   entry,
@@ -96,8 +142,11 @@ const Entry = ({
   if (message === undefined) {
     return (
       <details className="text-muted-foreground text-xs">
-        <summary>{entry.kind}</summary>
-        <pre className="overflow-x-auto">
+        <summary className="inline-flex cursor-pointer items-center gap-1.5">
+          <Info className="size-3.5" />
+          {entry.kind}
+        </summary>
+        <pre className="mt-1 overflow-x-auto pl-5">
           {JSON.stringify(entry.data, null, 2)}
         </pre>
       </details>
@@ -107,15 +156,17 @@ const Entry = ({
     case "user": {
       const { text, images } = userParts(message);
       return (
-        <div className="bg-primary text-primary-foreground ml-auto flex max-w-[80%] flex-col gap-2 rounded-lg px-3 py-2 text-sm">
-          {text === "" ? null : <p className="whitespace-pre-wrap">{text}</p>}
+        <div className="bg-muted text-foreground ml-auto flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5">
+          {text === "" ? null : (
+            <p className="text-prose break-words whitespace-pre-wrap">{text}</p>
+          )}
           {images.map((image) => (
             // oxlint-disable-next-line next/no-img-element -- inline data URL, nothing for next/image to optimize
             <img
               key={image.src}
               src={image.src}
-              alt="Attached"
-              className="max-w-full rounded"
+              alt="Attachment"
+              className="max-w-full rounded-lg outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
             />
           ))}
         </div>
@@ -138,11 +189,9 @@ const Entry = ({
 
 const Body = ({
   state,
-  ended,
   renderExtra,
 }: {
   state: ConversationState;
-  ended: boolean;
   renderExtra: RenderExtra;
 }) => (
   <>
@@ -163,16 +212,27 @@ const Body = ({
       />
     )}
     {state.failures.map((failure) => (
-      <p key={failure} role="alert" className="text-destructive text-sm">
+      <p
+        key={failure}
+        role="alert"
+        className="border-destructive/40 bg-destructive/5 text-destructive flex items-center gap-2 rounded-lg border p-3 text-sm"
+      >
+        <CircleAlert className="size-4 shrink-0" />
         {failure}
       </p>
     ))}
-    {state.running && state.streaming === undefined ? (
-      <p className="text-muted-foreground animate-pulse text-sm">Working…</p>
-    ) : null}
-    {ended ? (
-      <p className="bg-muted rounded-md px-3 py-2 text-center text-sm">
-        This conversation has ended.
+    {state.running &&
+    state.streaming === undefined &&
+    !hasPendingApproval(state) ? (
+      <p
+        aria-live="polite"
+        className="text-muted-foreground flex items-center gap-1.5 text-sm"
+      >
+        <LoaderCircle
+          aria-hidden
+          className="size-3.5 motion-safe:animate-spin"
+        />
+        Working…
       </p>
     ) : null}
   </>
@@ -180,16 +240,15 @@ const Body = ({
 
 const ScrollingTranscript = ({
   state,
-  ended,
   renderExtra,
 }: {
   state: ConversationState;
-  ended: boolean;
   renderExtra: RenderExtra;
 }) => {
   const viewport = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
   const root = useRef<HTMLDivElement | null>(null);
+  const [showJump, setShowJump] = useState(false);
 
   useEffect(() => {
     const el = root.current?.querySelector<HTMLDivElement>(
@@ -200,7 +259,11 @@ const ScrollingTranscript = ({
       return;
     }
     const onScroll = () => {
+      const was = pinned.current;
       pinned.current = isNearBottom(el);
+      if (pinned.current !== was) {
+        setShowJump(!pinned.current);
+      }
     };
     el.addEventListener("scroll", onScroll);
     return () => el.removeEventListener("scroll", onScroll);
@@ -213,23 +276,47 @@ const ScrollingTranscript = ({
     }
   });
 
+  const jump = () => {
+    const el = viewport.current;
+    if (el !== null) {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "instant"
+          : "smooth",
+      });
+      pinned.current = true;
+      setShowJump(false);
+    }
+  };
+
   return (
-    <ScrollArea ref={root} className="min-h-0 flex-1">
-      <div className="flex flex-col gap-3 p-4">
-        <Body state={state} ended={ended} renderExtra={renderExtra} />
-      </div>
-    </ScrollArea>
+    <div className="relative min-h-0 flex-1">
+      <ScrollArea ref={root} className="h-full">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6">
+          <Body state={state} renderExtra={renderExtra} />
+        </div>
+      </ScrollArea>
+      {showJump ? (
+        <button
+          type="button"
+          aria-label="Jump to latest"
+          onClick={jump}
+          className="bg-background hover:bg-muted focus-visible:ring-ring/50 absolute bottom-4 left-1/2 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border shadow-md transition-colors duration-150 outline-none focus-visible:ring-2"
+        >
+          <ArrowDown className="size-4" />
+        </button>
+      ) : null}
+    </div>
   );
 };
 
 export const Transcript = ({
   state,
-  ended = false,
   nested = false,
 }: {
   state: ConversationState;
-  ended?: boolean;
-  /** Inside a subagent card: no scroll area, no auto-scroll, no ended banner. */
+  /** Inside a subagent card: no scroll area, no auto-scroll. */
   nested?: boolean;
 }) => {
   // oxlint-disable-next-line unicorn/consistent-function-scoping -- refers to `Transcript` itself (no-use-before-define forbids hoisting it)
@@ -247,14 +334,10 @@ export const Transcript = ({
     );
   };
   return nested ? (
-    <div className="border-border ml-2 flex flex-col gap-3 border-l-2 py-2 pl-3">
-      <Body state={state} ended={false} renderExtra={renderExtra} />
+    <div className="border-border flex flex-col gap-3 border-l-2 pl-4">
+      <Body state={state} renderExtra={renderExtra} />
     </div>
   ) : (
-    <ScrollingTranscript
-      state={state}
-      ended={ended}
-      renderExtra={renderExtra}
-    />
+    <ScrollingTranscript state={state} renderExtra={renderExtra} />
   );
 };

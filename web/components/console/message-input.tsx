@@ -1,63 +1,53 @@
 "use client";
 
-import { useState } from "react";
-import type { KeyboardEvent } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { useSendMessage } from "@/lib/queries";
-import { shouldSubmit } from "@/lib/transcript";
+
+import { Composer } from "./composer";
 
 export const MessageInput = ({
   id,
   running,
-  ended,
 }: {
   id: number;
   running: boolean;
-  ended: boolean;
 }) => {
   const [prompt, setPrompt] = useState("");
+  const textarea = useRef<HTMLTextAreaElement>(null);
   const send = useSendMessage(id);
 
   const submit = () => {
     const text = prompt.trim();
-    if (text === "" || ended) {
+    if (text === "") {
       return;
     }
     send.mutate(text, {
-      onSuccess: () => setPrompt(""),
+      onSuccess: () => {
+        setPrompt("");
+        textarea.current?.focus();
+      },
       onError: (error) => toast.error(error.message),
     });
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (
-      shouldSubmit({ ...event, isComposing: event.nativeEvent.isComposing })
-    ) {
-      event.preventDefault();
-      submit();
-    }
-  };
-
   return (
-    <div className="flex items-end gap-2 border-t p-3">
-      <Textarea
-        aria-label="Message"
+    <div className="mx-auto w-full max-w-3xl px-4 pb-4">
+      <Composer
+        prompt={prompt}
+        onPrompt={setPrompt}
+        onSubmit={submit}
+        pending={send.isPending}
+        running={running}
         placeholder="Message the agent"
-        disabled={ended}
-        value={prompt}
-        onChange={(event) => setPrompt(event.target.value)}
-        onKeyDown={onKeyDown}
-        className="min-h-10"
+        hint={
+          running
+            ? "The agent is working. New messages are queued."
+            : "Enter to send · Shift+Enter for a new line"
+        }
+        inputRef={textarea}
       />
-      <Button
-        disabled={ended || send.isPending || prompt.trim() === ""}
-        onClick={submit}
-      >
-        {running ? "Queue" : "Send"}
-      </Button>
     </div>
   );
 };
