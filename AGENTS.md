@@ -37,7 +37,7 @@ To update: `git subtree pull --prefix=repos/pi https://github.com/earendil-works
 
 Use pnpm, never npm or yarn.
 
-- `pnpm start [--sandbox none|shell|desktop] [prompt]` runs `index.ts` (Node strips the types; a faux model is used when `ANTHROPIC_API_KEY` is unset)
+- `pnpm start [--sandbox none|shell|desktop] [prompt]` runs `index.ts` (Node strips the types); the model comes from the environment, see Models below, and a faux model runs when none is configured
 - `pnpm typecheck` runs `tsc` (TypeScript 7)
 - `pnpm lint` / `pnpm lint:fix` run oxlint with the Ultracite core and vitest presets (`oxlint.config.ts`)
 - `pnpm format` / `pnpm format:check` run oxfmt with the Ultracite preset (`oxfmt.config.ts`)
@@ -58,3 +58,13 @@ The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "n
 - The sandbox choice also selects extensions (`extensionsFor`): `shell` adds pi's `CodingTools`, `desktop` adds those plus the desktop tools in `src/tools/desktop.ts`.
 - Backend: local Docker (`src/sandbox/docker.ts`, images in `docker/sandbox/`). Each container gets the `@earendil-works/pi-env` daemon and is reached through `RemoteExecutionEnv` over `docker exec -i`. The desktop image follows E2B's desktop template (XFCE, Xvfb, xdotool, scrot, noVNC on 6080) and publishes noVNC on a random localhost port (`SandboxInfo.vncUrl`).
 - microsandbox can replace Docker for `shell` on Apple Silicon or Linux with KVM; it does not run on this Intel Mac. A new backend only implements the `Sandboxes` service.
+
+## Models
+
+`src/models.ts` picks the model from environment variables:
+
+- `MODEL_PROVIDER`: `anthropic` (`ANTHROPIC_API_KEY`), `vercel` (Vercel AI Gateway, `AI_GATEWAY_API_KEY`) or `ollama`. Unset, a set API key picks its provider.
+- `MODEL_ID` overrides the default model: `claude-sonnet-5-5`, `anthropic/claude-sonnet-5.5`, `qwen3.5:4b-64k`.
+- `OLLAMA_URL`: the Ollama server, `http://192.168.1.20:11434` by default (a LAN machine).
+
+Ollama goes through its OpenAI-compatible API. The model's tools, vision, thinking and context size are read from Ollama's `/api/show` at startup; a model without `num_ctx` set is assumed to have a 4096-token context.

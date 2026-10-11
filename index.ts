@@ -1,11 +1,10 @@
 // Hello world: an Effect program that runs a pi-durable agent in the sandbox the user picks.
-// Uses Anthropic when ANTHROPIC_API_KEY is set, and a scripted faux model otherwise.
+// The model comes from the environment (see src/models.ts); without one, a scripted faux model runs.
 // Run: pnpm start [--sandbox none|shell|desktop] [prompt...]
 import { parseArgs } from "node:util";
 
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -15,7 +14,7 @@ import {
 import { Effect, Layer } from "effect";
 
 import { Agents } from "./src/agents.ts";
-import type { AgentModel } from "./src/agents.ts";
+import { modelFromEnv } from "./src/models.ts";
 import * as DockerSandboxes from "./src/sandbox/docker.ts";
 import type { SandboxChoice } from "./src/sandbox/sandbox.ts";
 
@@ -77,18 +76,17 @@ const fauxScripts: Record<SandboxChoice, FauxResponseStep[]> = {
 
 const AgentsLive = Layer.unwrap(
   Effect.gen(function* () {
-    const models = createModels();
-    if (process.env.ANTHROPIC_API_KEY !== undefined) {
-      models.setProvider(anthropicProvider());
-      const model: AgentModel = {
-        provider: "anthropic",
-        modelId: "claude-sonnet-5-5",
-      };
-      return Agents.layer({ models, model });
+    const setup = yield* modelFromEnv(process.env);
+    if (setup !== undefined) {
+      yield* Effect.log(
+        `model: ${setup.model.provider}/${setup.model.modelId}`
+      );
+      return Agents.layer(setup);
     }
     yield* Effect.logWarning(
-      "ANTHROPIC_API_KEY not set, using a scripted faux model"
+      "No model configured (MODEL_PROVIDER, ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY), using a scripted faux model"
     );
+    const models = createModels();
     const faux = fauxProvider();
     models.setProvider(faux.provider);
     faux.setResponses(fauxScripts[sandbox]);
