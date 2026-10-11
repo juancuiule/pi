@@ -156,11 +156,15 @@ export const loadSkills = (root: string): LoadedSkills => {
 
 // ─── Reading a skill ─────────────────────────────────────────────────────────
 
-/** What the `skill` tool returns: a bundled file, or SKILL.md with a header listing the other files. */
+/**
+ * What the `skill` tool returns: a bundled file, or SKILL.md with a header listing the other files. Paths in a skill
+ * are relative to its folder; `sandboxDir` is that folder's absolute path in the sandbox, when there is one, so the
+ * model can run bundled scripts by full path.
+ */
 export const readSkill = (
   skill: Skill,
-  file: string | undefined,
-  inSandbox: boolean
+  file?: string,
+  sandboxDir?: string
 ): string => {
   if (file !== undefined && file !== SKILL_FILE) {
     const relative = path.posix.normalize(file);
@@ -172,14 +176,15 @@ export const readSkill = (
     return readFileSync(path.join(skill.dir, relative), "utf-8");
   }
   const others = skill.files.filter((f) => f !== SKILL_FILE);
+  const script = others.find((f) => f.startsWith("scripts/"));
   const header = [
     `Skill "${skill.name}".`,
     others.length === 0
       ? "It has no bundled files."
-      : `Bundled files: ${others.join(", ")}. Load one with the skill tool and its \`file\` argument.`,
-    ...(inSandbox && others.length > 0
+      : `Bundled files: ${others.join(", ")}. Paths in the skill are relative to its folder. Load a file with the skill tool and its \`file\` argument.`,
+    ...(sandboxDir !== undefined && others.length > 0
       ? [
-          `They are also in your sandbox under ${SANDBOX_SKILLS_DIR}/${skill.name}/, so you can run its scripts from there.`,
+          `In your sandbox the folder is ${sandboxDir}; run its scripts by full path${script === undefined ? "" : `, such as ${sandboxDir}/${script}`}.`,
         ]
       : []),
   ].join(" ");
@@ -225,17 +230,24 @@ export const skillsExtension = (skills: readonly Skill[]): Extension =>
           ),
         }),
         replay: "safe",
-        execute: (args, api) =>
-          Promise.try(() => {
-            const skill = skills.find((s) => s.name === args.name);
-            if (skill === undefined) {
-              throw new Error(
-                `No skill named ${args.name}. Skills: ${skills.map((s) => s.name).join(", ")}`
-              );
-            }
-            const text = readSkill(skill, args.file, api.env !== undefined);
-            return { content: [{ type: "text" as const, text }] };
-          }),
+        execute: async (args, api, context) => {
+          const skill = skills.find((s) => s.name === args.name);
+          if (skill === undefined) {
+            throw new Error(
+              `No skill named ${args.name}. Skills: ${skills.map((s) => s.name).join(", ")}`
+            );
+          }
+          const sandboxDir = await api.env?.absolutePath(
+            path.posix.join(SANDBOX_SKILLS_DIR, skill.name),
+            context
+          );
+          const text = readSkill(
+            skill,
+            args.file,
+            sandboxDir?.ok === true ? sandboxDir.value : undefined
+          );
+          return { content: [{ type: "text" as const, text }] };
+        },
       }),
     ],
   });
@@ -262,7 +274,7 @@ export const expandSkillCommand = (
       `No skill named ${name}. Skills: ${skills.map((s) => s.name).join(", ")}`
     );
   }
-  const instructions = readSkill(skill, undefined, false);
+  const instructions = readSkill(skill);
   return request === undefined || request.trim() === ""
     ? instructions
     : `${instructions.trimEnd()}\n\n---\n\nUser request: ${request.trim()}`;

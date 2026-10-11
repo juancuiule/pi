@@ -203,6 +203,22 @@ describe("skills in a conversation", () => {
     expect(answer).toMatch(/^error:[\s\S]*Skill convert has no file/u);
   });
 
+  it("tells the model where the skill's folder is in the sandbox", async () => {
+    const { layer } = fauxAgents(
+      [callTool("skill", { name: "convert" }), echoToolResult],
+      { skills: convertSkill() }
+    );
+
+    const answer = await Effect.runPromise(
+      ask("Load the skill.", "shell").pipe(Effect.provide(layer))
+    );
+
+    // Local test sandboxes are temporary directories named after the sandbox.
+    expect(answer).toMatch(
+      /In your sandbox the folder is \/\S*effect-pi-shell-\S*\/\.skills\/convert; run its scripts by full path, such as \S*\/\.skills\/convert\/scripts\/hello\.sh\./u
+    );
+  });
+
   it("copies skills into the sandbox so their scripts run there", async () => {
     const { layer } = fauxAgents(
       [
