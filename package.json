@@ -1,24 +1,38 @@
 {
   "name": "effect-pi",
   "version": "1.0.0",
-  "type": "module",
   "description": "",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
   "main": "index.ts",
   "scripts": {
     "start": "node index.ts",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "lint": "oxlint --disable-nested-config",
+    "lint:fix": "oxlint --disable-nested-config --fix",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "test": "vitest run",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
+    "prepare": "lefthook install"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "@earendil-works/chord": "^1.1.0",
     "@earendil-works/pi-ai": "^1.1.0",
     "@earendil-works/pi-durable": "^1.1.0",
+    "@earendil-works/pi-env": "1.1.0",
     "effect": "^4.0.2"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
-    "typescript": "^7.0.2"
-  }
+    "lefthook": "^2.2.1",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
+    "typescript": "^7.0.2",
+    "ultracite": "^7.12.4",
+    "vitest": "^5.0.3"
+  },
+  "packageManager": "pnpm@12.10.1"
 }

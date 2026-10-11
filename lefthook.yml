@@ -1,0 +1,32 @@
+# Git hooks, installed by `pnpm install` (the `prepare` script runs `lefthook install`).
+# Every job calls a package script, so each check can also be run by hand.
+# https://lefthook.dev/configuration/
+
+pre-commit:
+  jobs:
+    # Fix and re-stage the staged files first, so the checks below see the final content
+    - name: format
+      glob: "*.{js,mjs,cjs,ts,mts,cts,json,jsonc,md,yml,yaml}"
+      exclude:
+        - "repos/**"
+      run: pnpm format {staged_files}
+      stage_fixed: true
+    - name: lint
+      glob: "*.{js,mjs,cjs,ts,mts,cts}"
+      exclude:
+        - "repos/**"
+      run: pnpm lint:fix {staged_files}
+      stage_fixed: true
+    - name: checks
+      group:
+        parallel: true
+        jobs:
+          - name: typecheck
+            run: pnpm typecheck
+          - name: test
+            run: pnpm test
+
+pre-push:
+  jobs:
+    - name: check
+      run: pnpm check

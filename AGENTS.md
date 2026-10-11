@@ -35,5 +35,15 @@ To update: `git subtree pull --prefix=repos/pi https://github.com/earendil-works
 
 ## Commands
 
-- `npm start` runs `index.ts` (Node strips the types; a faux model is used when `ANTHROPIC_API_KEY` is unset)
-- `npm run typecheck` runs `tsc`; run it after code changes
+Use pnpm, never npm or yarn.
+
+- `pnpm start` runs `index.ts` (Node strips the types; a faux model is used when `ANTHROPIC_API_KEY` is unset)
+- `pnpm typecheck` runs `tsc` (TypeScript 7)
+- `pnpm lint` / `pnpm lint:fix` run oxlint with the Ultracite core and vitest presets (`oxlint.config.ts`)
+- `pnpm format` / `pnpm format:check` run oxfmt with the Ultracite preset (`oxfmt.config.ts`)
+- `pnpm test` runs vitest over `src/**/*.test.ts`; tests use pi-ai's faux provider, never a real model
+- `pnpm check` runs all of the above; run it after code changes
+
+Lefthook (`lefthook.yml`) runs these as git hooks: pre-commit formats and lint-fixes staged files, then runs typecheck and tests; pre-push runs `pnpm check`. Fix failures instead of skipping hooks.
+
+Some Ultracite rules are turned off in `oxlint.config.ts` because they conflict with Effect idioms; the reasons are in comments there.
