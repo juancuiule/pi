@@ -19,15 +19,21 @@ export const terminalText = (state: ConversationState): string => {
       if (call.type !== "toolCall") {
         return "";
       }
-      const command = String(call.arguments.command ?? "");
+      const command = String(call.arguments?.command ?? "");
       const result = toolResultOf(state, call.id);
       const output =
         result?.role === "toolResult"
           ? result.content
-              .flatMap((c) => (c.type === "text" ? [c.text] : []))
-              .join("")
+              .flatMap((c) =>
+                c.type === "text" ? [c.text.replace(/\r?\n$/u, "")] : []
+              )
+              .join("\n")
           : (state.tools[call.id]?.output ?? "");
-      return `$ ${command}\r\n${crlf(output)}`;
+      const shown = crlf(output);
+      // Every command starts on its own line, even after output without a trailing newline.
+      const ended =
+        shown === "" || shown.endsWith("\r\n") ? shown : `${shown}\r\n`;
+      return `$ ${command}\r\n${ended}`;
     })
     .join("")
     .replace(/\r\n$/u, "");

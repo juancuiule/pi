@@ -1,5 +1,6 @@
 "use client";
 
+import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 
 import "@xterm/xterm/css/xterm.css";
@@ -21,12 +22,25 @@ export const TerminalPanel = ({ state }: { state: ConversationState }) => {
       fontSize: 12,
       theme: { background: "transparent" },
     });
-    if (container.current !== null) {
-      terminal.open(container.current);
+    const fit = new FitAddon();
+    terminal.loadAddon(fit);
+    const element = container.current;
+    // Fitting resizes the grid and keeps the buffer, so it never clears what was written.
+    const refit = () => {
+      if (element !== null && element.clientWidth > 0) {
+        fit.fit();
+      }
+    };
+    const observer = new ResizeObserver(refit);
+    if (element !== null) {
+      terminal.open(element);
+      refit();
+      observer.observe(element);
     }
     term.current = terminal;
     written.current = "";
     return () => {
+      observer.disconnect();
       terminal.dispose();
       term.current = null;
     };
