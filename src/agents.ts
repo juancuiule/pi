@@ -12,17 +12,20 @@ import {
   defineTool,
   Harness,
   MemoryStorage,
+  watchEvents,
 } from "@earendil-works/pi-durable";
 import type {
+  AgentEvent,
   Conversation,
   ConversationId,
   EntryId,
   Extension,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { Context, Effect, Layer, Schema } from "effect";
-import type { Scope } from "effect";
+import { Context, Effect, Layer, Queue, Schema, Stream } from "effect";
+import type { Cause, Scope } from "effect";
 
+import { ConversationNotFound } from "./errors.ts";
 import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
 import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
 import type { SaveScreenshot } from "./screenshots.ts";
@@ -82,6 +85,8 @@ export const Subagent: Extension = defineExtension({
           });
           return created.id;
         }, callContext);
+        // Lets a UI find and watch the child conversation while it works.
+        await api.details({ conversationId: child }, callContext);
         const handle = await api.conversation(child, callContext);
         if (handle === undefined) {
           throw new Error(`Subagent conversation ${child} not found`);
@@ -163,11 +168,34 @@ const askIn = (conversation: Conversation, tracing: AgentTracing) =>
     return answer;
   });
 
+const sendIn = (conversation: Conversation, tracing: AgentTracing) =>
+  Effect.fn("AgentConversation.send")(function* (prompt: string) {
+    yield* Effect.annotateCurrentSpan({
+      "langfuse.observation.type": "agent",
+      "langfuse.observation.input": prompt,
+      "langfuse.session.id": String(conversation.id),
+    });
+    // Admitted without waiting: a busy conversation queues it as a follow-up, and the answer arrives as events.
+    yield* tracing.traced(
+      conversation.id,
+      Effect.tryPromise({
+        try: () =>
+          conversation.submit(
+            { type: "input", content: prompt, whenBusy: "followUp" },
+            context
+          ),
+        catch: (cause) => new AgentError({ cause }),
+      })
+    );
+  });
+
 export interface AgentConversation {
   readonly id: ConversationId;
   /** The conversation's sandbox; `undefined` when started with `sandbox: "none"`. */
   readonly sandbox: SandboxInfo | undefined;
   ask(prompt: string): Effect.Effect<string, AgentError>;
+  /** Send a prompt without waiting for the answer; it is queued as a follow-up while the agent runs. */
+  send(prompt: string): Effect.Effect<void, AgentError>;
 }
 
 export class Agents extends Context.Service<
@@ -183,6 +211,16 @@ export class Agents extends Context.Service<
       AgentConversation,
       AgentError | SandboxError,
       Scope.Scope
+    >;
+    /**
+     * Watch a conversation, including a subagent's: a `snapshot` first, then the events of every later commit.
+     * Interrupting the stream stops the watch.
+     */
+    events(
+      id: ConversationId
+    ): Effect.Effect<
+      Stream.Stream<AgentEvent, AgentError>,
+      AgentError | ConversationNotFound
     >;
   }
 >()("effect-pi/Agents") {
@@ -317,10 +355,42 @@ export class Agents extends Context.Service<
             id: conversation.id,
             sandbox,
             ask: askIn(conversation, tracing),
+            send: sendIn(conversation, tracing),
           } satisfies AgentConversation;
         });
 
-        return Agents.of({ start });
+        const events = Effect.fn("Agents.events")(function* (
+          id: ConversationId
+        ) {
+          const handle = yield* Effect.tryPromise({
+            try: () => harness.conversation(id, context),
+            catch: (cause) => new AgentError({ cause }),
+          });
+          if (handle === undefined) {
+            return yield* new ConversationNotFound({ id: Number(id) });
+          }
+          // Attached now, not when the stream is run: events committed after this call are never missed. The watch
+          // stops when the stream ends or is interrupted.
+          const queue = yield* Queue.unbounded<AgentEvent, Cause.Done>();
+          const watch = yield* Effect.tryPromise({
+            try: () => watchEvents(harness, id, context),
+            catch: (cause) => new AgentError({ cause }),
+          });
+          Queue.offerUnsafe(queue, watch.snapshot);
+          watch.start((batch) => {
+            Queue.offerAllUnsafe(queue, batch);
+            return Promise.resolve();
+          });
+          void (async () => {
+            await watch.closed;
+            Queue.endUnsafe(queue);
+          })();
+          return Stream.fromQueue(queue).pipe(
+            Stream.ensuring(Effect.promise(() => watch.stop()))
+          );
+        });
+
+        return Agents.of({ start, events });
       })
     );
 }
