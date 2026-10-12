@@ -1,0 +1,30 @@
+// Zed equivalent of .vscode/settings.json: keep the vendored repos/ out of the project.
+{
+  // Replaces Zed's default list, so the defaults are repeated before repos/.
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/.jj",
+    "**/.sl",
+    "**/.repo",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings",
+    "repos/**"
+  ],
+  "lsp": {
+    "vtsls": {
+      "settings": {
+        "typescript": {
+          "preferences": { "autoImportFileExcludePatterns": ["repos/**"] }
+        },
+        "javascript": {
+          "preferences": { "autoImportFileExcludePatterns": ["repos/**"] }
+        }
+      }
+    }
+  }
+}
