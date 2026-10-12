@@ -4,6 +4,7 @@ import { Collapsible } from "@base-ui/react/collapsible";
 import type { AssistantMessage, EntryRecord } from "effect-pi/api";
 import {
   ArrowDown,
+  BookOpen,
   Brain,
   CircleAlert,
   ChevronRight,
@@ -17,6 +18,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { hasPendingApproval } from "@/lib/approval";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
 import { toolResultOf } from "@/lib/conversation-state";
+import { parseSkillMessage } from "@/lib/skill-message";
 import { subagentIdFor } from "@/lib/subagent";
 import { isNearBottom, userParts } from "@/lib/transcript";
 
@@ -64,6 +66,28 @@ const Thinking = ({
       <p className="border-border text-muted-foreground mt-1.5 border-l-2 pl-3 text-sm whitespace-pre-wrap">
         {thinking}
       </p>
+    </Collapsible.Panel>
+  </Collapsible.Root>
+);
+
+/** A forced skill's instructions, collapsed under its name. */
+const SkillChip = ({
+  skill,
+  instructions,
+}: {
+  skill: string;
+  instructions: string;
+}) => (
+  <Collapsible.Root>
+    <Collapsible.Trigger className="text-muted-foreground group focus-visible:ring-ring/50 flex items-center gap-1.5 rounded-sm text-xs font-medium outline-none focus-visible:ring-2">
+      <BookOpen className="size-3.5" />
+      <span>skill: {skill}</span>
+      <ChevronRight className="size-3.5 transition-transform duration-150 group-data-panel-open:rotate-90" />
+    </Collapsible.Trigger>
+    <Collapsible.Panel>
+      <div className="border-border mt-1.5 border-l-2 pl-3 text-sm">
+        <Markdown>{instructions}</Markdown>
+      </div>
     </Collapsible.Panel>
   </Collapsible.Root>
 );
@@ -155,10 +179,17 @@ const Entry = ({
   switch (message.role) {
     case "user": {
       const { text, images } = userParts(message);
+      const skill = parseSkillMessage(text);
+      const shown = skill === undefined ? text : skill.request;
       return (
         <div className="bg-muted text-foreground ml-auto flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5">
-          {text === "" ? null : (
-            <p className="text-prose break-words whitespace-pre-wrap">{text}</p>
+          {skill === undefined ? null : (
+            <SkillChip skill={skill.skill} instructions={skill.instructions} />
+          )}
+          {shown === "" ? null : (
+            <p className="text-prose break-words whitespace-pre-wrap">
+              {shown}
+            </p>
           )}
           {images.map((image) => (
             // oxlint-disable-next-line next/no-img-element -- inline data URL, nothing for next/image to optimize
