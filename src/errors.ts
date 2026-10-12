@@ -21,3 +21,8 @@ export class ApprovalNotFound extends Schema.TaggedError<ApprovalNotFound>()(
   "ApprovalNotFound",
   { key: Schema.String }
 ) {}
+
+export class SkillNotFound extends Schema.TaggedError<SkillNotFound>()(
+  "SkillNotFound",
+  { name: Schema.String, available: Schema.Array(Schema.String) }
+) {}

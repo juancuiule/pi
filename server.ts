@@ -51,7 +51,8 @@ const ConversationsLive = Conversations.layer({
   maxSandboxes: 3,
   idleTimeoutMs: 30 * 60 * 1000,
   sweepEveryMs: 60 * 1000,
-}).pipe(Layer.provide(AgentsLive));
+  // The info handlers read Agents' capabilities, so it stays in the output.
+}).pipe(Layer.provideMerge(AgentsLive));
 
 const ServerLive = HttpRouter.serve(apiLayer({ model: modelName })).pipe(
   Layer.provide(ConversationsLive),

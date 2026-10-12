@@ -30,13 +30,22 @@ import { ApprovalDoc } from "./approvals.ts";
 import type { ApprovalPolicy } from "./approvals.ts";
 import { MetaDoc } from "./conversation-meta.ts";
 import type { StoredConversation } from "./conversation-meta.ts";
-import { ApprovalNotFound, ConversationNotFound } from "./errors.ts";
+import {
+  ApprovalNotFound,
+  ConversationNotFound,
+  SkillNotFound,
+} from "./errors.ts";
 import { connectMcpServers } from "./mcp.ts";
 import type { McpServerConfig, McpServerState } from "./mcp.ts";
 import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
 import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
 import type { SaveScreenshot } from "./screenshots.ts";
-import { installSkills, skillsExtension } from "./skills.ts";
+import {
+  formatSkillMessage,
+  installSkills,
+  parseSkillCommand,
+  skillsExtension,
+} from "./skills.ts";
 import type { Skill } from "./skills.ts";
 import { CodingTools } from "./tools/bash.ts";
 import { Calculator } from "./tools/calculator.ts";
@@ -291,6 +300,8 @@ export class Agents extends Context.Service<
     >;
     /** The skills and MCP servers conversations can use, for the console. */
     readonly capabilities: Effect.Effect<Capabilities>;
+    /** Expand `/skill:<name> <request>` into the skill message; other prompts pass through. */
+    expandSkill(prompt: string): Effect.Effect<string, SkillNotFound>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -673,6 +684,23 @@ export class Agents extends Context.Service<
           mcp: mcp.servers,
         });
 
+        const expandSkill = (prompt: string) =>
+          Effect.suspend(() => {
+            const command = parseSkillCommand(prompt);
+            if (command === undefined) {
+              return Effect.succeed(prompt);
+            }
+            const skill = skills.find((s) => s.name === command.name);
+            return skill === undefined
+              ? Effect.fail(
+                  new SkillNotFound({
+                    name: command.name,
+                    available: skills.map((s) => s.name),
+                  })
+                )
+              : Effect.sync(() => formatSkillMessage(skill, command.request));
+          });
+
         return Agents.of({
           start,
           attach,
@@ -682,6 +710,7 @@ export class Agents extends Context.Service<
           markEnded,
           events,
           capabilities,
+          expandSkill,
         });
       })
     );
