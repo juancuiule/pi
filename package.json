@@ -23,6 +23,7 @@
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm --filter web check",
     "prepare": "lefthook install",
     "test:docker": "DOCKER_TESTS=1 vitest run",
+    "test:integration": "INTEGRATION_TESTS=1 vitest run",
     "sandbox:build": "docker build -t effect-pi/sandbox-shell -f docker/sandbox/shell.Dockerfile docker/sandbox && docker build -t effect-pi/sandbox-desktop -f docker/sandbox/desktop.Dockerfile docker/sandbox",
     "langfuse:up": "node docker/langfuse/init-env.ts && docker compose -f docker/langfuse/docker-compose.yml -p langfuse up -d",
     "langfuse:down": "docker compose -f docker/langfuse/docker-compose.yml -p langfuse down",

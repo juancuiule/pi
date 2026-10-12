@@ -8,6 +8,7 @@ import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Duration, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 
+import { mcpServers } from "./mcp.config.ts";
 import { Agents } from "./src/agents.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromEnv } from "./src/models.ts";
@@ -43,6 +44,7 @@ const AgentsLive = Agents.layer({
   storage,
   saveScreenshot: saveScreenshotsTo("screenshots"),
   skills,
+  mcp: mcpServers,
 }).pipe(Layer.provide(DockerSandboxes.layer()));
 
 const ConversationsLive = Conversations.layer({
