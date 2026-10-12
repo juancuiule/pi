@@ -17,14 +17,9 @@ import { saveScreenshotsTo } from "./src/screenshots.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
-import { loadSkills } from "./src/skills.ts";
+import { Skills } from "./src/skills/skills.ts";
 
 const PORT = 4000;
-
-const { skills, problems } = loadSkills("skills");
-for (const problem of problems) {
-  console.warn(`skipped skill ${problem}`);
-}
 
 const configured = await Effect.runPromise(modelFromEnv(process.env));
 const setup = configured ?? echoModel();
@@ -43,9 +38,11 @@ const AgentsLive = Agents.layer({
   ...setup,
   storage,
   saveScreenshot: saveScreenshotsTo("screenshots"),
-  skills,
   mcp: mcpServers,
-}).pipe(Layer.provide(DockerSandboxes.layer()));
+}).pipe(
+  Layer.provide(DockerSandboxes.layer()),
+  Layer.provide(Skills.directory("skills"))
+);
 
 const ConversationsLive = Conversations.layer({
   maxSandboxes: 3,

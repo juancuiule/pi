@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "./agents.ts";
 import type { McpServerConfig } from "./mcp.ts";
-import { loadSkills } from "./skills.ts";
+import { Skills } from "./skills/skills.ts";
 import { ask, callTool, echoToolResult, fauxAgents } from "./testing/faux.ts";
 import { fakeMcpServer } from "./testing/mcp.ts";
 
@@ -101,7 +101,6 @@ describe("Agents with MCP servers", () => {
   });
 
   it("reports skills and MCP servers as capabilities", async () => {
-    const { skills } = loadSkills("skills");
     const unreachable = {
       name: "down",
       url: "memory://down",
@@ -110,7 +109,7 @@ describe("Agents with MCP servers", () => {
       },
     };
     const agents = fauxAgents([fauxAssistantMessage([fauxText("ok")])], {
-      skills,
+      skills: Skills.directory("skills"),
       mcp: [echo, unreachable],
     });
     const capabilities = await Effect.runPromise(
@@ -119,12 +118,13 @@ describe("Agents with MCP servers", () => {
         return yield* service.capabilities;
       }).pipe(Effect.provide(agents.layer))
     );
-    expect(capabilities.skills.map((s) => s.name)).toStrictEqual(
-      skills.map((s) => s.name)
-    );
-    expect(capabilities.skills.map((s) => s.modelInvocable)).toStrictEqual(
-      skills.map((s) => !s.disableModelInvocation)
-    );
+    expect(
+      capabilities.skills.map((s) => [s.name, s.modelInvocable])
+    ).toStrictEqual([
+      ["desktop-notes", true],
+      ["repo-report", true],
+      ["unit-conversion", true],
+    ]);
     expect(capabilities.mcp.map((s) => [s.name, s.status])).toStrictEqual([
       ["test", "connected"],
       ["down", "unavailable"],

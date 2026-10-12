@@ -20,7 +20,7 @@ import { modelFromEnv } from "./src/models.ts";
 import * as DockerSandboxes from "./src/sandbox/docker.ts";
 import type { SandboxChoice } from "./src/sandbox/sandbox.ts";
 import { saveScreenshotsTo, screenshotDir } from "./src/screenshots.ts";
-import { expandSkillCommand, loadSkills } from "./src/skills.ts";
+import { Skills } from "./src/skills/skills.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -81,12 +81,6 @@ const fauxScripts: Record<SandboxChoice, FauxResponseStep[]> = {
 // Every desktop screenshot is kept in screenshots/<sandbox id>/, numbered in order.
 const SCREENSHOTS = "screenshots";
 
-// Skills from skills/<name>/SKILL.md; `/skill:<name> request` forces one.
-const { skills, problems } = loadSkills("skills");
-for (const problem of problems) {
-  console.warn(`skipped skill ${problem}`);
-}
-const message = expandSkillCommand(prompt, skills);
 const saveScreenshot = saveScreenshotsTo(SCREENSHOTS);
 
 const AgentsLive = Layer.unwrap(
@@ -99,7 +93,6 @@ const AgentsLive = Layer.unwrap(
       return Agents.layer({
         ...setup,
         saveScreenshot,
-        skills,
         mcp: mcpServers,
       });
     }
@@ -114,15 +107,20 @@ const AgentsLive = Layer.unwrap(
       models,
       model: { provider: "faux", modelId: "faux-1" },
       saveScreenshot,
-      skills,
       mcp: mcpServers,
     });
   })
-).pipe(Layer.provide(DockerSandboxes.layer()));
+).pipe(
+  Layer.provide(DockerSandboxes.layer()),
+  // Skills from skills/<name>/SKILL.md; `/skill:<name> request` forces one, `/skill:<name>` elsewhere hints at it.
+  Layer.provide(Skills.directory("skills"))
+);
 
 const program = Effect.scoped(
   Effect.gen(function* () {
     const agents = yield* Agents;
+    // Expanded first, so an unknown skill fails before a sandbox is created.
+    const message = yield* agents.expandSkill(prompt);
     const conversation = yield* agents.start({ sandbox });
     if (conversation.sandbox !== undefined) {
       yield* Effect.log(

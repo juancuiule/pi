@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents.ts";
 import type { AgentError } from "../agents.ts";
-import { loadSkills } from "../skills.ts";
+import { Skills } from "../skills/skills.ts";
 import { fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
@@ -44,7 +44,6 @@ const server = (responses: FauxResponseStep[], maxSandboxes = 3) =>
 
 describe("HTTP API", () => {
   it("lists skills and MCP servers", async () => {
-    const { skills } = loadSkills("skills");
     const echo = fakeMcpServer("test", [
       { name: "echo", call: () => ({ content: [] }) },
     ]);
@@ -56,7 +55,7 @@ describe("HTTP API", () => {
         Effect.provide(
           serverWith(
             fauxAgents([fauxAssistantMessage([fauxText("ok")])], {
-              skills,
+              skills: Skills.directory("skills"),
               mcp: [echo],
             }).layer
           )
@@ -75,13 +74,12 @@ describe("HTTP API", () => {
   });
 
   it("expands /skill: on create and refuses an unknown skill on send", async () => {
-    const { skills } = loadSkills("skills");
     const agents = fauxAgents(
       [
         fauxAssistantMessage([fauxText("one")]),
         fauxAssistantMessage([fauxText("two")]),
       ],
-      { skills }
+      { skills: Skills.directory("skills") }
     );
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -256,7 +254,8 @@ describe("HTTP API", () => {
     const { models, model } = echoModel();
     const sandboxes = localSandboxes();
     const agents = Agents.layer({ models, model }).pipe(
-      Layer.provide(sandboxes.layer)
+      Layer.provide(sandboxes.layer),
+      Layer.provide(Skills.none)
     );
 
     const text = await Effect.runPromise(
