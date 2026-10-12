@@ -18,7 +18,7 @@ repo-report/
 
 Each `skill` call is a tool span in Langfuse, so you can see whether and when the model picked a skill up.
 
-To force a skill instead of waiting for the model to choose it: `pnpm start "/skill:<name> <request>"`.
+To force a skill instead of waiting for the model to choose it: `pnpm start "/skill:<name> <request>"`. In the web console, type `/` in the message box to pick a skill, or choose one in the sidebar's Capabilities sheet.
 
 ## Writing one
 
