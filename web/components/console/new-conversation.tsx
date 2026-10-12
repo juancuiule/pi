@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { RadioGroup } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
+import { useTakeDraft } from "@/lib/draft";
 import { useCreateConversation, useInfo } from "@/lib/queries";
 
 import { Composer } from "./composer";
@@ -46,6 +47,8 @@ export const NewConversation = ({
   const [sandbox, setSandbox] = useState<SandboxChoice>("none");
   const [approvals, setApprovals] = useState(true);
   const [prompt, setPrompt] = useState("");
+  // A skill picked in the capabilities sheet lands here.
+  useTakeDraft(setPrompt);
   const create = useCreateConversation();
   const { data: info } = useInfo();
 
