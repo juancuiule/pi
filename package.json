@@ -34,6 +34,7 @@
     "@earendil-works/pi-ai": "^1.1.0",
     "@earendil-works/pi-durable": "^1.1.0",
     "@earendil-works/pi-env": "1.1.0",
+    "@earendil-works/pi-mcp": "1.1.0",
     "@effect/platform-node": "4.0.2",
     "effect": "^4.0.2",
     "yaml": "^2.9.1"
