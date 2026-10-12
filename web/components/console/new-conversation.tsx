@@ -3,7 +3,7 @@
 import { Radio } from "@base-ui/react/radio";
 import type { SandboxChoice } from "effect-pi/api";
 import { Menu } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -47,8 +47,9 @@ export const NewConversation = ({
   const [sandbox, setSandbox] = useState<SandboxChoice>("none");
   const [approvals, setApprovals] = useState(true);
   const [prompt, setPrompt] = useState("");
+  const textarea = useRef<HTMLTextAreaElement>(null);
   // A skill picked in the capabilities sheet lands here.
-  useTakeDraft(setPrompt);
+  useTakeDraft(setPrompt, textarea);
   const create = useCreateConversation();
   const { data: info } = useInfo();
 
@@ -148,6 +149,7 @@ export const NewConversation = ({
         onSubmit={submit}
         pending={create.isPending}
         tall
+        inputRef={textarea}
         placeholder="Describe a task…"
         hint={
           <span className="inline-flex items-center gap-1">

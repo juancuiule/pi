@@ -2,7 +2,7 @@
 
 import { Collapsible } from "@base-ui/react/collapsible";
 import { BookOpen, ChevronRight, Plug } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,7 +13,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { useDraft } from "@/lib/draft";
+import { focusAfterSheet, useDraft } from "@/lib/draft";
 import { useCapabilities } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +22,8 @@ export const CapabilitiesSheet = () => {
   const [open, setOpen] = useState(false);
   const { data } = useCapabilities();
   const offer = useDraft((store) => store.offer);
+  // Set when the sheet closes because a skill was picked, so focus goes to the composer instead of the trigger.
+  const picked = useRef(false);
 
   return (
     <>
@@ -29,13 +31,22 @@ export const CapabilitiesSheet = () => {
         variant="ghost"
         size="sm"
         className="w-full justify-start"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          picked.current = false;
+          setOpen(true);
+        }}
       >
         <Plug />
         Capabilities
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-md">
+        <SheetContent
+          side="right"
+          className="w-full sm:max-w-md"
+          finalFocus={() =>
+            focusAfterSheet(picked.current, useDraft.getState().target?.current)
+          }
+        >
           <SheetHeader>
             <SheetTitle>Capabilities</SheetTitle>
             <SheetDescription>
@@ -65,6 +76,7 @@ export const CapabilitiesSheet = () => {
                       <button
                         type="button"
                         onClick={() => {
+                          picked.current = true;
                           offer(`/skill:${skill.name} `);
                           setOpen(false);
                         }}

@@ -16,9 +16,9 @@ export const MessageInput = ({
   running: boolean;
 }) => {
   const [prompt, setPrompt] = useState("");
-  // A skill picked in the capabilities sheet lands here.
-  useTakeDraft(setPrompt);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  // A skill picked in the capabilities sheet lands here.
+  useTakeDraft(setPrompt, textarea);
   const send = useSendMessage(id);
 
   const submit = () => {
