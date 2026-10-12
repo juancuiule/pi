@@ -336,11 +336,7 @@ export class Agents extends Context.Service<
           Effect.promise(() => connectMcpServers(options.mcp ?? [])),
           (connections) => Effect.promise(() => connections.close())
         );
-        const mcpExtensions =
-          mcp.extension === undefined ? [] : [mcp.extension];
-        for (const extension of mcpExtensions) {
-          registry.install(extension);
-        }
+        registry.install(mcp.extension);
         const desktop = desktopExtension(
           options.saveScreenshot === undefined
             ? {}
@@ -490,7 +486,7 @@ export class Agents extends Context.Service<
                       extensions: [
                         ...extensionsFor(choice, desktop),
                         ...skillExtensions,
-                        ...mcpExtensions,
+                        mcp.extension,
                         tracing.extension,
                       ],
                     },

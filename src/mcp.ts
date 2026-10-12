@@ -46,8 +46,11 @@ export interface McpServerState {
 
 export interface McpConnections {
   readonly servers: readonly McpServerState[];
-  /** `undefined` when no server contributed a tool. */
-  readonly extension: Extension | undefined;
+  /**
+   * Always defined, even with no tools: conversations record the extensions they select, so one created while every
+   * server was down still selects `mcp` and gets its tools after a restart that reaches them.
+   */
+  readonly extension: Extension;
   close(): Promise<void>;
 }
 
@@ -200,8 +203,7 @@ export const connectMcpServers = async (
 
   return {
     servers,
-    extension:
-      tools.length === 0 ? undefined : defineExtension({ name: "mcp", tools }),
+    extension: defineExtension({ name: "mcp", tools }),
     close: async () => {
       await Promise.all(
         connected.map((server) =>

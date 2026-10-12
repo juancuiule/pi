@@ -26,7 +26,7 @@ const executeOf = (
   connections: Awaited<ReturnType<typeof connectMcpServers>>,
   name: string
 ) => {
-  const tool = connections.extension?.tools?.find((t) => t.name === name);
+  const tool = connections.extension.tools?.find((t) => t.name === name);
   if (tool === undefined) {
     throw new Error(`no tool ${name}`);
   }
@@ -123,7 +123,7 @@ describe(connectMcpServers, () => {
         tools: [],
       });
       expect(connections.servers[1]?.status).toBe("connected");
-      expect(connections.extension?.tools?.map((t) => t.name)).toStrictEqual([
+      expect(connections.extension.tools?.map((t) => t.name)).toStrictEqual([
         "mcp_test_echo",
         "mcp_test_fail",
       ]);
@@ -143,7 +143,7 @@ describe(connectMcpServers, () => {
     expect(Date.now() - started).toBeLessThan(2000);
     expect(connections.servers[0]?.status).toBe("unavailable");
     expect(connections.servers[0]?.error).toContain("timed out");
-    expect(connections.extension).toBeUndefined();
+    expect(connections.extension.tools).toStrictEqual([]);
     await connections.close();
   });
 
@@ -157,7 +157,7 @@ describe(connectMcpServers, () => {
       warn: (message) => warnings.push(message),
     });
     try {
-      expect(connections.extension?.tools?.map((t) => t.name)).toStrictEqual([
+      expect(connections.extension.tools?.map((t) => t.name)).toStrictEqual([
         "mcp_c_a_b",
       ]);
       expect(warnings.join("\n")).toContain("a_b");
@@ -195,10 +195,10 @@ describe(connectMcpServers, () => {
     }
   });
 
-  it("has no extension and nothing to close without servers", async () => {
+  it("has an empty extension and nothing to close without servers", async () => {
     const connections = await connectMcpServers([]);
     expect(connections.servers).toStrictEqual([]);
-    expect(connections.extension).toBeUndefined();
+    expect(connections.extension.tools).toStrictEqual([]);
     await connections.close();
   });
 });

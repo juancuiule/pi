@@ -19,9 +19,7 @@ describe("eglc MCP server", () => {
         "search",
       ]);
       const call = (name: string, args: Record<string, unknown>) => {
-        const found = connections.extension?.tools?.find(
-          (t) => t.name === name
-        );
+        const found = connections.extension.tools?.find((t) => t.name === name);
         if (found === undefined) {
           throw new Error(`no tool ${name}`);
         }
