@@ -23,7 +23,7 @@ import {
   ConversationNotFound,
   SandboxLimitReached,
 } from "../errors.ts";
-import type { ApprovalNotFound } from "../errors.ts";
+import type { ApprovalNotFound, SkillNotFound } from "../errors.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 
 export type ConversationStatus = "running" | "idle" | "ended";
@@ -135,7 +135,7 @@ export class Conversations extends Context.Service<
       readonly approvals?: "ask" | "auto";
     }): Effect.Effect<
       ConversationSummary,
-      AgentError | SandboxError | SandboxLimitReached
+      AgentError | SandboxError | SandboxLimitReached | SkillNotFound
     >;
     readonly list: Effect.Effect<readonly ConversationSummary[], AgentError>;
     /** Send to a live conversation, resume a dormant chat one, or reject an ended one. */
@@ -144,7 +144,7 @@ export class Conversations extends Context.Service<
       prompt: string
     ): Effect.Effect<
       void,
-      AgentError | ConversationNotFound | ConversationEnded
+      AgentError | ConversationNotFound | ConversationEnded | SkillNotFound
     >;
     /** Events of any conversation the harness knows, including a subagent's or a stored one's. */
     events(
@@ -266,6 +266,8 @@ export class Conversations extends Context.Service<
           readonly prompt: string;
           readonly approvals?: "ask" | "auto";
         }) {
+          // Expanded first, so an unknown skill reserves and creates nothing. The title is the prompt as typed.
+          const prompt = yield* agents.expandSkill(input.prompt);
           // Reserve, start and register cannot be interrupted between steps, or a sandbox would leak; only
           // `start` itself may be interrupted, and then its scope and reservation are released here.
           return yield* Effect.uninterruptibleMask((restore) =>
@@ -323,7 +325,7 @@ export class Conversations extends Context.Service<
               return yield* restore(
                 Effect.gen(function* () {
                   yield* track(created);
-                  yield* sendLive(id, created, input.prompt);
+                  yield* sendLive(id, created, prompt);
                   return summaryOfLive(id, created);
                 })
               ).pipe(
@@ -393,11 +395,12 @@ export class Conversations extends Context.Service<
           id: number,
           prompt: string
         ) {
+          const expanded = yield* agents.expandSkill(prompt);
           const liveEntry = live.get(id);
           // A live entry that closed while this send waited falls through to the stored rules below.
           if (
             liveEntry !== undefined &&
-            (yield* sendLive(id, liveEntry, prompt))
+            (yield* sendLive(id, liveEntry, expanded))
           ) {
             return;
           }
@@ -415,7 +418,7 @@ export class Conversations extends Context.Service<
             });
           }
           const revived = yield* resume(id, storedEntry);
-          if (yield* sendLive(id, revived, prompt)) {
+          if (yield* sendLive(id, revived, expanded)) {
             return;
           }
           // Only End closes a just-resumed conversation (the sweep waits for it to go idle).

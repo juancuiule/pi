@@ -252,32 +252,48 @@ export const skillsExtension = (skills: readonly Skill[]): Extension =>
     ],
   });
 
-/**
- * A prompt of the form `/skill:<name> <request>` forces that skill: the prompt becomes the skill's instructions
- * followed by the request. Any other prompt is returned as is.
- */
-export const expandSkillCommand = (
-  prompt: string,
-  skills: readonly Skill[]
-): string => {
+/** `/skill:<name> <request>`: the skill's name and the request (possibly empty); `undefined` for any other prompt. */
+export const parseSkillCommand = (
+  prompt: string
+): { readonly name: string; readonly request: string } | undefined => {
   const match =
     /^\/skill:(?<name>[a-z0-9-]+)(?:\s+(?<request>[\s\S]*))?$/u.exec(
       prompt.trim()
     );
-  if (match?.groups === undefined) {
+  if (match?.groups?.name === undefined) {
+    return;
+  }
+  return {
+    name: match.groups.name,
+    request: (match.groups.request ?? "").trim(),
+  };
+};
+
+/**
+ * The message a forced skill becomes: its instructions in a `<skill name="…">` block, then the request. The web
+ * console recognizes the block and shows it as a chip (`web/lib/skill-message.ts`).
+ */
+export const formatSkillMessage = (skill: Skill, request: string): string => {
+  const block = `<skill name="${skill.name}">\n${readSkill(skill).trimEnd()}\n</skill>`;
+  return request === "" ? block : `${block}\n\n${request}`;
+};
+
+/** `/skill:<name> <request>` forces that skill (see `formatSkillMessage`); any other prompt is returned as is. */
+export const expandSkillCommand = (
+  prompt: string,
+  skills: readonly Skill[]
+): string => {
+  const command = parseSkillCommand(prompt);
+  if (command === undefined) {
     return prompt;
   }
-  const { name, request } = match.groups;
-  const skill = skills.find((s) => s.name === name);
+  const skill = skills.find((s) => s.name === command.name);
   if (skill === undefined) {
     throw new Error(
-      `No skill named ${name}. Skills: ${skills.map((s) => s.name).join(", ")}`
+      `No skill named ${command.name}. Skills: ${skills.map((s) => s.name).join(", ")}`
     );
   }
-  const instructions = readSkill(skill);
-  return request === undefined || request.trim() === ""
-    ? instructions
-    : `${instructions.trimEnd()}\n\n---\n\nUser request: ${request.trim()}`;
+  return formatSkillMessage(skill, command.request);
 };
 
 // ─── Copying skills into a sandbox ───────────────────────────────────────────

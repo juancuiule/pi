@@ -22,6 +22,14 @@ export const useInfo = () =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
+export const useCapabilities = () =>
+  useQuery({
+    queryKey: ["capabilities"],
+    queryFn: () => runApi((c) => c.info.capabilities()),
+    // MCP servers connect once, at server start; reloading the page refetches.
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
 export const useCreateConversation = () => {
   const queryClient = useQueryClient();
   return useMutation({

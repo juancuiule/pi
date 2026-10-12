@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { useTakeDraft } from "@/lib/draft";
 import { useSendMessage } from "@/lib/queries";
 
 import { Composer } from "./composer";
@@ -16,6 +17,8 @@ export const MessageInput = ({
 }) => {
   const [prompt, setPrompt] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
+  // A skill picked in the capabilities sheet lands here.
+  useTakeDraft(setPrompt, textarea);
   const send = useSendMessage(id);
 
   const submit = () => {

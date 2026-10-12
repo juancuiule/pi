@@ -13,6 +13,7 @@ import {
   ConversationEnded,
   ConversationNotFound,
   SandboxLimitReached,
+  SkillNotFound,
 } from "../errors.ts";
 
 export type { AssistantMessage, Message, Usage } from "@earendil-works/pi-ai";
@@ -28,6 +29,7 @@ export {
   ConversationEnded,
   ConversationNotFound,
   SandboxLimitReached,
+  SkillNotFound,
 } from "../errors.ts";
 
 export const SandboxChoice = Schema.Literals(["none", "shell", "desktop"]);
@@ -48,6 +50,29 @@ export const ConversationSummary = Schema.Struct({
 });
 export type ConversationSummary = typeof ConversationSummary.Type;
 
+export const Capabilities = Schema.Struct({
+  skills: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      description: Schema.String,
+      modelInvocable: Schema.Boolean,
+    })
+  ),
+  mcp: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      url: Schema.String,
+      status: Schema.Literals(["connected", "unavailable"]),
+      error: Schema.optionalKey(Schema.String),
+      tools: Schema.Array(
+        Schema.Struct({ name: Schema.String, description: Schema.String })
+      ),
+    })
+  ),
+});
+export type Capabilities = typeof Capabilities.Type;
+
+const UnknownSkill = SkillNotFound.pipe(HttpApiSchema.status(400));
 const NotFound = ConversationNotFound.pipe(HttpApiSchema.status(404));
 const ById = { id: Schema.Int };
 
@@ -64,12 +89,19 @@ export const Api = HttpApi.make("effect-pi")
           approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
         }),
         success: ConversationSummary.pipe(HttpApiSchema.status(201)),
-        error: SandboxLimitReached.pipe(HttpApiSchema.status(409)),
+        error: [
+          SandboxLimitReached.pipe(HttpApiSchema.status(409)),
+          UnknownSkill,
+        ],
       }),
       HttpApiEndpoint.post("send", "/conversations/:id/messages", {
         params: ById,
         payload: Schema.Struct({ prompt: Schema.NonEmptyString }),
-        error: [NotFound, ConversationEnded.pipe(HttpApiSchema.status(409))],
+        error: [
+          NotFound,
+          ConversationEnded.pipe(HttpApiSchema.status(409)),
+          UnknownSkill,
+        ],
       }),
       // One pi-durable AgentEvent per SSE message: a snapshot first, then each commit's events.
       HttpApiEndpoint.get("events", "/conversations/:id/events", {
@@ -96,6 +128,9 @@ export const Api = HttpApi.make("effect-pi")
     HttpApiGroup.make("info").add(
       HttpApiEndpoint.get("get", "/info", {
         success: Schema.Struct({ model: Schema.String }),
+      }),
+      HttpApiEndpoint.get("capabilities", "/capabilities", {
+        success: Capabilities,
       })
     )
   )

@@ -121,18 +121,24 @@ describe(loadSkills, () => {
 describe(expandSkillCommand, () => {
   afterEach(removeSkillsDir);
 
-  it("replaces /skill:<name> with the skill's instructions and the request", () => {
+  it("wraps the skill's instructions in a skill tag, followed by the request", () => {
     const { skills } = loadSkills(
       skillsDir({ "convert/SKILL.md": skillFile("convert", "Convert units.") })
     );
 
     const expanded = expandSkillCommand("/skill:convert 3 mi to km", skills);
 
-    expect(expanded).toMatch(/^Skill "convert"\. It has no bundled files\./u);
     expect(expanded).toMatch(
-      /Do the thing\.\n\n---\n\nUser request: 3 mi to km$/u
+      /^<skill name="convert">\nSkill "convert"\. It has no bundled files\./u
+    );
+    expect(expanded).toMatch(/Do the thing\.\n<\/skill>\n\n3 mi to km$/u);
+    expect(expandSkillCommand("/skill:convert", skills)).toMatch(
+      /Do the thing\.\n<\/skill>$/u
     );
     expect(expandSkillCommand("3 mi to km", skills)).toBe("3 mi to km");
+    expect(() => expandSkillCommand("/skill:nope x", skills)).toThrow(
+      "No skill named nope"
+    );
   });
 });
 

@@ -26,6 +26,7 @@ To update: `git subtree pull --prefix=repos/effect https://github.com/Effect-TS/
 - `@earendil-works/pi-ai` → @repos/pi/packages/ai/
 - `@earendil-works/pi-durable` → @repos/pi/packages/durable/
 - `@earendil-works/chord` → @repos/pi/packages/chord/
+- `@earendil-works/pi-mcp` → @repos/pi/packages/mcp/
 
 When using these packages, read the package's `README.md`, `src/` and `test/` for real API usage instead of guessing. `packages/durable/docs/` has additional documentation.
 
@@ -43,6 +44,7 @@ Use pnpm, never npm or yarn.
 - `pnpm format` / `pnpm format:check` run oxfmt with the Ultracite preset (`oxfmt.config.ts`)
 - `pnpm test` runs vitest over `src/**/*.test.ts`; tests use pi-ai's faux provider, never a real model, and local-directory sandboxes (`src/testing/sandboxes.ts`)
 - `pnpm sandbox:build` builds the Docker sandbox images; `pnpm test:docker` runs the `*.docker.test.ts` integration tests against real containers (not part of `pnpm check` or the hooks)
+- `pnpm test:integration` runs the `*.integration.test.ts` tests against real network services (the eglc MCP server); not part of `pnpm check` or the hooks
 - `pnpm langfuse:up` / `pnpm langfuse:down` start and stop a local Langfuse (see Observability)
 - `pnpm check` runs all of the above; run it after code changes
 - `pnpm server` runs the HTTP server (`server.ts`, `:4000`)
@@ -70,9 +72,18 @@ The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "n
 `skills/<name>/SKILL.md` folders are [Agent Skills](https://agentskills.io/specification); `skills/README.md` explains the format for authors.
 
 - `src/skills.ts` loads and validates them (`loadSkills`), lists names and descriptions in a `skills` system prompt section, and adds a `skill` tool that returns `SKILL.md` or a bundled file from the host, so skills work without a sandbox. `Agents.layer({ skills })` installs them; sandboxed conversations also get a copy at `.skills/<name>/` (`installSkills`, through the sandbox's `ExecutionEnv`), so bundled scripts run there.
-- `/skill:<name> <request>` as the prompt forces a skill (`expandSkillCommand`); `disable-model-invocation: true` hides a skill from the list.
+- `/skill:<name> <request>` as the prompt forces a skill, in the CLI (`expandSkillCommand`) and the web console (`Agents.expandSkill` on create and send). The message becomes `<skill name="…">` + SKILL.md + `</skill>` + the request, which the console shows as a chip; an unknown skill is a 400 (`SkillNotFound`). `disable-model-invocation: true` hides a skill from the list.
 - pi-durable passes sections as `sections` on the system message, beside `content`; the provider assembles the prompt. Tests that inspect the prompt read `sections`.
 - A test loads `skills/` and fails on any problem, so edits to a skill are checked by `pnpm test`.
+
+## MCP
+
+`mcp.config.ts` lists the remote MCP servers (Streamable HTTP only; pi-mcp has no legacy SSE transport). `Agents.layer({ mcp })` connects them when the layer is built (`src/mcp.ts`, 10s timeout each) and closes them on teardown.
+
+- Each tool becomes `mcp_<server>_<tool>` in one `mcp` extension that every conversation selects; calls run on the host, so chat conversations have them. MCP `isError` results reach the model as failed calls. MCP tools are not gated by approvals.
+- A server that fails to connect is logged and reported `unavailable`; there is no reconnect, restart the server.
+- A server entry can `transform` results before the model sees them: `src/mcp/eglc.ts` trims El Gato y La Caja's `get_wordpress_post` (the body three times as HTML plus WordPress metadata) to the article as text and its metadata, including `id_post`, the id `get_recommendations` takes.
+- Tests use `fakeMcpServer` (`src/testing/mcp.ts`, pi-mcp's in-memory transport).
 
 ## Models
 
@@ -109,6 +120,7 @@ Agents are traced with Effect spans, exported to Langfuse over OTLP.
   - `terminal.ts`, `vnc.ts` and `subagent.ts`: pure helpers for the terminal text, the noVNC URL and subagent ids. `export.ts` builds the header menu's Markdown/JSON Lines downloads (`ansi` details supply terminal colors; tool cards stay clean).
   - Assistant text renders as markdown through `components/console/markdown.tsx` (react-markdown + remark-gfm, no raw HTML).
   - `format.ts` and `tool-summary.ts`: pure display helpers (cost/tokens/relative times, one-line tool-call summaries).
+  - `GET /api/capabilities` lists skills and MCP servers; the sidebar's Capabilities sheet shows them, and clicking a skill puts `/skill:<name> ` in the composer (`web/lib/draft.ts`). `Composer` autocompletes `/skill:` in both text areas (`web/lib/skill-autocomplete.ts`).
   - Fonts come from the shadcn preset: IBM Plex Sans, IBM Plex Mono and Montserrat headings (`layout.tsx`, `--font-*` in `globals.css`).
   - The shell panel uses wterm (`@wterm/react`), output-only (no-op `onData`); the first write happens in `onReady` (earlier writes are dropped), and colors/font come from `.console-terminal` CSS variables; `html`/`body` are `h-dvh overflow-hidden` and only inner regions scroll.
 - `web/next.config.ts` rewrites `/api/*` to `127.0.0.1:4000` with compression off, so SSE isn't buffered, and `experimental.proxyTimeout` at a day: the proxy otherwise cuts any stream silent for 30s, and the server sends no heartbeat.

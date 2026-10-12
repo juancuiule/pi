@@ -11,7 +11,9 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents.ts";
 import type { AgentError } from "../agents.ts";
+import { loadSkills } from "../skills.ts";
 import { fauxAgents } from "../testing/faux.ts";
+import { fakeMcpServer } from "../testing/mcp.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
@@ -41,6 +43,90 @@ const server = (responses: FauxResponseStep[], maxSandboxes = 3) =>
   serverWith(fauxAgents(responses).layer, maxSandboxes);
 
 describe("HTTP API", () => {
+  it("lists skills and MCP servers", async () => {
+    const { skills } = loadSkills("skills");
+    const echo = fakeMcpServer("test", [
+      { name: "echo", call: () => ({ content: [] }) },
+    ]);
+    const capabilities = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        return yield* client.info.capabilities();
+      }).pipe(
+        Effect.provide(
+          serverWith(
+            fauxAgents([fauxAssistantMessage([fauxText("ok")])], {
+              skills,
+              mcp: [echo],
+            }).layer
+          )
+        )
+      )
+    );
+    expect(capabilities.skills.map((s) => s.name)).toContain("unit-conversion");
+    expect(capabilities.mcp).toStrictEqual([
+      {
+        name: "test",
+        url: "memory://test",
+        status: "connected",
+        tools: [{ name: "echo", description: "" }],
+      },
+    ]);
+  });
+
+  it("expands /skill: on create and refuses an unknown skill on send", async () => {
+    const { skills } = loadSkills("skills");
+    const agents = fauxAgents(
+      [
+        fauxAssistantMessage([fauxText("one")]),
+        fauxAssistantMessage([fauxText("two")]),
+      ],
+      { skills }
+    );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: {
+            sandbox: "none",
+            prompt: "/skill:unit-conversion 3 mi to km",
+          },
+        });
+        const stream = yield* client.conversations.events({
+          params: { id: created.id },
+        });
+        const events = yield* stream.pipe(
+          Stream.takeUntil(
+            (event) =>
+              typeof event === "object" &&
+              event !== null &&
+              "type" in event &&
+              (event.type === "run_end" ||
+                (event.type === "snapshot" &&
+                  JSON.stringify(event).includes('"one"')))
+          ),
+          Stream.runCollect
+        );
+        const unknown = yield* Effect.flip(
+          client.conversations.send({
+            params: { id: created.id },
+            payload: { prompt: "/skill:nope hi" },
+          })
+        );
+        return { created, unknown, events: JSON.stringify([...events]) };
+      }).pipe(Effect.provide(serverWith(agents.layer)))
+    );
+    expect(result.created.title).toBe("/skill:unit-conversion 3 mi to km");
+    expect(result.events).toContain('<skill name=\\"unit-conversion\\">');
+    expect(result.events).toContain("3 mi to km");
+    expect(result.unknown).toMatchObject({
+      _tag: "SkillNotFound",
+      name: "nope",
+    });
+    // The rejected send queued nothing: only the first prompt reached the model.
+    expect(agents.faux.state.callCount).toBe(1);
+  });
+
   it("refuses requests from a non-loopback origin", async () => {
     const statuses = await Effect.runPromise(
       Effect.gen(function* () {

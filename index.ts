@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { Effect, Layer } from "effect";
 
+import { mcpServers } from "./mcp.config.ts";
 import { Agents } from "./src/agents.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromEnv } from "./src/models.ts";
@@ -95,7 +96,12 @@ const AgentsLive = Layer.unwrap(
       yield* Effect.log(
         `model: ${setup.model.provider}/${setup.model.modelId}`
       );
-      return Agents.layer({ ...setup, saveScreenshot, skills });
+      return Agents.layer({
+        ...setup,
+        saveScreenshot,
+        skills,
+        mcp: mcpServers,
+      });
     }
     yield* Effect.logWarning(
       "No model configured (MODEL_PROVIDER, ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY), using a scripted faux model"
@@ -109,6 +115,7 @@ const AgentsLive = Layer.unwrap(
       model: { provider: "faux", modelId: "faux-1" },
       saveScreenshot,
       skills,
+      mcp: mcpServers,
     });
   })
 ).pipe(Layer.provide(DockerSandboxes.layer()));

@@ -4,6 +4,7 @@ import { Effect, Layer, Stream } from "effect";
 import type { Schema } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 
+import { Agents } from "../agents.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";
@@ -49,8 +50,15 @@ const ConversationsHandlers = HttpApiBuilder.group(
 );
 
 const infoHandlers = (info: { readonly model: string }) =>
-  HttpApiBuilder.group(Api, "info", (handlers) =>
-    handlers.handle("get", () => Effect.succeed(info))
+  HttpApiBuilder.group(
+    Api,
+    "info",
+    Effect.fnUntraced(function* (handlers) {
+      const agents = yield* Agents;
+      return handlers
+        .handle("get", () => Effect.succeed(info))
+        .handle("capabilities", () => agents.capabilities);
+    })
   );
 
 export const apiLayer = (info: { readonly model: string }) =>

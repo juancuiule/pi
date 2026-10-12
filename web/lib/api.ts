@@ -19,6 +19,14 @@ export const apiError = (error: unknown): string => {
         const limit = "limit" in error ? String(error.limit) : "a few";
         return `At most ${limit} sandboxes can run at once. End one first.`;
       }
+      case "SkillNotFound": {
+        const name = "name" in error ? String(error.name) : "";
+        const available =
+          "available" in error && Array.isArray(error.available)
+            ? error.available.join(", ")
+            : "";
+        return `No skill named ${name}. Available: ${available}.`;
+      }
       case "ConversationNotFound": {
         return "This conversation has ended.";
       }

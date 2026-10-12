@@ -26,6 +26,7 @@ import { useConversations, useInfo } from "@/lib/queries";
 import { useMounted } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 
+import { CapabilitiesSheet } from "./capabilities-sheet";
 import { SANDBOX_INFO } from "./sandbox-badge";
 
 /** A clock that re-renders every 30s so relative timestamps stay fresh. */
@@ -196,6 +197,7 @@ export const Sidebar = ({
         <div className="px-2">{list}</div>
       </ScrollArea>
       <div className="border-border flex flex-col gap-1.5 border-t p-2">
+        <CapabilitiesSheet />
         <span
           className="text-muted-foreground block truncate font-mono text-xs"
           title={info?.model}

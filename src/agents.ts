@@ -30,11 +30,22 @@ import { ApprovalDoc } from "./approvals.ts";
 import type { ApprovalPolicy } from "./approvals.ts";
 import { MetaDoc } from "./conversation-meta.ts";
 import type { StoredConversation } from "./conversation-meta.ts";
-import { ApprovalNotFound, ConversationNotFound } from "./errors.ts";
+import {
+  ApprovalNotFound,
+  ConversationNotFound,
+  SkillNotFound,
+} from "./errors.ts";
+import { connectMcpServers } from "./mcp.ts";
+import type { McpServerConfig, McpServerState } from "./mcp.ts";
 import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
 import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
 import type { SaveScreenshot } from "./screenshots.ts";
-import { installSkills, skillsExtension } from "./skills.ts";
+import {
+  formatSkillMessage,
+  installSkills,
+  parseSkillCommand,
+  skillsExtension,
+} from "./skills.ts";
 import type { Skill } from "./skills.ts";
 import { CodingTools } from "./tools/bash.ts";
 import { Calculator } from "./tools/calculator.ts";
@@ -119,6 +130,16 @@ export const Subagent: Extension = defineExtension({
 export class AgentError extends Schema.TaggedError<AgentError>()("AgentError", {
   cause: Schema.Defect(),
 }) {}
+
+export interface Capabilities {
+  readonly skills: readonly {
+    readonly name: string;
+    readonly description: string;
+    /** False for skills with `disable-model-invocation`: only `/skill:<name>` loads them. */
+    readonly modelInvocable: boolean;
+  }[];
+  readonly mcp: readonly McpServerState[];
+}
 
 export interface AgentModel {
   readonly provider: string;
@@ -277,6 +298,10 @@ export class Agents extends Context.Service<
       Stream.Stream<AgentEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
+    /** The skills and MCP servers conversations can use, for the console. */
+    readonly capabilities: Effect.Effect<Capabilities>;
+    /** Expand `/skill:<name> <request>` into the skill message; other prompts pass through. */
+    expandSkill(prompt: string): Effect.Effect<string, SkillNotFound>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -288,6 +313,8 @@ export class Agents extends Context.Service<
     readonly skills?: readonly Skill[];
     /** Persistent storage; MemoryStorage keeps the ephemeral behaviour of tests and `pnpm start`. */
     readonly storage?: Storage;
+    /** Remote MCP servers; connected when the layer is built, closed when it is torn down. */
+    readonly mcp?: readonly McpServerConfig[];
   }) =>
     Layer.effect(
       Agents,
@@ -303,6 +330,13 @@ export class Agents extends Context.Service<
         for (const extension of skillExtensions) {
           registry.install(extension);
         }
+        // Connected before the harness opens, so the tools are registered when conversations start. Never fails:
+        // a server that cannot be reached is reported unavailable.
+        const mcp = yield* Effect.acquireRelease(
+          Effect.promise(() => connectMcpServers(options.mcp ?? [])),
+          (connections) => Effect.promise(() => connections.close())
+        );
+        registry.install(mcp.extension);
         const desktop = desktopExtension(
           options.saveScreenshot === undefined
             ? {}
@@ -452,6 +486,7 @@ export class Agents extends Context.Service<
                       extensions: [
                         ...extensionsFor(choice, desktop),
                         ...skillExtensions,
+                        mcp.extension,
                         tracing.extension,
                       ],
                     },
@@ -636,6 +671,32 @@ export class Agents extends Context.Service<
           );
         });
 
+        const capabilities = Effect.succeed<Capabilities>({
+          skills: skills.map((skill) => ({
+            name: skill.name,
+            description: skill.description,
+            modelInvocable: !skill.disableModelInvocation,
+          })),
+          mcp: mcp.servers,
+        });
+
+        const expandSkill = (prompt: string) =>
+          Effect.suspend(() => {
+            const command = parseSkillCommand(prompt);
+            if (command === undefined) {
+              return Effect.succeed(prompt);
+            }
+            const skill = skills.find((s) => s.name === command.name);
+            return skill === undefined
+              ? Effect.fail(
+                  new SkillNotFound({
+                    name: command.name,
+                    available: skills.map((s) => s.name),
+                  })
+                )
+              : Effect.sync(() => formatSkillMessage(skill, command.request));
+          });
+
         return Agents.of({
           start,
           attach,
@@ -644,6 +705,8 @@ export class Agents extends Context.Service<
           stored,
           markEnded,
           events,
+          capabilities,
+          expandSkill,
         });
       })
     );
