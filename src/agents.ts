@@ -31,6 +31,8 @@ import type { ApprovalPolicy } from "./approvals.ts";
 import { MetaDoc } from "./conversation-meta.ts";
 import type { StoredConversation } from "./conversation-meta.ts";
 import { ApprovalNotFound, ConversationNotFound } from "./errors.ts";
+import { connectMcpServers } from "./mcp.ts";
+import type { McpServerConfig, McpServerState } from "./mcp.ts";
 import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
 import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
 import type { SaveScreenshot } from "./screenshots.ts";
@@ -119,6 +121,16 @@ export const Subagent: Extension = defineExtension({
 export class AgentError extends Schema.TaggedError<AgentError>()("AgentError", {
   cause: Schema.Defect(),
 }) {}
+
+export interface Capabilities {
+  readonly skills: readonly {
+    readonly name: string;
+    readonly description: string;
+    /** False for skills with `disable-model-invocation`: only `/skill:<name>` loads them. */
+    readonly modelInvocable: boolean;
+  }[];
+  readonly mcp: readonly McpServerState[];
+}
 
 export interface AgentModel {
   readonly provider: string;
@@ -277,6 +289,8 @@ export class Agents extends Context.Service<
       Stream.Stream<AgentEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
+    /** The skills and MCP servers conversations can use, for the console. */
+    readonly capabilities: Effect.Effect<Capabilities>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -288,6 +302,8 @@ export class Agents extends Context.Service<
     readonly skills?: readonly Skill[];
     /** Persistent storage; MemoryStorage keeps the ephemeral behaviour of tests and `pnpm start`. */
     readonly storage?: Storage;
+    /** Remote MCP servers; connected when the layer is built, closed when it is torn down. */
+    readonly mcp?: readonly McpServerConfig[];
   }) =>
     Layer.effect(
       Agents,
@@ -301,6 +317,17 @@ export class Agents extends Context.Service<
         const skillExtensions =
           skills.length === 0 ? [] : [skillsExtension(skills)];
         for (const extension of skillExtensions) {
+          registry.install(extension);
+        }
+        // Connected before the harness opens, so the tools are registered when conversations start. Never fails:
+        // a server that cannot be reached is reported unavailable.
+        const mcp = yield* Effect.acquireRelease(
+          Effect.promise(() => connectMcpServers(options.mcp ?? [])),
+          (connections) => Effect.promise(() => connections.close())
+        );
+        const mcpExtensions =
+          mcp.extension === undefined ? [] : [mcp.extension];
+        for (const extension of mcpExtensions) {
           registry.install(extension);
         }
         const desktop = desktopExtension(
@@ -452,6 +479,7 @@ export class Agents extends Context.Service<
                       extensions: [
                         ...extensionsFor(choice, desktop),
                         ...skillExtensions,
+                        ...mcpExtensions,
                         tracing.extension,
                       ],
                     },
@@ -636,6 +664,15 @@ export class Agents extends Context.Service<
           );
         });
 
+        const capabilities = Effect.succeed<Capabilities>({
+          skills: skills.map((skill) => ({
+            name: skill.name,
+            description: skill.description,
+            modelInvocable: !skill.disableModelInvocation,
+          })),
+          mcp: mcp.servers,
+        });
+
         return Agents.of({
           start,
           attach,
@@ -644,6 +681,7 @@ export class Agents extends Context.Service<
           stored,
           markEnded,
           events,
+          capabilities,
         });
       })
     );

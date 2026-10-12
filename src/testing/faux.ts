@@ -11,6 +11,7 @@ import type { Storage } from "@earendil-works/pi-durable";
 import { Effect, Layer } from "effect";
 
 import { Agents } from "../agents.ts";
+import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import type { Skill } from "../skills.ts";
 import { localSandboxes } from "./sandboxes.ts";
@@ -21,6 +22,8 @@ export const fauxAgents = (
     readonly skills?: readonly Skill[];
     /** Persistent storage, so a rebuilt layer sees earlier conversations (restart tests). */
     readonly storage?: Storage;
+    /** MCP servers, usually `fakeMcpServer`s. */
+    readonly mcp?: readonly McpServerConfig[];
   } = {}
 ) => {
   const models = createModels();
