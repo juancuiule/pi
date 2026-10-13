@@ -92,7 +92,7 @@ describe(modelFromConfig, () => {
 
     expect(setup?.model).toStrictEqual({
       provider: "vercel-ai-gateway",
-      modelId: "anthropic/claude-sonnet-5.5",
+      modelId: "alibaba/qwen3.8-27b",
     });
   });
 });

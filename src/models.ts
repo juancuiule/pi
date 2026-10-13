@@ -17,7 +17,7 @@ export type ModelProvider = "anthropic" | "vercel" | "openai" | "ollama";
 
 export const defaultModelIds: Record<ModelProvider, string> = {
   anthropic: "claude-sonnet-5-5",
-  vercel: "anthropic/claude-sonnet-5.5",
+  vercel: "alibaba/qwen3.8-27b",
   openai: "gpt-5.5",
   ollama: "qwen3.5:4b-64k",
 };

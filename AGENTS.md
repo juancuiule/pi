@@ -102,7 +102,7 @@ The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "n
 `src/models.ts` picks the model from the configuration (see `.env.schema` for defaults):
 
 - `MODEL_PROVIDER`: `anthropic` (`ANTHROPIC_API_KEY`), `vercel` (Vercel AI Gateway, `AI_GATEWAY_API_KEY`), `openai` (`OPENAI_API_KEY`) or `ollama`. Unset, a set API key picks its provider, in that order. The schema checks each key's prefix (`sk-ant-`, `vck_`, `sk-`), so a mistyped key stops startup instead of failing on the first request.
-- `MODEL_ID` overrides the default model: `claude-sonnet-5-5`, `anthropic/claude-sonnet-5.5`, `gpt-5.5`, `qwen3.5:4b-64k`.
+- `MODEL_ID` overrides the default model: `claude-sonnet-5-5`, `alibaba/qwen3.8-27b`, `gpt-5.5`, `qwen3.5:4b-64k`.
 - `OLLAMA_URL`: the Ollama server, `http://192.168.1.20:11434` by default (a LAN machine).
 
 Ollama goes through its OpenAI-compatible API. The model's tools, vision, thinking and context size are read from Ollama's `/api/show` at startup; a model without `num_ctx` set is assumed to have a 4096-token context.
