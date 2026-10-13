@@ -238,6 +238,8 @@ export interface AgentConversation {
 export class Agents extends Context.Service<
   Agents,
   {
+    /** The model new conversations run on; /api/info reports it. */
+    readonly model: AgentModel;
     /**
      * Start a conversation, creating its sandbox first. The sandbox is removed when the scope closes, so wrap a
      * conversation's lifetime in `Effect.scoped`.
@@ -732,6 +734,7 @@ export class Agents extends Context.Service<
         });
 
         return Agents.of({
+          model: options.model,
           start,
           attach,
           decide,

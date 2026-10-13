@@ -76,62 +76,59 @@ const UnknownSkill = SkillNotFound.pipe(HttpApiSchema.status(400));
 const NotFound = ConversationNotFound.pipe(HttpApiSchema.status(404));
 const ById = { id: Schema.Int };
 
+const ConversationGroup = HttpApiGroup.make("conversations").add(
+  HttpApiEndpoint.get("list", "/conversations", {
+    success: Schema.Array(ConversationSummary),
+  }),
+  HttpApiEndpoint.post("create", "/conversations", {
+    payload: Schema.Struct({
+      sandbox: SandboxChoice,
+      prompt: Schema.NonEmptyString,
+      approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
+    }),
+    success: ConversationSummary.pipe(HttpApiSchema.status(201)),
+    error: [SandboxLimitReached.pipe(HttpApiSchema.status(409)), UnknownSkill],
+  }),
+  HttpApiEndpoint.post("send", "/conversations/:id/messages", {
+    params: ById,
+    payload: Schema.Struct({ prompt: Schema.NonEmptyString }),
+    error: [
+      NotFound,
+      ConversationEnded.pipe(HttpApiSchema.status(409)),
+      UnknownSkill,
+    ],
+  }),
+  // One pi-durable AgentEvent per SSE message: a snapshot first, then each commit's events.
+  HttpApiEndpoint.get("events", "/conversations/:id/events", {
+    params: ById,
+    success: HttpApiSchema.StreamSse({ data: Schema.Json }),
+    error: NotFound,
+  }),
+  HttpApiEndpoint.delete("end", "/conversations/:id", {
+    params: ById,
+    error: NotFound,
+  }),
+  HttpApiEndpoint.post("approvals", "/conversations/:id/approvals", {
+    params: ById,
+    payload: Schema.Struct({
+      key: Schema.String,
+      decision: Schema.Literals(["approve", "deny", "always"]),
+    }),
+    success: HttpApiSchema.NoContent,
+    error: [NotFound, ApprovalNotFound.pipe(HttpApiSchema.status(404))],
+  })
+);
+
+const InfoGroup = HttpApiGroup.make("info").add(
+  HttpApiEndpoint.get("get", "/info", {
+    success: Schema.Struct({ model: Schema.String }),
+  }),
+  HttpApiEndpoint.get("capabilities", "/capabilities", {
+    success: Capabilities,
+  })
+);
+
 export const Api = HttpApi.make("effect-pi")
-  .add(
-    HttpApiGroup.make("conversations").add(
-      HttpApiEndpoint.get("list", "/conversations", {
-        success: Schema.Array(ConversationSummary),
-      }),
-      HttpApiEndpoint.post("create", "/conversations", {
-        payload: Schema.Struct({
-          sandbox: SandboxChoice,
-          prompt: Schema.NonEmptyString,
-          approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
-        }),
-        success: ConversationSummary.pipe(HttpApiSchema.status(201)),
-        error: [
-          SandboxLimitReached.pipe(HttpApiSchema.status(409)),
-          UnknownSkill,
-        ],
-      }),
-      HttpApiEndpoint.post("send", "/conversations/:id/messages", {
-        params: ById,
-        payload: Schema.Struct({ prompt: Schema.NonEmptyString }),
-        error: [
-          NotFound,
-          ConversationEnded.pipe(HttpApiSchema.status(409)),
-          UnknownSkill,
-        ],
-      }),
-      // One pi-durable AgentEvent per SSE message: a snapshot first, then each commit's events.
-      HttpApiEndpoint.get("events", "/conversations/:id/events", {
-        params: ById,
-        success: HttpApiSchema.StreamSse({ data: Schema.Json }),
-        error: NotFound,
-      }),
-      HttpApiEndpoint.delete("end", "/conversations/:id", {
-        params: ById,
-        error: NotFound,
-      }),
-      HttpApiEndpoint.post("approvals", "/conversations/:id/approvals", {
-        params: ById,
-        payload: Schema.Struct({
-          key: Schema.String,
-          decision: Schema.Literals(["approve", "deny", "always"]),
-        }),
-        success: HttpApiSchema.NoContent,
-        error: [NotFound, ApprovalNotFound.pipe(HttpApiSchema.status(404))],
-      })
-    )
-  )
-  .add(
-    HttpApiGroup.make("info").add(
-      HttpApiEndpoint.get("get", "/info", {
-        success: Schema.Struct({ model: Schema.String }),
-      }),
-      HttpApiEndpoint.get("capabilities", "/capabilities", {
-        success: Capabilities,
-      })
-    )
-  )
+  .add(ConversationGroup)
+  .add(InfoGroup)
   .prefix("/api");

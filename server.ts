@@ -16,7 +16,7 @@ import * as DockerSandboxes from "./src/sandbox/docker.ts";
 import { saveScreenshotsTo } from "./src/screenshots.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { echoModel } from "./src/server/faux.ts";
-import { apiLayer } from "./src/server/handlers.ts";
+import { ApiLayer } from "./src/server/handlers.ts";
 import { Skills } from "./src/skills/skills.ts";
 
 const PORT = 4000;
@@ -26,7 +26,6 @@ const setup = configured ?? echoModel();
 if (configured === undefined) {
   console.warn("No model configured, the echo model answers");
 }
-const modelName = `${setup.model.provider}/${setup.model.modelId}`;
 
 // Conversations survive restarts in a WAL SQLite file; the harness closes it on shutdown. The opener
 // creates the directory.
@@ -48,20 +47,22 @@ const ConversationsLive = Conversations.layer({
   maxSandboxes: 3,
   idleTimeoutMs: 30 * 60 * 1000,
   sweepEveryMs: 60 * 1000,
-  // The info handlers read Agents' capabilities, so it stays in the output.
-}).pipe(Layer.provideMerge(AgentsLive));
+}).pipe(Layer.provide(AgentsLive));
 
-const ServerLive = HttpRouter.serve(apiLayer({ model: modelName })).pipe(
+const NodeHttpServerLayer = NodeHttpServer.layer(createServer, {
+  port: PORT,
+  host: "127.0.0.1",
+  // SSE connections never close on their own; do not wait for them (the default is 20s) before removing sandboxes.
+  gracefulShutdownTimeout: Duration.seconds(1),
+});
+
+const LangfuseLayer = langfuseLayer(process.env);
+
+const ServerLive = HttpRouter.serve(ApiLayer).pipe(
   Layer.provide(ConversationsLive),
-  Layer.provide(
-    NodeHttpServer.layer(createServer, {
-      port: PORT,
-      host: "127.0.0.1",
-      // SSE connections never close on their own; do not wait for them (the default is 20s) before removing sandboxes.
-      gracefulShutdownTimeout: Duration.seconds(1),
-    })
-  ),
-  Layer.provide(langfuseLayer(process.env))
+  Layer.provide(AgentsLive),
+  Layer.provide(NodeHttpServerLayer),
+  Layer.provide(LangfuseLayer)
 );
 
 // runMain runs every finalizer on SIGINT/SIGTERM, so stopping the server removes all sandboxes.

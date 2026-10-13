@@ -18,13 +18,13 @@ import { localSandboxes } from "../testing/sandboxes.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { echoModel } from "./faux.ts";
-import { apiLayer } from "./handlers.ts";
+import { ApiLayer } from "./handlers.ts";
 
 const serverWith = (
   agents: Layer.Layer<Agents, AgentError>,
   maxSandboxes = 3
 ) =>
-  HttpRouter.serve(apiLayer({ model: "faux/faux-1" }), {
+  HttpRouter.serve(ApiLayer, {
     disableListenLog: true,
     disableLogger: true,
   }).pipe(
