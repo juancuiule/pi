@@ -27,6 +27,7 @@ export const model: ModelConfig = {
   ollamaUrl: ENV.OLLAMA_URL,
   hasAnthropicKey: unset(ENV.ANTHROPIC_API_KEY) !== undefined,
   hasGatewayKey: unset(ENV.AI_GATEWAY_API_KEY) !== undefined,
+  hasOpenAIKey: unset(ENV.OPENAI_API_KEY) !== undefined,
 };
 
 /** The HTTP server and its conversations; durations are milliseconds (varlock's `duration` type). */

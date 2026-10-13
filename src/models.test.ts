@@ -70,6 +70,21 @@ describe(modelFromConfig, () => {
     });
   });
 
+  it("picks openai from its key, after anthropic and vercel", async () => {
+    const openai = await Effect.runPromise(
+      modelFromConfig({ hasOpenAIKey: true })
+    );
+    const both = await Effect.runPromise(
+      modelFromConfig({ hasOpenAIKey: true, hasGatewayKey: true })
+    );
+
+    expect(openai?.model).toStrictEqual({
+      provider: "openai",
+      modelId: "gpt-5.5",
+    });
+    expect(both?.model.provider).toBe("vercel-ai-gateway");
+  });
+
   it("prefers the named provider over whichever key is set", async () => {
     const setup = await Effect.runPromise(
       modelFromConfig({ provider: "vercel", hasAnthropicKey: true })

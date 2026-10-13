@@ -1,22 +1,24 @@
 // Model providers. Which one runs comes from the configuration (MODEL_PROVIDER, MODEL_ID, OLLAMA_URL and the API keys
-// in .env.schema): a named provider wins; otherwise anthropic when its key is set, then vercel; otherwise none, and
-// callers fall back to a faux model.
+// in .env.schema): a named provider wins; otherwise anthropic when its key is set, then vercel, then openai; otherwise
+// none, and callers fall back to a faux model.
 import { createProvider } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { createModels } from "@earendil-works/pi-ai/models";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { vercelAIGatewayProvider } from "@earendil-works/pi-ai/providers/vercel-ai-gateway";
 import { Effect, Schema } from "effect";
 
 import type { AgentModel } from "./agents.ts";
 
-export type ModelProvider = "anthropic" | "vercel" | "ollama";
+export type ModelProvider = "anthropic" | "vercel" | "openai" | "ollama";
 
 export const defaultModelIds: Record<ModelProvider, string> = {
   anthropic: "claude-sonnet-5-5",
   vercel: "anthropic/claude-sonnet-5.5",
+  openai: "gpt-5.5",
   ollama: "qwen3.5:4b-64k",
 };
 
@@ -124,6 +126,7 @@ export interface ModelConfig {
   readonly ollamaUrl?: string | undefined;
   readonly hasAnthropicKey?: boolean | undefined;
   readonly hasGatewayKey?: boolean | undefined;
+  readonly hasOpenAIKey?: boolean | undefined;
 }
 
 const pickProvider = (config: ModelConfig): ModelProvider | undefined => {
@@ -133,7 +136,10 @@ const pickProvider = (config: ModelConfig): ModelProvider | undefined => {
   if (config.hasAnthropicKey === true) {
     return "anthropic";
   }
-  return config.hasGatewayKey === true ? "vercel" : undefined;
+  if (config.hasGatewayKey === true) {
+    return "vercel";
+  }
+  return config.hasOpenAIKey === true ? "openai" : undefined;
 };
 
 /** The model the configuration asks for, or `undefined` when it names none. */
@@ -159,6 +165,13 @@ export const modelFromConfig = Effect.fnUntraced(function* (
       return {
         models,
         model: { provider: "vercel-ai-gateway", modelId },
+      } satisfies ModelSetup;
+    }
+    case "openai": {
+      models.setProvider(openaiProvider());
+      return {
+        models,
+        model: { provider: "openai", modelId },
       } satisfies ModelSetup;
     }
     case "ollama": {
