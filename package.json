@@ -13,7 +13,7 @@
   "scripts": {
     "start": "node index.ts",
     "server": "node server.ts",
-    "dev:server": "node --watch-path=server.ts --watch-path=mcp.config.ts --watch-path=src --watch-path=.env.schema $([ -f .env ] && echo --watch-path=.env) server.ts",
+    "dev:server": "node --watch server.ts",
     "typecheck": "tsc",
     "env:check": "varlock load --format json > /dev/null && varlock load --path web/ --format json > /dev/null",
     "env:types": "git diff --quiet -- src/env.d.ts web/env.d.ts || (echo \"src/env.d.ts or web/env.d.ts changed when regenerated from .env.schema: review and stage them\" >&2 && git diff --stat -- src/env.d.ts web/env.d.ts >&2 && exit 1)",

@@ -49,7 +49,7 @@ Use pnpm, never npm or yarn.
 - `pnpm langfuse:up` / `pnpm langfuse:down` start and stop a local Langfuse (see Observability)
 - `pnpm check` runs `env:check` and `env:types` first, then all of the above; run it after code changes
 - `pnpm server` runs the HTTP server (`server.ts`, `SERVER_PORT`)
-- `pnpm dev` runs the server in watch mode plus the web console on `WEB_PORT` (3001). The server restarts on changes to `server.ts`, `mcp.config.ts`, `src/`, `.env.schema` and `.env` (explicit `--watch-path`s, since varlock reads `.env` outside Node's import graph; `.env` is watched only if it exists when the server starts, and a new top-level module needs its own `--watch-path` in `dev:server`)
+- `pnpm dev` runs the server in watch mode plus the web console on `WEB_PORT` (3001). The server restarts when a file it imports changes (`node --watch`). Editing `.env` or `.env.schema` does not restart it, on purpose: varlock reads them outside the import graph, and watching them needs `--watch-path`, which Node supports only on macOS and Windows, so restart `pnpm dev` after changing the configuration
 - `pnpm --filter web <script>` runs a web script
 - `pnpm check` also runs `web`'s typecheck and tests
 
