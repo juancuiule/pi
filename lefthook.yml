@@ -15,7 +15,8 @@ pre-commit:
       glob: "*.{js,mjs,cjs,ts,mts,cts,tsx,jsx}"
       exclude:
         - "repos/**"
-      run: pnpm lint:fix {staged_files}
+      # Staged files can all be in oxlint's ignorePatterns (web/components/ui/**), which oxlint treats as an error
+      run: pnpm lint:fix --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
     - name: checks
       group:
