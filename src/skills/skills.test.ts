@@ -10,7 +10,7 @@ import {
 import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { Agents } from "../agents.ts";
+import { Agents } from "../agents/agents.ts";
 import { ask, callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { Skills, SkillSource } from "./skills.ts";
 

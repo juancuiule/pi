@@ -13,7 +13,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { Context, Effect, Exit, Layer, Ref, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
-import type { AgentError } from "../agents.ts";
+import type { AgentError } from "../agents/agents.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { Conversations } from "./conversations.ts";
 import type { ConversationSummary } from "./conversations.ts";

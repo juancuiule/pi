@@ -68,7 +68,7 @@ Some Ultracite rules are turned off in `oxlint.config.ts` because they conflict 
 
 ## Sandboxes
 
-The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "none" | "shell" | "desktop" })` in `src/agents.ts`.
+The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "none" | "shell" | "desktop" })` in `src/agents/agents.ts`.
 
 - The sandbox is created before the conversation and recorded in its `SandboxDoc` (`src/sandbox/sandbox.ts`) in the creating commit. The harness `env` function reads that document on every tool call.
 - When the scope around `start` closes, the conversation is aborted (its run and queued inputs stop), then the sandbox is removed. The server's End closes that scope.

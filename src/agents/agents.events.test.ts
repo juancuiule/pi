@@ -6,8 +6,8 @@ import type { AgentEvent, ConversationId } from "@earendil-works/pi-durable";
 import { Effect, Exit, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { fauxAgents } from "../testing/faux.ts";
 import { Agents } from "./agents.ts";
-import { fauxAgents } from "./testing/faux.ts";
 
 const assistantTexts = (events: readonly AgentEvent[]) =>
   events.flatMap((event) => {

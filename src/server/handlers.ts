@@ -4,7 +4,7 @@ import type { Schema } from "effect";
 import { Effect, Layer, Stream } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 
-import { Agents } from "../agents.ts";
+import { Agents } from "../agents/agents.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";

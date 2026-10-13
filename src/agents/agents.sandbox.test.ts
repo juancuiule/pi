@@ -9,8 +9,8 @@ import {
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { ask, callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { Agents } from "./agents.ts";
-import { ask, callTool, echoToolResult, fauxAgents } from "./testing/faux.ts";
 
 /** A model turn that answers with the last tool result's text and details.ansi, as JSON. */
 const showResult: FauxResponseStep = (request) => {

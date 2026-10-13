@@ -15,8 +15,8 @@ import {
   Stream,
 } from "effect";
 
-import { Agents } from "../agents.ts";
-import type { AgentConversation, AgentError } from "../agents.ts";
+import { Agents } from "../agents/agents.ts";
+import type { AgentConversation, AgentError } from "../agents/agents.ts";
 import type { ConversationMeta } from "../conversation-meta.ts";
 import {
   ConversationEnded,

@@ -11,7 +11,7 @@ import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { vercelAIGatewayProvider } from "@earendil-works/pi-ai/providers/vercel-ai-gateway";
 import { Effect, Schema } from "effect";
 
-import type { AgentModel } from "./agents.ts";
+import type { AgentModel } from "./agents/agents.ts";
 
 export type ModelProvider = "anthropic" | "vercel" | "openai" | "ollama";
 

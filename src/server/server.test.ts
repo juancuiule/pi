@@ -9,8 +9,8 @@ import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 import { describe, expect, it } from "vitest";
 
-import { Agents } from "../agents.ts";
-import type { AgentError } from "../agents.ts";
+import { Agents } from "../agents/agents.ts";
+import type { AgentError } from "../agents/agents.ts";
 import { Skills } from "../skills/skills.ts";
 import { fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";

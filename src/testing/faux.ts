@@ -10,7 +10,7 @@ import {
 import type { Storage } from "@earendil-works/pi-durable";
 import { Effect, Layer } from "effect";
 
-import { Agents } from "../agents.ts";
+import { Agents } from "../agents/agents.ts";
 import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { Skills } from "../skills/skills.ts";

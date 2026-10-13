@@ -22,23 +22,23 @@ import {
 import type { Cause, Scope } from "effect";
 import { Context, Effect, Layer, Queue, Schema, Stream } from "effect";
 
-import type { ApprovalPolicy } from "./approvals.ts";
-import { ApprovalDoc } from "./approvals.ts";
-import type { StoredConversation } from "./conversation-meta.ts";
-import { MetaDoc } from "./conversation-meta.ts";
-import type { SkillNotFound } from "./errors.ts";
-import { ApprovalNotFound, ConversationNotFound } from "./errors.ts";
-import type { McpServerConfig, McpServerState } from "./mcp.ts";
-import { connectMcpServers } from "./mcp.ts";
-import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
-import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
-import type { SaveScreenshot } from "./screenshots.ts";
-import { Skills, SkillsDoc, skillsExtension } from "./skills/skills.ts";
-import { CodingTools } from "./tools/bash.ts";
-import { Calculator } from "./tools/calculator.ts";
-import { desktopExtension } from "./tools/desktop.ts";
-import type { AgentTracing } from "./tracing.ts";
-import { makeAgentTracing } from "./tracing.ts";
+import type { ApprovalPolicy } from "../approvals.ts";
+import { ApprovalDoc } from "../approvals.ts";
+import type { StoredConversation } from "../conversation-meta.ts";
+import { MetaDoc } from "../conversation-meta.ts";
+import type { SkillNotFound } from "../errors.ts";
+import { ApprovalNotFound, ConversationNotFound } from "../errors.ts";
+import type { McpServerConfig, McpServerState } from "../mcp.ts";
+import { connectMcpServers } from "../mcp.ts";
+import type { SandboxChoice, SandboxInfo } from "../sandbox/sandbox.ts";
+import { SandboxDoc, SandboxError, Sandboxes } from "../sandbox/sandbox.ts";
+import type { SaveScreenshot } from "../screenshots.ts";
+import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
+import { CodingTools } from "../tools/bash.ts";
+import { Calculator } from "../tools/calculator.ts";
+import { desktopExtension } from "../tools/desktop.ts";
+import type { AgentTracing } from "../tracing.ts";
+import { makeAgentTracing } from "../tracing.ts";
 
 const context = BACKGROUND_CONTEXT;
 

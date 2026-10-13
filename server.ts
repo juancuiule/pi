@@ -13,7 +13,7 @@ import { Duration, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 
 import { mcpServers } from "./mcp.config.ts";
-import { Agents } from "./src/agents.ts";
+import { Agents } from "./src/agents/agents.ts";
 import * as config from "./src/config.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromConfig } from "./src/models.ts";

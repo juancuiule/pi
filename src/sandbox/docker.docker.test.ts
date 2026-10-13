@@ -15,7 +15,7 @@ import {
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { Agents } from "../agents.ts";
+import { Agents } from "../agents/agents.ts";
 import { saveScreenshotsTo } from "../screenshots.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
 import { Skills } from "../skills/skills.ts";

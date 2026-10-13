@@ -12,7 +12,7 @@ import type { AgentEvent, ConversationId } from "@earendil-works/pi-durable";
 import { Effect, Exit, Layer, Ref, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { Agents } from "./agents.ts";
+import { Agents } from "./agents/agents.ts";
 import { approvalKey, withApproval } from "./approvals.ts";
 import type { SandboxChoice } from "./sandbox/sandbox.ts";
 import { Conversations } from "./server/conversations.ts";

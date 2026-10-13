@@ -11,11 +11,11 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
+import type { McpServerConfig } from "../mcp.ts";
+import { Skills } from "../skills/skills.ts";
+import { ask, callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
+import { fakeMcpServer } from "../testing/mcp.ts";
 import { Agents } from "./agents.ts";
-import type { McpServerConfig } from "./mcp.ts";
-import { Skills } from "./skills/skills.ts";
-import { ask, callTool, echoToolResult, fauxAgents } from "./testing/faux.ts";
-import { fakeMcpServer } from "./testing/mcp.ts";
 
 const echo = fakeMcpServer("test", [
   {

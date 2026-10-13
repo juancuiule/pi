@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { Agents } from "./agents.ts";
+import { Agents } from "./agents/agents.ts";
 import { DEFAULT_OLLAMA_URL, modelFromConfig, ollamaModel } from "./models.ts";
 import { Skills } from "./skills/skills.ts";
 import { ask } from "./testing/faux.ts";

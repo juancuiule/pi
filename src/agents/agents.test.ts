@@ -5,8 +5,8 @@ import {
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { ask, fauxAgents } from "../testing/faux.ts";
 import { Agents } from "./agents.ts";
-import { ask, fauxAgents } from "./testing/faux.ts";
 
 describe(Agents, () => {
   it("answers a prompt directly", async () => {
