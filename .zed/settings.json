@@ -15,6 +15,14 @@
     "**/.settings",
     "repos/**"
   ],
+  // Format with the project's oxfmt (oxfmt.config.ts) instead of Zed's bundled Prettier, whose
+  // defaults differ (trailing commas, import order) and make `pnpm format:check` fail.
+  "formatter": {
+    "external": {
+      "command": "./node_modules/.bin/oxfmt",
+      "arguments": ["--stdin-filepath", "{buffer_path}"]
+    }
+  },
   "lsp": {
     "vtsls": {
       "settings": {
