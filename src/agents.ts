@@ -308,7 +308,7 @@ export class Agents extends Context.Service<
     readonly model: AgentModel;
     /** Keep every desktop screenshot on the host as well; see `saveScreenshotsTo`. */
     readonly saveScreenshot?: SaveScreenshot;
-    /** Persistent storage; MemoryStorage keeps the ephemeral behaviour of tests and `pnpm start`. */
+    /** Persistent storage; MemoryStorage (the default) keeps tests ephemeral. */
     readonly storage?: Storage;
     /** Remote MCP servers; connected when the layer is built, closed when it is torn down. */
     readonly mcp?: readonly McpServerConfig[];

@@ -1,6 +1,6 @@
 # Skills
 
-Each folder here is an [Agent Skill](https://agentskills.io/specification): a `SKILL.md` with frontmatter, plus any files it bundles. `index.ts` loads every folder with a `SKILL.md` (this README is not one) and gives the skills to all conversations.
+Each folder here is an [Agent Skill](https://agentskills.io/specification): a `SKILL.md` with frontmatter, plus any files it bundles. `server.ts` loads every folder with a `SKILL.md` (this README is not one) and gives the skills to all conversations.
 
 ```text
 repo-report/
@@ -18,7 +18,7 @@ repo-report/
 
 Each `skill` call is a tool span in Langfuse, so you can see whether and when the model picked a skill up.
 
-To force a skill instead of waiting for the model to choose it: `pnpm start "/skill:<name> <request>"`. In the web console, type `/` in the message box to pick a skill, or choose one in the sidebar's Capabilities sheet. To suggest a skill without forcing it, mention `/skill:<name>` later in the prompt, as in `convert 3 mi to km, maybe /skill:unit-conversion helps`: the model gets the skill's description and loads it if it fits.
+To force a skill instead of waiting for the model to choose it, start the message with `/skill:<name> <request>`. In the web console, type `/` in the message box to pick a skill, or choose one in the sidebar's Capabilities sheet. To suggest a skill without forcing it, mention `/skill:<name>` later in the prompt, as in `convert 3 mi to km, maybe /skill:unit-conversion helps`: the model gets the skill's description and loads it if it fits.
 
 ## Writing one
 
