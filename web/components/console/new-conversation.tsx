@@ -19,7 +19,7 @@ const CHOICES: readonly {
   value: SandboxChoice;
   hint: string;
 }[] = [
-  { value: "none", hint: "Chat and subagents, no tools." },
+  { value: "none", hint: "Chat only, no sandbox." },
   {
     value: "shell",
     hint: "A Linux container with file and shell tools.",

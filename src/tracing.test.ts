@@ -82,37 +82,6 @@ describe("agent tracing", () => {
     });
   });
 
-  it("puts a subagent's work under the tool call that started it", async () => {
-    const { spans, tracer } = recordingTracer();
-    const { layer } = fauxAgents([
-      callTool("subagent", { task: "Say hi." }),
-      fauxAssistantMessage([fauxText("hi")]),
-      fauxAssistantMessage([fauxText("It said hi.")]),
-    ]);
-
-    await Effect.runPromise(
-      ask("Ask a subagent to say hi.").pipe(
-        Effect.provide(layer),
-        Effect.provideService(Tracer.Tracer, tracer)
-      )
-    );
-
-    expect(tree(spans)).toStrictEqual([
-      "AgentConversation.ask < -",
-      "generation < AgentConversation.ask",
-      "tool subagent < AgentConversation.ask",
-      "generation < tool subagent",
-      "generation < AgentConversation.ask",
-    ]);
-    // The subagent's spans stay in the session of the conversation it served.
-    const sessions = new Set(
-      spans
-        .map((span) => span.attributes.get("langfuse.session.id"))
-        .filter((session) => session !== undefined)
-    );
-    expect(sessions.size).toBe(1);
-  });
-
   it("keeps separate runs in separate sessions, though conversation ids restart", async () => {
     const first = await sessionOfRun();
     const second = await sessionOfRun();

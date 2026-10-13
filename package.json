@@ -6,12 +6,11 @@
   "license": "ISC",
   "author": "",
   "type": "module",
-  "main": "index.ts",
+  "main": "server.ts",
   "exports": {
     "./api": "./src/server/api.ts"
   },
   "scripts": {
-    "start": "node index.ts",
     "server": "node server.ts",
     "dev:server": "node --watch server.ts",
     "typecheck": "tsc",

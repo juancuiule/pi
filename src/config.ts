@@ -1,5 +1,5 @@
-// The app's configuration, read once from the environment varlock validated against .env.schema. Only the entry points
-// (server.ts, index.ts) import this module, after `varlock/auto-load`; everything else takes plain options, so tests
+// The app's configuration, read once from the environment varlock validated against .env.schema. Only the entry point
+// (server.ts) imports this module, after `varlock/auto-load`; everything else takes plain options, so tests
 // never need an environment. To add a variable, declare it in .env.schema, then map it here.
 import { ENV } from "varlock/env";
 

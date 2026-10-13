@@ -1,6 +1,5 @@
-// Per-conversation approval policy for gated tools. The root conversation's doc holds policy, pending
-// entries and decisions for the whole conversation tree; a subagent's doc only carries `root` pointing
-// at it. Keys are `${conversationId}:${callId}`.
+// Per-conversation approval policy for gated tools. Each conversation's doc holds its policy, pending
+// entries and decisions. Keys are `${conversationId}:${callId}`.
 import { defineDoc } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
@@ -22,8 +21,6 @@ export type PendingApproval = {
 // oxlint-disable-next-line typescript/consistent-type-definitions
 export type ApprovalState = {
   policy: ApprovalPolicy;
-  /** Set on subagent conversations: the top-level conversation whose doc holds the state. */
-  root?: string;
   pending: Record<string, PendingApproval>;
   decisions: Record<string, "approve" | "deny">;
 };
@@ -45,19 +42,17 @@ export const approvalKey = (
 const DENIED = "The user denied this tool call.";
 
 /**
- * Wrap a gated tool: under `policy: "ask"` its execute waits for a decision committed to the root
+ * Wrap a gated tool: under `policy: "ask"` its execute waits for a decision committed to its
  * conversation's ApprovalDoc before running. The UI sees the call through `details.approval`.
  */
 export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
   ...tool,
   execute: async (args, api, context) => {
-    const own = await api.snapshot(ApprovalDoc, api.conversationId, context);
-    const rootId = Number(own?.root ?? api.conversationId) as ConversationId;
     const key = approvalKey(api.conversationId, api.callId);
     // Reading the policy and registering happen in one commit, so an "always" decision cannot land
     // between them and leave this call waiting under a policy that is already `auto`.
     const gated = await api.commit(async (tx) => {
-      const doc = await tx.doc(ApprovalDoc, rootId);
+      const doc = await tx.doc(ApprovalDoc, api.conversationId);
       if (doc.policy !== "ask") {
         return false;
       }
@@ -84,7 +79,11 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
     };
     try {
       await api.details({ approval: "pending", approvalKey: key }, context);
-      const opened = await api.watchDoc(ApprovalDoc, rootId, context);
+      const opened = await api.watchDoc(
+        ApprovalDoc,
+        api.conversationId,
+        context
+      );
       // Fail closed: without a watch there is no way a decision can arrive, so the tool must not run.
       if (opened === undefined) {
         throw new Error("Could not wait for approval.");
@@ -126,7 +125,7 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
       // Best-effort cleanup: the call may have been aborted, which makes the commit fail.
       await api
         .commit(async (tx) => {
-          const doc = await tx.doc(ApprovalDoc, rootId);
+          const doc = await tx.doc(ApprovalDoc, api.conversationId);
           doc.pending = Object.fromEntries(
             Object.entries(doc.pending).filter(([k]) => k !== key)
           );

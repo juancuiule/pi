@@ -12,29 +12,19 @@ import {
   LoaderCircle,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { hasPendingApproval } from "@/lib/approval";
-import type { ConversationState, ToolRun } from "@/lib/conversation-state";
-import { toolResultOf } from "@/lib/conversation-state";
+import type { ConversationState } from "@/lib/conversation-state";
 import {
   parseSkillMessage,
   skillMentionParts,
   splitSkillHints,
 } from "@/lib/skill-message";
-import { subagentIdFor } from "@/lib/subagent";
 import { isNearBottom, userParts } from "@/lib/transcript";
 
 import { Markdown } from "./markdown";
-import { SubagentStream } from "./subagent";
 import { ToolCall } from "./tool-call";
-import type { ToolCallBlock } from "./tool-call";
-
-type RenderExtra = (
-  call: ToolCallBlock,
-  tool: ToolRun | undefined
-) => ReactNode;
 
 const Caret = () => (
   <span
@@ -110,12 +100,10 @@ const SkillMention = ({ skill }: { skill: string }) => (
 const AssistantBlocks = ({
   message,
   state,
-  renderExtra,
   caret,
 }: {
   message: AssistantMessage;
   state: ConversationState;
-  renderExtra: RenderExtra;
   caret?: boolean;
 }) => {
   let lastTextIndex = -1;
@@ -150,14 +138,7 @@ const AssistantBlocks = ({
             );
           }
           case "toolCall": {
-            return (
-              <ToolCall
-                key={block.id}
-                call={block}
-                state={state}
-                renderExtra={renderExtra}
-              />
-            );
+            return <ToolCall key={block.id} call={block} state={state} />;
           }
           default: {
             return null;
@@ -171,11 +152,9 @@ const AssistantBlocks = ({
 const Entry = ({
   entry,
   state,
-  renderExtra,
 }: {
   entry: EntryRecord;
   state: ConversationState;
-  renderExtra: RenderExtra;
 }) => {
   const message = entry.model?.[0];
   if (message === undefined) {
@@ -231,13 +210,7 @@ const Entry = ({
       );
     }
     case "assistant": {
-      return (
-        <AssistantBlocks
-          message={message}
-          state={state}
-          renderExtra={renderExtra}
-        />
-      );
+      return <AssistantBlocks message={message} state={state} />;
     }
     default: {
       return null;
@@ -245,29 +218,13 @@ const Entry = ({
   }
 };
 
-const Body = ({
-  state,
-  renderExtra,
-}: {
-  state: ConversationState;
-  renderExtra: RenderExtra;
-}) => (
+const Body = ({ state }: { state: ConversationState }) => (
   <>
     {state.entries.map((entry) => (
-      <Entry
-        key={entry.id}
-        entry={entry}
-        state={state}
-        renderExtra={renderExtra}
-      />
+      <Entry key={entry.id} entry={entry} state={state} />
     ))}
     {state.streaming === undefined ? null : (
-      <AssistantBlocks
-        message={state.streaming}
-        state={state}
-        renderExtra={renderExtra}
-        caret
-      />
+      <AssistantBlocks message={state.streaming} state={state} caret />
     )}
     {state.failures.map((failure) => (
       <p
@@ -296,13 +253,7 @@ const Body = ({
   </>
 );
 
-const ScrollingTranscript = ({
-  state,
-  renderExtra,
-}: {
-  state: ConversationState;
-  renderExtra: RenderExtra;
-}) => {
+export const Transcript = ({ state }: { state: ConversationState }) => {
   const viewport = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
   const root = useRef<HTMLDivElement | null>(null);
@@ -352,7 +303,7 @@ const ScrollingTranscript = ({
     <div className="relative min-h-0 flex-1">
       <ScrollArea ref={root} className="h-full">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6">
-          <Body state={state} renderExtra={renderExtra} />
+          <Body state={state} />
         </div>
       </ScrollArea>
       {showJump ? (
@@ -366,36 +317,5 @@ const ScrollingTranscript = ({
         </button>
       ) : null}
     </div>
-  );
-};
-
-export const Transcript = ({
-  state,
-  nested = false,
-}: {
-  state: ConversationState;
-  /** Inside a subagent card: no scroll area, no auto-scroll. */
-  nested?: boolean;
-}) => {
-  // oxlint-disable-next-line unicorn/consistent-function-scoping -- refers to `Transcript` itself (no-use-before-define forbids hoisting it)
-  const renderExtra: RenderExtra = (call, tool) => {
-    const id =
-      call.name === "subagent" ? subagentIdFor(state, call.id) : undefined;
-    return id === undefined ? null : (
-      <SubagentStream
-        id={id}
-        running={
-          tool?.status !== "done" && toolResultOf(state, call.id) === undefined
-        }
-        render={(child) => <Transcript state={child} nested />}
-      />
-    );
-  };
-  return nested ? (
-    <div className="border-border flex flex-col gap-3 border-l-2 pl-4">
-      <Body state={state} renderExtra={renderExtra} />
-    </div>
-  ) : (
-    <ScrollingTranscript state={state} renderExtra={renderExtra} />
   );
 };

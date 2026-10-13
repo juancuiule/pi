@@ -33,11 +33,10 @@ describe(toolSummary, () => {
   it("summarizes agent tools", () => {
     expect(
       cases([
-        ["subagent", { task: "Do the thing" }],
         ["skill", { name: "research" }],
         ["skill", { name: "research", file: "guide.md" }],
       ]).got
-    ).toStrictEqual(["Do the thing", "research", "research / guide.md"]);
+    ).toStrictEqual(["research", "research / guide.md"]);
   });
 
   it("summarizes desktop tools", () => {
