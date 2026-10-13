@@ -1,6 +1,9 @@
 // Hello world: an Effect program that runs a pi-durable agent in the sandbox the user picks.
 // The model comes from the environment (see src/models.ts); without one, a scripted faux model runs.
 // Run: pnpm start [--sandbox none|shell|desktop] [prompt...]
+
+// Validates the environment against .env.schema and loads .env before anything reads it (pi-ai reads API keys itself).
+import "varlock/auto-load";
 import { parseArgs } from "node:util";
 
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
@@ -15,8 +18,9 @@ import { Effect, Layer } from "effect";
 
 import { mcpServers } from "./mcp.config.ts";
 import { Agents } from "./src/agents.ts";
+import * as config from "./src/config.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
-import { modelFromEnv } from "./src/models.ts";
+import { modelFromConfig } from "./src/models.ts";
 import * as DockerSandboxes from "./src/sandbox/docker.ts";
 import type { SandboxChoice } from "./src/sandbox/sandbox.ts";
 import { saveScreenshotsTo, screenshotDir } from "./src/screenshots.ts";
@@ -78,14 +82,12 @@ const fauxScripts: Record<SandboxChoice, FauxResponseStep[]> = {
   ],
 };
 
-// Every desktop screenshot is kept in screenshots/<sandbox id>/, numbered in order.
-const SCREENSHOTS = "screenshots";
-
-const saveScreenshot = saveScreenshotsTo(SCREENSHOTS);
+// Every desktop screenshot is kept in <SCREENSHOTS_DIR>/<sandbox id>/, numbered in order.
+const saveScreenshot = saveScreenshotsTo(config.paths.screenshots);
 
 const AgentsLive = Layer.unwrap(
   Effect.gen(function* () {
-    const setup = yield* modelFromEnv(process.env);
+    const setup = yield* modelFromConfig(config.model);
     if (setup !== undefined) {
       yield* Effect.log(
         `model: ${setup.model.provider}/${setup.model.modelId}`
@@ -94,6 +96,7 @@ const AgentsLive = Layer.unwrap(
         ...setup,
         saveScreenshot,
         mcp: mcpServers,
+        mcpConnectTimeoutMs: config.mcpConnectTimeoutMs,
       });
     }
     yield* Effect.logWarning(
@@ -108,12 +111,13 @@ const AgentsLive = Layer.unwrap(
       model: { provider: "faux", modelId: "faux-1" },
       saveScreenshot,
       mcp: mcpServers,
+      mcpConnectTimeoutMs: config.mcpConnectTimeoutMs,
     });
   })
 ).pipe(
   Layer.provide(DockerSandboxes.layer()),
   // Skills from skills/<name>/SKILL.md; `/skill:<name> request` forces one, `/skill:<name>` elsewhere hints at it.
-  Layer.provide(Skills.directory("skills"))
+  Layer.provide(Skills.directory(config.paths.skills))
 );
 
 const program = Effect.scoped(
@@ -139,7 +143,7 @@ const program = Effect.scoped(
     });
     if (conversation.sandbox?.kind === "desktop") {
       yield* Effect.log(
-        `screenshots: ${screenshotDir(SCREENSHOTS, conversation.sandbox.id)}`
+        `screenshots: ${screenshotDir(config.paths.screenshots, conversation.sandbox.id)}`
       );
     }
   })
@@ -151,7 +155,7 @@ const program = Effect.scoped(
 );
 
 // Agents is built with the Langfuse tracer, so the spans pi-durable's hooks create are exported too.
-const MainLive = Layer.provideMerge(AgentsLive, langfuseLayer(process.env));
+const MainLive = Layer.provideMerge(AgentsLive, langfuseLayer(config.langfuse));
 
 try {
   await Effect.runPromise(program.pipe(Effect.provide(MainLive)));

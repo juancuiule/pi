@@ -1,8 +1,6 @@
-// Model providers, picked from environment variables:
-//   MODEL_PROVIDER  anthropic | vercel | ollama. Unset: anthropic when ANTHROPIC_API_KEY is set, vercel when
-//                   AI_GATEWAY_API_KEY is set, otherwise none (callers fall back to a faux model).
-//   MODEL_ID        the provider's model ID, overriding the default below.
-//   OLLAMA_URL      the Ollama server, http://192.168.1.20:11434 by default.
+// Model providers. Which one runs comes from the configuration (MODEL_PROVIDER, MODEL_ID, OLLAMA_URL and the API keys
+// in .env.schema): a named provider wins; otherwise anthropic when its key is set, then vercel; otherwise none, and
+// callers fall back to a faux model.
 import { createProvider } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -119,39 +117,34 @@ export const showOllamaModel = (baseUrl: string, id: string) =>
 
 // ─── Picking a provider ──────────────────────────────────────────────────────
 
-const providers: readonly ModelProvider[] = ["anthropic", "vercel", "ollama"];
+/** What the configuration says about the model; see .env.schema. The keys themselves are read by pi-ai. */
+export interface ModelConfig {
+  readonly provider?: ModelProvider | undefined;
+  readonly modelId?: string | undefined;
+  readonly ollamaUrl?: string | undefined;
+  readonly hasAnthropicKey?: boolean | undefined;
+  readonly hasGatewayKey?: boolean | undefined;
+}
 
-const pickProvider = (
-  env: NodeJS.ProcessEnv
-): Effect.Effect<ModelProvider | undefined, ModelConfigError> => {
-  const name = env.MODEL_PROVIDER;
-  if (name === undefined || name === "") {
-    if (env.ANTHROPIC_API_KEY !== undefined) {
-      return Effect.succeed("anthropic");
-    }
-    return Effect.succeed(
-      env.AI_GATEWAY_API_KEY === undefined ? undefined : "vercel"
-    );
+const pickProvider = (config: ModelConfig): ModelProvider | undefined => {
+  if (config.provider !== undefined) {
+    return config.provider;
   }
-  const provider = providers.find((candidate) => candidate === name);
-  return provider === undefined
-    ? Effect.fail(
-        new ModelConfigError({
-          message: `MODEL_PROVIDER must be one of ${providers.join(", ")}, got ${name}`,
-        })
-      )
-    : Effect.succeed(provider);
+  if (config.hasAnthropicKey === true) {
+    return "anthropic";
+  }
+  return config.hasGatewayKey === true ? "vercel" : undefined;
 };
 
-/** The model the environment asks for, or `undefined` when it names none. */
-export const modelFromEnv = Effect.fnUntraced(function* (
-  env: NodeJS.ProcessEnv
+/** The model the configuration asks for, or `undefined` when it names none. */
+export const modelFromConfig = Effect.fnUntraced(function* (
+  config: ModelConfig
 ) {
-  const provider = yield* pickProvider(env);
+  const provider = pickProvider(config);
   if (provider === undefined) {
     return;
   }
-  const modelId = env.MODEL_ID ?? defaultModelIds[provider];
+  const modelId = config.modelId ?? defaultModelIds[provider];
   const models = createModels();
   switch (provider) {
     case "anthropic": {
@@ -169,7 +162,7 @@ export const modelFromEnv = Effect.fnUntraced(function* (
       } satisfies ModelSetup;
     }
     case "ollama": {
-      const baseUrl = (env.OLLAMA_URL ?? DEFAULT_OLLAMA_URL).replace(
+      const baseUrl = (config.ollamaUrl ?? DEFAULT_OLLAMA_URL).replace(
         /\/+$/u,
         ""
       );

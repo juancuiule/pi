@@ -25,6 +25,8 @@ export const fauxAgents = (
     readonly storage?: Storage;
     /** MCP servers, usually `fakeMcpServer`s. */
     readonly mcp?: readonly McpServerConfig[];
+    /** How long to wait for each MCP server; `Agents.layer`'s default otherwise. */
+    readonly mcpConnectTimeoutMs?: number;
   } = {}
 ) => {
   const models = createModels();
@@ -40,6 +42,9 @@ export const fauxAgents = (
       model: { provider: "faux", modelId: "faux-1" },
       ...(options.storage === undefined ? {} : { storage: options.storage }),
       ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
+      ...(options.mcpConnectTimeoutMs === undefined
+        ? {}
+        : { mcpConnectTimeoutMs: options.mcpConnectTimeoutMs }),
     }).pipe(
       Layer.provide(sandboxes.layer),
       Layer.provide(options.skills ?? Skills.none)
