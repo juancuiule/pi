@@ -136,7 +136,7 @@ const toolFor = (
       );
       const result = server.config.transform?.(tool.name, raw) ?? raw;
       // MCP reports tool failures in the result; the model sees them as a failed call.
-      if (result.isError === true) {
+      if (result.isError) {
         // oxlint-disable-next-line unicorn/prefer-type-error -- a failed tool call, not a type check
         throw new Error(textOf(result) || `${tool.name} failed`);
       }

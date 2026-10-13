@@ -46,7 +46,7 @@ const resultText = (
   const output = result.content
     .map((block) => (block.type === "text" ? block.text : "[image]"))
     .join("\n");
-  return { output, failed: result.isError === true };
+  return { output, failed: result.isError ?? false };
 };
 
 export const toMarkdown = (

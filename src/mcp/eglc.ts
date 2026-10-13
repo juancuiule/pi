@@ -67,7 +67,7 @@ export const eglcTransform = (
   tool: string,
   result: CallToolResult
 ): CallToolResult => {
-  if (tool !== "get_wordpress_post" || result.isError === true) {
+  if (tool !== "get_wordpress_post" || result.isError) {
     return result;
   }
   const [block] = result.content;

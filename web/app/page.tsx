@@ -115,8 +115,8 @@ const Console = () => {
 
   const state = useConversationEvents(selectedId);
   const decideApproval = useDecideApproval(selectedId ?? 0);
-  const gone = useConversationStore((store) =>
-    selectedId === undefined ? false : store.ended[selectedId] === true
+  const gone = useConversationStore(
+    (store) => selectedId !== undefined && (store.ended[selectedId] ?? false)
   );
   const { data } = useConversations();
   const conversation = data?.find((c) => c.id === selectedId);

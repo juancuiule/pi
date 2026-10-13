@@ -27,7 +27,7 @@ const startSubscription = (id: number): (() => void) => {
     // the conversation is marked ended.
     Effect.repeat({
       schedule: Schedule.spaced("1 second"),
-      until: () => useConversationStore.getState().ended[id] === true,
+      until: () => useConversationStore.getState().ended[id] ?? false,
     }),
     Effect.retry(Schedule.spaced("1 second")),
     Effect.provide(FetchHttpClient.layer)

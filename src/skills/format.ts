@@ -99,7 +99,7 @@ export const decodeSkill = Effect.fnUntraced(function* (
       SKILL_FILE,
       ...folder.files.filter((file) => file !== SKILL_FILE).toSorted(),
     ],
-    disableModelInvocation: fields["disable-model-invocation"] === true,
+    disableModelInvocation: fields["disable-model-invocation"] ?? false,
   } satisfies Skill;
 });
 

@@ -139,7 +139,7 @@ const ApprovalActions = ({ approvalKey }: { approvalKey: string }) => {
           disabled={approvalMutation?.isPending}
           onClick={() => decide(decision)}
         >
-          {approvalMutation?.isPending === true &&
+          {approvalMutation?.isPending &&
           approvalMutation.variables?.decision === decision &&
           approvalMutation.variables?.key === approvalKey ? (
             <LoaderCircle
@@ -198,7 +198,7 @@ export const ToolCall = ({
   const toolResult = result?.role === "toolResult" ? result : undefined;
   const status =
     toolResult === undefined ? (tool?.status ?? "pending") : "done";
-  const isError = toolResult?.isError === true;
+  const isError = toolResult?.isError ?? false;
   const summary = toolSummary(call.name, call.arguments);
   const Icon = toolIcon(call.name);
   const extra = renderExtra?.(call, tool);

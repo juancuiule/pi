@@ -171,14 +171,14 @@ export const makeAgentTracing = (
                   ? errors
                   : result.content
               ),
-              ...(result.isError === true
+              ...(result.isError
                 ? {
                     "langfuse.observation.level": "ERROR",
                     "langfuse.observation.status_message": errors.join("\n"),
                   }
                 : {}),
             },
-            result.isError !== true
+            !result.isError
           );
         },
       }),

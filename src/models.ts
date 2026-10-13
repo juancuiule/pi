@@ -133,13 +133,13 @@ const pickProvider = (config: ModelConfig): ModelProvider | undefined => {
   if (config.provider !== undefined) {
     return config.provider;
   }
-  if (config.hasAnthropicKey === true) {
+  if (config.hasAnthropicKey) {
     return "anthropic";
   }
-  if (config.hasGatewayKey === true) {
+  if (config.hasGatewayKey) {
     return "vercel";
   }
-  return config.hasOpenAIKey === true ? "openai" : undefined;
+  return config.hasOpenAIKey ? "openai" : undefined;
 };
 
 /** The model the configuration asks for, or `undefined` when it names none. */
