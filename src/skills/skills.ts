@@ -333,7 +333,7 @@ export const skillsExtension = (skills: Skills["Service"]): Extension => {
             skills.read(
               skill,
               args.file,
-              sandboxDir?.ok === true ? sandboxDir.value : undefined
+              sandboxDir?.ok ? sandboxDir.value : undefined
             )
           );
           return { content: [{ type: "text" as const, text }] };

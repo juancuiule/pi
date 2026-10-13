@@ -80,6 +80,6 @@ export const echoToolResult: FauxResponseStep = (request) => {
     .flatMap((c) => (c.type === "text" ? [c.text] : []))
     .join("");
   return fauxAssistantMessage([
-    fauxText(result?.isError === true ? `error: ${text}` : text),
+    fauxText(result?.isError ? `error: ${text}` : text),
   ]);
 };

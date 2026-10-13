@@ -128,14 +128,14 @@ const AssistantBlocks = ({
   return (
     <div className="flex flex-col gap-3">
       {message.content.map((block, index) => {
-        const streaming = caret === true && index === lastIndex;
+        const streaming = caret && index === lastIndex;
         switch (block.type) {
           case "text": {
             return (
               // oxlint-disable-next-line react/no-array-index-key -- blocks have no id; the list only grows
               <div key={index}>
                 <Markdown>{block.text}</Markdown>
-                {caret === true && index === lastTextIndex ? <Caret /> : null}
+                {caret && index === lastTextIndex ? <Caret /> : null}
               </div>
             );
           }

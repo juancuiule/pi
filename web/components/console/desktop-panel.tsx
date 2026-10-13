@@ -26,7 +26,7 @@ export const DesktopPanel = ({
       <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4">
         <Monitor className="size-5" />
         <p className="text-sm">
-          {ended === true
+          {ended
             ? "The desktop was removed with its sandbox."
             : "No desktop view for this sandbox."}
         </p>

@@ -35,7 +35,7 @@ export const fakeMcpServer = (
         pair.server.send({ jsonrpc: "2.0", id: request.id, result });
       switch (request.method) {
         case "initialize": {
-          if (options.hang === true) {
+          if (options.hang) {
             return;
           }
           await reply({
