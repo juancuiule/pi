@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { Agents } from "../agents.ts";
 import { saveScreenshotsTo } from "../screenshots.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
+import { Skills } from "../skills/skills.ts";
 import { ask, callTool, echoToolResult } from "../testing/faux.ts";
 import * as DockerSandboxes from "./docker.ts";
 import { Sandboxes } from "./sandbox.ts";
@@ -39,7 +40,7 @@ const dockerAgents = (
     models,
     model: { provider: "faux", modelId: "faux-1" },
     ...(saveScreenshot === undefined ? {} : { saveScreenshot }),
-  }).pipe(Layer.provide(DockerSandboxes.layer()));
+  }).pipe(Layer.provide(DockerSandboxes.layer()), Layer.provide(Skills.none));
 };
 
 describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(

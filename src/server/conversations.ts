@@ -395,7 +395,10 @@ export class Conversations extends Context.Service<
           id: number,
           prompt: string
         ) {
-          const expanded = yield* agents.expandSkill(prompt);
+          const expanded = yield* agents.expandSkill(
+            prompt,
+            id as ConversationId
+          );
           const liveEntry = live.get(id);
           // A live entry that closed while this send waited falls through to the stored rules below.
           if (

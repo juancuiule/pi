@@ -1,7 +1,7 @@
 // Handlers for the API in api.ts. Agent and sandbox failures are defects: they surface as 500s.
 import type { AgentEvent } from "@earendil-works/pi-durable";
-import { Effect, Layer, Stream } from "effect";
 import type { Schema } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 
 import { Agents } from "../agents.ts";
@@ -49,20 +49,22 @@ const ConversationsHandlers = HttpApiBuilder.group(
   })
 );
 
-const infoHandlers = (info: { readonly model: string }) =>
-  HttpApiBuilder.group(
-    Api,
-    "info",
-    Effect.fnUntraced(function* (handlers) {
-      const agents = yield* Agents;
-      return handlers
-        .handle("get", () => Effect.succeed(info))
-        .handle("capabilities", () => agents.capabilities);
-    })
-  );
+const InfoHandlers = HttpApiBuilder.group(
+  Api,
+  "info",
+  Effect.fnUntraced(function* (handlers) {
+    const {
+      capabilities,
+      model: { provider, modelId },
+    } = yield* Agents;
+    const model = `${provider}/${modelId}`;
+    return handlers
+      .handle("get", () => Effect.succeed({ model }))
+      .handle("capabilities", () => capabilities);
+  })
+);
 
-export const apiLayer = (info: { readonly model: string }) =>
-  HttpApiBuilder.layer(Api).pipe(
-    Layer.provide(Layer.mergeAll(ConversationsHandlers, infoHandlers(info))),
-    Layer.merge(loopbackOnly)
-  );
+export const ApiLayer = HttpApiBuilder.layer(Api).pipe(
+  Layer.provide(Layer.mergeAll(ConversationsHandlers, InfoHandlers)),
+  Layer.merge(loopbackOnly)
+);

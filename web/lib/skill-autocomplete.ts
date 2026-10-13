@@ -1,19 +1,43 @@
-// The composer's `/` list: while the prompt is a slash command with no whitespace yet, offer the skills.
+// The composer's `/` list. At the start of the prompt a `/` opens it, forcing a skill (`/skill:<name> request`).
+// Anywhere else, after whitespace, it opens once `/s` is typed: a mention there hints at the skill to the model
+// (src/skills/format.ts formatSkillHints), and a bare `/` mid-text is more often a path than a skill.
 
 export interface SkillOption {
   readonly name: string;
   readonly description: string;
 }
 
+/** The `/…` word the cursor is in: what follows `skill:` (or `/`), and where the word starts and ends. */
+export interface SkillToken {
+  readonly query: string;
+  readonly start: number;
+  readonly end: number;
+}
+
 const COMMAND = "skill:";
 
-/** What follows `/` (without a typed `skill:`), or `undefined` when the list should be closed. */
-export const skillQuery = (prompt: string): string | undefined => {
-  if (!prompt.startsWith("/") || /\s/u.test(prompt)) {
+/** The word at `cursor` when it should open the list, or `undefined` when the list should be closed. */
+export const skillQuery = (
+  prompt: string,
+  cursor = prompt.length
+): SkillToken | undefined => {
+  const before = prompt.slice(0, cursor);
+  const start = before.search(/\S*$/u);
+  const token = before.slice(start);
+  if (!token.startsWith("/")) {
     return;
   }
-  const typed = prompt.slice(1);
-  return typed.startsWith(COMMAND) ? typed.slice(COMMAND.length) : typed;
+  const typed = token.slice(1);
+  const command = typed.startsWith(COMMAND);
+  if (start > 0 && !command && (typed === "" || !COMMAND.startsWith(typed))) {
+    return;
+  }
+  const end = cursor + (/^\S*/u.exec(prompt.slice(cursor))?.[0].length ?? 0);
+  return {
+    query: command ? typed.slice(COMMAND.length) : typed,
+    start,
+    end,
+  };
 };
 
 /** Skills whose name starts with the query, or all of them while the query is the start of `skill:`. */
@@ -28,7 +52,19 @@ export const matchSkills = (
   return all.filter((skill) => skill.name.startsWith(query));
 };
 
-export const completeSkill = (name: string): string => `/skill:${name} `;
+/** The prompt with the word replaced by `/skill:<name> `, and where the cursor goes: after the space. */
+export const completeSkill = (
+  prompt: string,
+  token: SkillToken,
+  name: string
+): { readonly prompt: string; readonly cursor: number } => {
+  const inserted = `/skill:${name} `;
+  const rest = prompt.slice(token.end).replace(/^ /u, "");
+  return {
+    prompt: `${prompt.slice(0, token.start)}${inserted}${rest}`,
+    cursor: token.start + inserted.length,
+  };
+};
 
 export const moveSelection = (
   index: number,

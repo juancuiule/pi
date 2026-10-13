@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { Agents } from "./agents.ts";
 import { DEFAULT_OLLAMA_URL, modelFromEnv, ollamaModel } from "./models.ts";
+import { Skills } from "./skills/skills.ts";
 import { ask } from "./testing/faux.ts";
 import { localSandboxes } from "./testing/sandboxes.ts";
 
@@ -161,7 +162,8 @@ describe("an Ollama conversation", () => {
           return yield* Effect.die("no model");
         }
         const layer = Agents.layer(setup).pipe(
-          Layer.provide(localSandboxes().layer)
+          Layer.provide(localSandboxes().layer),
+          Layer.provide(Skills.none)
         );
         return yield* ask("What is 40 + 2?").pipe(Effect.provide(layer));
       })

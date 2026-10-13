@@ -1,5 +1,5 @@
 // One-line summaries of tool calls for the transcript headers. Argument shapes come from the tools themselves:
-// src/tools/desktop.ts, src/tools/calculator.ts, src/agents.ts (subagent), src/skills.ts (skill) and pi's
+// src/tools/desktop.ts, src/tools/calculator.ts, src/agents.ts (subagent), src/skills/skills.ts (skill) and pi's
 // durable/coding-agent tools (bash, read, write, edit, ls, grep, find). Arguments may be missing or partial while a
 // call streams, so every read goes through helpers that never throw.
 

@@ -13,13 +13,14 @@ import { Effect, Layer } from "effect";
 import { Agents } from "../agents.ts";
 import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
-import type { Skill } from "../skills.ts";
+import { Skills } from "../skills/skills.ts";
 import { localSandboxes } from "./sandboxes.ts";
 
 export const fauxAgents = (
   responses: FauxResponseStep[],
   options: {
-    readonly skills?: readonly Skill[];
+    /** Where skills come from, usually `Skills.directory(...)` or a `SkillSource.memory` source; none by default. */
+    readonly skills?: Layer.Layer<Skills>;
     /** Persistent storage, so a rebuilt layer sees earlier conversations (restart tests). */
     readonly storage?: Storage;
     /** MCP servers, usually `fakeMcpServer`s. */
@@ -37,8 +38,12 @@ export const fauxAgents = (
     layer: Agents.layer({
       models,
       model: { provider: "faux", modelId: "faux-1" },
-      ...options,
-    }).pipe(Layer.provide(sandboxes.layer)),
+      ...(options.storage === undefined ? {} : { storage: options.storage }),
+      ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
+    }).pipe(
+      Layer.provide(sandboxes.layer),
+      Layer.provide(options.skills ?? Skills.none)
+    ),
   };
 };
 

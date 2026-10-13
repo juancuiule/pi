@@ -30,23 +30,14 @@ import { ApprovalDoc } from "./approvals.ts";
 import type { ApprovalPolicy } from "./approvals.ts";
 import { MetaDoc } from "./conversation-meta.ts";
 import type { StoredConversation } from "./conversation-meta.ts";
-import {
-  ApprovalNotFound,
-  ConversationNotFound,
-  SkillNotFound,
-} from "./errors.ts";
+import { ApprovalNotFound, ConversationNotFound } from "./errors.ts";
+import type { SkillNotFound } from "./errors.ts";
 import { connectMcpServers } from "./mcp.ts";
 import type { McpServerConfig, McpServerState } from "./mcp.ts";
 import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
 import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
 import type { SaveScreenshot } from "./screenshots.ts";
-import {
-  formatSkillMessage,
-  installSkills,
-  parseSkillCommand,
-  skillsExtension,
-} from "./skills.ts";
-import type { Skill } from "./skills.ts";
+import { Skills, SkillsDoc, skillsExtension } from "./skills/skills.ts";
 import { CodingTools } from "./tools/bash.ts";
 import { Calculator } from "./tools/calculator.ts";
 import { desktopExtension } from "./tools/desktop.ts";
@@ -247,6 +238,8 @@ export interface AgentConversation {
 export class Agents extends Context.Service<
   Agents,
   {
+    /** The model new conversations run on; /api/info reports it. */
+    readonly model: AgentModel;
     /**
      * Start a conversation, creating its sandbox first. The sandbox is removed when the scope closes, so wrap a
      * conversation's lifetime in `Effect.scoped`.
@@ -300,8 +293,14 @@ export class Agents extends Context.Service<
     >;
     /** The skills and MCP servers conversations can use, for the console. */
     readonly capabilities: Effect.Effect<Capabilities>;
-    /** Expand `/skill:<name> <request>` into the skill message; other prompts pass through. */
-    expandSkill(prompt: string): Effect.Effect<string, SkillNotFound>;
+    /**
+     * Expand `/skill:` in a prompt (see `Skills.expand`): against conversation `id`'s skills when given, otherwise
+     * against the skills a new conversation would get.
+     */
+    expandSkill(
+      prompt: string,
+      id?: ConversationId
+    ): Effect.Effect<string, AgentError | SkillNotFound>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -309,8 +308,6 @@ export class Agents extends Context.Service<
     readonly model: AgentModel;
     /** Keep every desktop screenshot on the host as well; see `saveScreenshotsTo`. */
     readonly saveScreenshot?: SaveScreenshot;
-    /** Skills every conversation can load (see `src/skills.ts`); copied into each sandbox. */
-    readonly skills?: readonly Skill[];
     /** Persistent storage; MemoryStorage keeps the ephemeral behaviour of tests and `pnpm start`. */
     readonly storage?: Storage;
     /** Remote MCP servers; connected when the layer is built, closed when it is torn down. */
@@ -324,11 +321,16 @@ export class Agents extends Context.Service<
         // Spans for model requests and tool calls use the tracer this layer is built with.
         const tracing = makeAgentTracing(yield* Effect.context<never>());
         registry.install(tracing.extension);
-        const skills = options.skills ?? [];
-        const skillExtensions =
-          skills.length === 0 ? [] : [skillsExtension(skills)];
-        for (const extension of skillExtensions) {
-          registry.install(extension);
+        // Skills are read from their source for every new conversation; the extension reads the conversation's.
+        const skills = yield* Skills;
+        const skillsExt = skillsExtension(skills);
+        registry.install(skillsExt);
+        const catalog = skills.catalog.pipe(
+          Effect.mapError((cause) => new AgentError({ cause }))
+        );
+        const { problems } = yield* catalog;
+        for (const problem of problems) {
+          yield* Effect.logWarning(`skipped skill ${problem}`);
         }
         // Connected before the harness opens, so the tools are registered when conversations start. Never fails:
         // a server that cannot be reached is reported unavailable.
@@ -383,6 +385,17 @@ export class Agents extends Context.Service<
                     if (owner.sandbox !== undefined) {
                       const child = await tx.doc(SandboxDoc, conversation.id);
                       child.sandbox = owner.sandbox;
+                    }
+                    const ownerSkills = await tx.doc(
+                      SkillsDoc,
+                      conversation.owner.conversationId
+                    );
+                    if (ownerSkills.skills !== undefined) {
+                      const childSkills = await tx.doc(
+                        SkillsDoc,
+                        conversation.id
+                      );
+                      childSkills.skills = ownerSkills.skills;
                     }
                     // Gated tools consult the root conversation's ApprovalDoc.
                     const ownerApprovals = await tx.doc(
@@ -453,6 +466,8 @@ export class Agents extends Context.Service<
           readonly approvals?: ApprovalPolicy;
         }) {
           const choice = startOptions.sandbox;
+          // This conversation's skills: the source as it is now, kept for its whole life.
+          const conversationSkills = (yield* catalog).skills;
           const sandbox =
             choice === "none"
               ? undefined
@@ -463,15 +478,18 @@ export class Agents extends Context.Service<
                   ),
                   (created) => Effect.ignore(sandboxes.remove(created))
                 );
-          if (sandbox !== undefined && skills.length > 0) {
-            yield* Effect.tryPromise({
-              try: () => installSkills(sandboxes.env(sandbox), skills, context),
-              catch: (cause) =>
-                new SandboxError({
-                  message: `Could not copy skills into ${sandbox.id}`,
-                  cause,
-                }),
-            });
+          if (sandbox !== undefined && conversationSkills.length > 0) {
+            yield* skills
+              .install(sandboxes.env(sandbox), conversationSkills, context)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new SandboxError({
+                      message: `Could not copy skills into ${sandbox.id}`,
+                      cause,
+                    })
+                )
+              );
           }
           // Acquired after the sandbox, so closing the scope stops the run, its queued inputs and its subagents
           // before the sandbox is removed.
@@ -485,7 +503,7 @@ export class Agents extends Context.Service<
                       model: { ...options.model },
                       extensions: [
                         ...extensionsFor(choice, desktop),
-                        ...skillExtensions,
+                        ...(conversationSkills.length === 0 ? [] : [skillsExt]),
                         mcp.extension,
                         tracing.extension,
                       ],
@@ -496,6 +514,8 @@ export class Agents extends Context.Service<
                         const doc = await tx.doc(SandboxDoc, id);
                         doc.sandbox = sandbox;
                       }
+                      const skillsDoc = await tx.doc(SkillsDoc, id);
+                      skillsDoc.skills = [...conversationSkills];
                       const meta = await tx.doc(MetaDoc, id);
                       meta.meta = {
                         title: startOptions.title ?? "",
@@ -671,33 +691,50 @@ export class Agents extends Context.Service<
           );
         });
 
-        const capabilities = Effect.succeed<Capabilities>({
-          skills: skills.map((skill) => ({
-            name: skill.name,
-            description: skill.description,
-            modelInvocable: !skill.disableModelInvocation,
+        // The skills a new conversation would get. A source that cannot be read is a defect here (a 500).
+        const capabilities = catalog.pipe(
+          Effect.map((current): Capabilities => ({
+            skills: current.skills.map((skill) => ({
+              name: skill.name,
+              description: skill.description,
+              modelInvocable: !skill.disableModelInvocation,
+            })),
+            mcp: mcp.servers,
           })),
-          mcp: mcp.servers,
+          Effect.orDie
+        );
+
+        const expandSkill = Effect.fn("Agents.expandSkill")(function* (
+          prompt: string,
+          id?: ConversationId
+        ) {
+          if (!prompt.includes("/skill:")) {
+            return prompt;
+          }
+          const available =
+            id === undefined
+              ? (yield* catalog).skills
+              : yield* Effect.tryPromise({
+                  try: () => harness.snapshot(SkillsDoc, id, context),
+                  catch: (cause) => new AgentError({ cause }),
+                }).pipe(
+                  Effect.flatMap((doc) =>
+                    doc?.skills === undefined
+                      ? catalog.pipe(Effect.map((c) => c.skills))
+                      : Effect.succeed(doc.skills)
+                  )
+                );
+          return yield* skills
+            .expand(prompt, available)
+            .pipe(
+              Effect.catchTag("SkillSourceError", (cause) =>
+                Effect.fail(new AgentError({ cause }))
+              )
+            );
         });
 
-        const expandSkill = (prompt: string) =>
-          Effect.suspend(() => {
-            const command = parseSkillCommand(prompt);
-            if (command === undefined) {
-              return Effect.succeed(prompt);
-            }
-            const skill = skills.find((s) => s.name === command.name);
-            return skill === undefined
-              ? Effect.fail(
-                  new SkillNotFound({
-                    name: command.name,
-                    available: skills.map((s) => s.name),
-                  })
-                )
-              : Effect.sync(() => formatSkillMessage(skill, command.request));
-          });
-
         return Agents.of({
+          model: options.model,
           start,
           attach,
           decide,

@@ -13,18 +13,57 @@ const skills = [
   { name: "desktop-notes", description: "Notes on the desktop" },
 ];
 
+const query = (prompt: string, cursor?: number) =>
+  skillQuery(prompt, cursor)?.query;
+
+const tokenAt = (prompt: string, cursor?: number) => {
+  const token = skillQuery(prompt, cursor);
+  if (token === undefined) {
+    throw new Error(`no token in ${prompt}`);
+  }
+  return token;
+};
+
 describe(skillQuery, () => {
-  it("reads the query while the prompt is a bare slash command", () => {
-    expect(skillQuery("/")).toBe("");
-    expect(skillQuery("/rep")).toBe("rep");
-    expect(skillQuery("/skill:")).toBe("");
-    expect(skillQuery("/skill:rep")).toBe("rep");
+  it("reads the query while the prompt starts with a slash command", () => {
+    expect(query("/")).toBe("");
+    expect(query("/rep")).toBe("rep");
+    expect(query("/skill:")).toBe("");
+    expect(query("/skill:rep")).toBe("rep");
   });
 
-  it("closes once there is whitespace or no leading slash", () => {
-    expect(skillQuery("/skill:repo-report ")).toBeUndefined();
-    expect(skillQuery("hello /rep")).toBeUndefined();
-    expect(skillQuery("")).toBeUndefined();
+  it("reads a mention after whitespace once /s is typed", () => {
+    expect(query("convert this /s")).toBe("s");
+    expect(query("convert this\n/skill:un")).toBe("un");
+    expect(skillQuery("a /skill:un b", 11)).toStrictEqual({
+      query: "un",
+      start: 2,
+      end: 11,
+    });
+  });
+
+  it("finds the word at the cursor, up to its end", () => {
+    expect(skillQuery("x /skill:repo y", 9)).toStrictEqual({
+      query: "",
+      start: 2,
+      end: 13,
+    });
+  });
+
+  it("stays closed for paths, finished words and ordinary text", () => {
+    expect(query("/skill:repo-report ")).toBeUndefined();
+    expect(query("hello /")).toBeUndefined();
+    expect(query("hello /rep")).toBeUndefined();
+    expect(query("cat /usr/bin")).toBeUndefined();
+    expect(query("and/s")).toBeUndefined();
+  });
+
+  it("opens after a word that contains a slash", () => {
+    expect(query("and/or /s")).toBe("s");
+  });
+
+  it("is closed for an empty prompt", () => {
+    expect(query("")).toBeUndefined();
   });
 });
 
@@ -48,7 +87,20 @@ describe(matchSkills, () => {
 
 describe(completeSkill, () => {
   it("completes to the command with a trailing space", () => {
-    expect(completeSkill("repo-report")).toBe("/skill:repo-report ");
+    const prompt = "/rep";
+    expect(completeSkill(prompt, tokenAt(prompt), "repo-report")).toStrictEqual(
+      { prompt: "/skill:repo-report ", cursor: 19 }
+    );
+  });
+
+  it("replaces a mention in the middle, keeping the rest", () => {
+    const prompt = "try /sk then go";
+    expect(
+      completeSkill(prompt, tokenAt(prompt, 7), "unit-conversion")
+    ).toStrictEqual({
+      prompt: "try /skill:unit-conversion then go",
+      cursor: 27,
+    });
   });
 });
 

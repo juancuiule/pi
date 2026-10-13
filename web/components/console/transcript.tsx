@@ -18,7 +18,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { hasPendingApproval } from "@/lib/approval";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
 import { toolResultOf } from "@/lib/conversation-state";
-import { parseSkillMessage } from "@/lib/skill-message";
+import {
+  parseSkillMessage,
+  skillMentionParts,
+  splitSkillHints,
+} from "@/lib/skill-message";
 import { subagentIdFor } from "@/lib/subagent";
 import { isNearBottom, userParts } from "@/lib/transcript";
 
@@ -90,6 +94,17 @@ const SkillChip = ({
       </div>
     </Collapsible.Panel>
   </Collapsible.Root>
+);
+
+/** A `/skill:<name>` hint in the user's text: the model was told about the skill, not made to use it. */
+const SkillMention = ({ skill }: { skill: string }) => (
+  <span
+    title="Suggested to the model"
+    className="bg-background text-muted-foreground inline-flex items-center gap-1 rounded-md px-1.5 align-baseline font-mono text-xs"
+  >
+    <BookOpen aria-hidden className="size-3" />
+    {skill}
+  </span>
 );
 
 const AssistantBlocks = ({
@@ -178,7 +193,9 @@ const Entry = ({
   }
   switch (message.role) {
     case "user": {
-      const { text, images } = userParts(message);
+      const parsed = userParts(message);
+      const { text, hinted } = splitSkillHints(parsed.text);
+      const { images } = parsed;
       const skill = parseSkillMessage(text);
       const shown = skill === undefined ? text : skill.request;
       return (
@@ -188,7 +205,17 @@ const Entry = ({
           )}
           {shown === "" ? null : (
             <p className="text-prose break-words whitespace-pre-wrap">
-              {shown}
+              {skillMentionParts(shown, hinted).map((part, index) =>
+                part.kind === "text" ? (
+                  part.text
+                ) : (
+                  <SkillMention
+                    // oxlint-disable-next-line no-array-index-key -- parts have no identity beyond their order
+                    key={index}
+                    skill={part.skill}
+                  />
+                )
+              )}
             </p>
           )}
           {images.map((image) => (
