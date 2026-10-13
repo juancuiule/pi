@@ -1,52 +1,46 @@
 // An Effect service over a pi-durable harness. Each conversation is started with the sandbox the user picks
-// (none, shell or desktop); its agent can spawn subagents, which share that sandbox.
+// (none, shell or desktop).
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
-import {
-  AssistantEntry,
-  configure,
-  createRegistry,
-  defineExtension,
-  defineTool,
-  Harness,
-  MemoryStorage,
-  watchEvents,
-} from "@earendil-works/pi-durable";
 import type {
   AgentEvent,
-  Cursor,
   Conversation,
   ConversationId,
+  Cursor,
   EntryId,
   Extension,
   Storage,
 } from "@earendil-works/pi-durable";
-import { Context, Effect, Layer, Queue, Schema, Stream } from "effect";
+import {
+  AssistantEntry,
+  createRegistry,
+  Harness,
+  MemoryStorage,
+  watchEvents,
+} from "@earendil-works/pi-durable";
 import type { Cause, Scope } from "effect";
+import { Context, Effect, Layer, Queue, Schema, Stream } from "effect";
 
-import { ApprovalDoc } from "./approvals.ts";
 import type { ApprovalPolicy } from "./approvals.ts";
-import { MetaDoc } from "./conversation-meta.ts";
+import { ApprovalDoc } from "./approvals.ts";
 import type { StoredConversation } from "./conversation-meta.ts";
-import { ApprovalNotFound, ConversationNotFound } from "./errors.ts";
+import { MetaDoc } from "./conversation-meta.ts";
 import type { SkillNotFound } from "./errors.ts";
-import { connectMcpServers } from "./mcp.ts";
+import { ApprovalNotFound, ConversationNotFound } from "./errors.ts";
 import type { McpServerConfig, McpServerState } from "./mcp.ts";
-import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
+import { connectMcpServers } from "./mcp.ts";
 import type { SandboxChoice, SandboxInfo } from "./sandbox/sandbox.ts";
+import { SandboxDoc, SandboxError, Sandboxes } from "./sandbox/sandbox.ts";
 import type { SaveScreenshot } from "./screenshots.ts";
 import { Skills, SkillsDoc, skillsExtension } from "./skills/skills.ts";
 import { CodingTools } from "./tools/bash.ts";
 import { Calculator } from "./tools/calculator.ts";
 import { desktopExtension } from "./tools/desktop.ts";
-import { makeAgentTracing } from "./tracing.ts";
 import type { AgentTracing } from "./tracing.ts";
+import { makeAgentTracing } from "./tracing.ts";
 
 const context = BACKGROUND_CONTEXT;
-
-// ─── pi-durable: a tool that spawns a subagent ──────────────────────────────
 
 const answerText = async (
   conversation: Pick<Conversation, "commit">,
@@ -61,60 +55,6 @@ const answerText = async (
     .flatMap((c) => (c.type === "text" ? [c.text] : []))
     .join("");
 };
-
-export const Subagent: Extension = defineExtension({
-  name: "subagent",
-  tools: [
-    defineTool({
-      name: "subagent",
-      description:
-        "Delegate a self-contained task to a subagent and get its answer back.",
-      parameters: Type.Object({
-        task: Type.String({ description: "What the subagent should do" }),
-      }),
-      replay: "safe",
-      execute: async (args, api, callContext) => {
-        // The child conversation is owned by this tool call: aborting the call aborts the child.
-        const child = await api.commit(async (tx) => {
-          const owned = await tx.scanConversations(
-            { ownerTaskId: api.taskId },
-            1
-          );
-          const [existing] = owned.items;
-          if (existing !== undefined) {
-            return existing.id;
-          }
-          const created = await tx.createConversation({
-            ownership: { kind: "task", taskId: api.taskId },
-          });
-          // The child cannot spawn subagents of its own.
-          await configure(tx, created.id, {
-            extensions: { remove: [Subagent] },
-          });
-          return created.id;
-        }, callContext);
-        // Lets a UI find and watch the child conversation while it works.
-        await api.details({ conversationId: child }, callContext);
-        const handle = await api.conversation(child, callContext);
-        if (handle === undefined) {
-          throw new Error(`Subagent conversation ${child} not found`);
-        }
-        const request = {
-          type: "input",
-          content: args.task,
-          requestId: `subagent:${api.taskId}`,
-        } as const;
-        const submission = await handle.submit(request, callContext);
-        const settled = await submission.wait(callContext);
-        if (settled.status !== "done" || settled.type !== "input") {
-          throw new Error(`Subagent failed: ${settled.status}`);
-        }
-        const text = await answerText(api, settled.answer);
-        return { content: [{ type: "text", text }] };
-      },
-    }),
-  ],
-});
 
 // ─── Effect: the agent harness as a service ─────────────────────────────────
 
@@ -144,13 +84,13 @@ export const extensionsFor = (
 ): Extension[] => {
   switch (choice) {
     case "none": {
-      return [Subagent, Calculator];
+      return [Calculator];
     }
     case "shell": {
-      return [Subagent, Calculator, CodingTools];
+      return [Calculator, CodingTools];
     }
     case "desktop": {
-      return [Subagent, Calculator, CodingTools, desktop];
+      return [Calculator, CodingTools, desktop];
     }
     default: {
       throw new TypeError(`Unknown sandbox choice: ${choice satisfies never}`);
@@ -159,7 +99,8 @@ export const extensionsFor = (
 };
 
 // Top-level conversation ids, in paged scans of one commit each; pages are sequential because each
-// needs the previous cursor.
+// needs the previous cursor. Databases from before the subagent tool was removed can still hold its
+// task-owned child conversations; they are skipped.
 const scanTopLevel = async (
   harness: Harness,
   cursor: Cursor | undefined,
@@ -266,22 +207,22 @@ export class Agents extends Context.Service<
       Scope.Scope
     >;
     /**
-     * Record an approval decision on a root conversation's doc. `always` also flips the policy to
-     * `auto` and approves every other call waiting in the tree. Fails `ApprovalNotFound` when no call is waiting under `key`.
+     * Record an approval decision on a conversation's doc. `always` also flips the policy to
+     * `auto` and approves every other waiting call. Fails `ApprovalNotFound` when no call is waiting under `key`.
      */
     decide(
-      rootId: ConversationId,
+      id: ConversationId,
       key: string,
       decision: "approve" | "deny" | "always"
     ): Effect.Effect<void, AgentError | ApprovalNotFound>;
-    /** Count of calls waiting for approval in a conversation tree. */
+    /** Count of calls waiting for approval in a conversation. */
     pendingApprovals(id: ConversationId): Effect.Effect<number, AgentError>;
     /** Every stored top-level conversation that has metadata, newest last order irrelevant to callers. */
     readonly stored: Effect.Effect<readonly StoredConversation[], AgentError>;
     /** Record `meta.endedAt` for a conversation; unknown ids settle silently like other doc writes. */
     markEnded(id: ConversationId, at: number): Effect.Effect<void, AgentError>;
     /**
-     * Watch a conversation, including a subagent's: a `snapshot` first, then the events of every later commit.
+     * Watch a conversation: a `snapshot` first, then the events of every later commit.
      * The watch starts when this effect completes, so the stream is single-use and must be run: finishing or
      * interrupting it stops the watch, and a stream that is never run keeps it until the harness closes.
      */
@@ -378,47 +319,6 @@ export class Agents extends Context.Service<
                       ? undefined
                       : sandboxes.env(doc.sandbox);
                   },
-                  // A subagent's conversation works in its owner's sandbox.
-                  conversationCreated: async (tx, conversation) => {
-                    if (conversation.owner === undefined) {
-                      return;
-                    }
-                    tracing.childConversation(
-                      conversation.id,
-                      conversation.owner
-                    );
-                    const owner = await tx.doc(
-                      SandboxDoc,
-                      conversation.owner.conversationId
-                    );
-                    if (owner.sandbox !== undefined) {
-                      const child = await tx.doc(SandboxDoc, conversation.id);
-                      child.sandbox = owner.sandbox;
-                    }
-                    const ownerSkills = await tx.doc(
-                      SkillsDoc,
-                      conversation.owner.conversationId
-                    );
-                    if (ownerSkills.skills !== undefined) {
-                      const childSkills = await tx.doc(
-                        SkillsDoc,
-                        conversation.id
-                      );
-                      childSkills.skills = ownerSkills.skills;
-                    }
-                    // Gated tools consult the root conversation's ApprovalDoc.
-                    const ownerApprovals = await tx.doc(
-                      ApprovalDoc,
-                      conversation.owner.conversationId
-                    );
-                    const childApprovals = await tx.doc(
-                      ApprovalDoc,
-                      conversation.id
-                    );
-                    childApprovals.root =
-                      ownerApprovals.root ??
-                      String(conversation.owner.conversationId);
-                  },
                 },
                 context
               ),
@@ -453,7 +353,7 @@ export class Agents extends Context.Service<
               })
             );
             // Pending approval entries left by a crash would show forever: the calls that created them
-            // are aborted, so clear them (and now-meaningless decisions) on every stored root doc.
+            // are aborted, so clear them (and now-meaningless decisions) on every stored conversation's doc.
             const records = await scanTopLevel(harness, undefined, []);
             await Promise.all(
               records.map((id) =>
@@ -500,8 +400,8 @@ export class Agents extends Context.Service<
                 )
               );
           }
-          // Acquired after the sandbox, so closing the scope stops the run, its queued inputs and its subagents
-          // before the sandbox is removed.
+          // Acquired after the sandbox, so closing the scope stops the run and its queued inputs before the
+          // sandbox is removed.
           const conversation = yield* Effect.acquireRelease(
             Effect.tryPromise({
               try: () =>
@@ -616,14 +516,14 @@ export class Agents extends Context.Service<
         });
 
         const decide = Effect.fn("Agents.decide")(function* (
-          rootId: ConversationId,
+          id: ConversationId,
           key: string,
           decision: "approve" | "deny" | "always"
         ) {
           const found = yield* Effect.tryPromise({
             try: () =>
               harness.commit(async (tx) => {
-                const doc = await tx.doc(ApprovalDoc, rootId);
+                const doc = await tx.doc(ApprovalDoc, id);
                 if (doc.pending[key] === undefined) {
                   return false;
                 }
@@ -648,14 +548,8 @@ export class Agents extends Context.Service<
           function* (id: ConversationId) {
             const count = yield* Effect.tryPromise({
               try: async () => {
-                const own = await harness.snapshot(ApprovalDoc, id, context);
-                const rootId = Number(own?.root ?? id) as ConversationId;
-                const root = await harness.snapshot(
-                  ApprovalDoc,
-                  rootId,
-                  context
-                );
-                return Object.keys(root?.pending ?? {}).length;
+                const doc = await harness.snapshot(ApprovalDoc, id, context);
+                return Object.keys(doc?.pending ?? {}).length;
               },
               catch: (cause) => new AgentError({ cause }),
             });

@@ -25,8 +25,7 @@ const isFileExists = (error: unknown) =>
   error instanceof Error && "code" in error && error.code === "EEXIST";
 
 /**
- * Save screenshots as `<root>/<sandbox id>/001.png`, `002.png`, and so on, in the order they were taken. A subagent
- * shares its owner's sandbox, so its screenshots land in the same folder.
+ * Save screenshots as `<root>/<sandbox id>/001.png`, `002.png`, and so on, in the order they were taken.
  */
 export const saveScreenshotsTo =
   (root: string): SaveScreenshot =>

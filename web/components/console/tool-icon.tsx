@@ -1,6 +1,5 @@
 import {
   BookOpen,
-  Bot,
   Calculator,
   Camera,
   FilePen,
@@ -25,7 +24,6 @@ const ICONS: Record<string, LucideIcon> = {
   ls: FolderOpen,
   grep: Search,
   find: Search,
-  subagent: Bot,
   skill: BookOpen,
   calculate: Calculator,
   desktop_screenshot: Camera,

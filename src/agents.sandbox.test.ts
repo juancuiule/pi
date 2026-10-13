@@ -57,26 +57,6 @@ describe("conversation sandboxes", () => {
     expect(sandboxes.live.size).toBe(0);
   });
 
-  it("lets a subagent work in its owner's sandbox", async () => {
-    const { layer } = fauxAgents([
-      callTool("subagent", { task: "Write the plan." }),
-      // The subagent's turns: it writes a file, then answers.
-      callTool("write", { path: "plan.md", content: "step 1" }),
-      fauxAssistantMessage([fauxText("Written.")]),
-      // The parent reads what the subagent wrote.
-      callTool("bash", { command: "cat plan.md" }),
-      echoToolResult,
-    ]);
-
-    const answer = await Effect.runPromise(
-      ask("Have a subagent write a plan, then read it.", "shell").pipe(
-        Effect.provide(layer)
-      )
-    );
-
-    expect(answer).toBe("step 1");
-  });
-
   it("exposes the sandbox to the host while the conversation runs", async () => {
     const { layer } = fauxAgents([
       callTool("write", { path: "out.txt", content: "from the agent" }),

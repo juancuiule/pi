@@ -72,7 +72,6 @@ const fakeApi = (doc: {
 }) => ({
   conversationId: 1 as ConversationId,
   callId: "c1",
-  snapshot: () => Promise.resolve(doc),
   commit: (change: (tx: { doc: () => Promise<typeof doc> }) => unknown) =>
     Promise.resolve(change({ doc: () => Promise.resolve(doc) })),
   details: () => Promise.resolve(),
@@ -269,50 +268,6 @@ describe("tool approvals", () => {
     );
   });
 
-  it("gates a subagent's calls on the root conversation's doc", async () => {
-    const { layer } = fauxAgents([
-      callTool("subagent", { task: "touch a file" }),
-      callTool("bash", { command: "touch child.txt" }),
-      answer("done"),
-      echoToolResult,
-    ]);
-
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { agents, conversation, ref } = yield* askConversation(
-            "shell",
-            "delegate a touch"
-          );
-          yield* waitUntil(
-            agents
-              .pendingApprovals(conversation.id)
-              .pipe(Effect.map((count) => count === 1))
-          );
-          // The child's call shows in the root doc as `${childId}:${callId}`.
-          // The child's id comes from the subagent tool's details.
-          const events = yield* Ref.get(ref);
-          const subagentUpdate = events.find(
-            (event) =>
-              event.type === "tool_execution_update" &&
-              event.toolName === "subagent"
-          );
-          const details =
-            subagentUpdate?.type === "tool_execution_update"
-              ? (subagentUpdate.details as { conversationId?: number })
-              : undefined;
-          const childId = details?.conversationId;
-          expect(childId).toBeDefined();
-          const key = `${String(childId)}:call-bash`;
-          yield* agents.decide(conversation.id, key, "approve");
-          yield* waitUntil(hasRunEnd(ref));
-          const results = yield* toolResults(ref);
-          expect(results[0]?.isError).not.toBeTruthy();
-        })
-      ).pipe(Effect.provide(layer))
-    );
-  });
-
   it("fails decide with ApprovalNotFound for an unknown key", async () => {
     const { layer } = fauxAgents([answer("hi")]);
 
@@ -365,16 +320,16 @@ describe("tool approvals", () => {
     expect(doc.pending).toStrictEqual({});
   });
 
-  it("runs without waiting when always lands between the policy snapshot and registering", async () => {
-    // The committed doc is already `auto`, while a snapshot taken a moment earlier still says `ask`.
+  it("runs without waiting when the committed policy is auto", async () => {
+    // The policy is read in the same commit that would register the call.
     const doc = { policy: "auto", pending: {}, decisions: {} };
     let ran = false;
-    const api = {
-      ...fakeApi(doc),
-      snapshot: () => Promise.resolve({ ...doc, policy: "ask" }),
-    };
     const tool = withApproval(fakeTool(() => (ran = true)));
-    await tool.execute({}, api as never, { abortSignal: undefined } as never);
+    await tool.execute(
+      {},
+      fakeApi(doc) as never,
+      { abortSignal: undefined } as never
+    );
     expect(ran).toBeTruthy();
     expect(doc.pending).toStrictEqual({});
   });

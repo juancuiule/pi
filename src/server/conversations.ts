@@ -146,7 +146,7 @@ export class Conversations extends Context.Service<
       void,
       AgentError | ConversationNotFound | ConversationEnded | SkillNotFound
     >;
-    /** Events of any conversation the harness knows, including a subagent's or a stored one's. */
+    /** Events of any conversation the harness knows, including a stored one's. */
     events(
       id: number
     ): Effect.Effect<

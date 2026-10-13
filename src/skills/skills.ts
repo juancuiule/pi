@@ -62,7 +62,7 @@ export class SkillInstallError extends Schema.TaggedError<SkillInstallError>()(
   { message: Schema.String }
 ) {}
 
-/** The skills a conversation started with. Subagents get their owner's; a fork keeps its parent's. */
+/** The skills a conversation started with. A fork keeps its parent's. */
 export const SkillsDoc = defineDoc<{ skills?: Skill[] }>({
   kind: "app.skills",
   version: 1,

@@ -11,7 +11,6 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { createElement, useState } from "react";
-import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -187,11 +186,9 @@ const approvalFor = (
 export const ToolCall = ({
   call,
   state,
-  renderExtra,
 }: {
   call: ToolCallBlock;
   state: ConversationState;
-  renderExtra?: (call: ToolCallBlock, tool: ToolRun | undefined) => ReactNode;
 }) => {
   const tool = state.tools[call.id];
   const result = toolResultOf(state, call.id);
@@ -201,7 +198,6 @@ export const ToolCall = ({
   const isError = toolResult?.isError ?? false;
   const summary = toolSummary(call.name, call.arguments);
   const Icon = toolIcon(call.name);
-  const extra = renderExtra?.(call, tool);
   const approval = approvalFor(toolResult, tool);
   const awaitingApproval = approval.awaiting;
   const [open, setOpen] = useToolCallOpen(
@@ -250,7 +246,6 @@ export const ToolCall = ({
             {awaitingApproval && approval.key !== undefined ? (
               <ApprovalActions approvalKey={approval.key} />
             ) : null}
-            {extra}
             {toolResult === undefined && tool?.output === "" ? null : (
               <div className="flex flex-col gap-1">
                 <span className="text-muted-foreground text-xs font-medium">
