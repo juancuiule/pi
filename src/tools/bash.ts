@@ -2,7 +2,7 @@
 // console's terminal. This wrapper strips the sequences for the model-facing output itself and keeps
 // the raw stream in `details.ansi`, which bypasses sanitization and never reaches the model.
 import type { Context } from "@earendil-works/chord";
-import type { ToolExecutionApi } from "@earendil-works/pi-durable";
+import type { Extension, ToolExecutionApi } from "@earendil-works/pi-durable";
 import { defineExtension } from "@earendil-works/pi-durable";
 import type { ShellOutputSkip } from "@earendil-works/pi-durable/env";
 import {
@@ -88,7 +88,7 @@ export const createColorBashTool = () => {
 };
 
 /** `read`, `write`, `edit`, and the ANSI-preserving `bash` — a drop-in for pi's `CodingTools`. */
-export const CodingTools = defineExtension({
+export const CodingTools: Extension = defineExtension({
   name: "coding-tools",
   tools: [
     createReadTool(),
