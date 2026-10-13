@@ -1,6 +1,7 @@
+// Validates the environment (the root .env.schema, through web/.env.schema); reuses what `varlock run` injected.
+import "varlock/auto-load";
 import type { NextConfig } from "next";
-
-const API_URL = process.env.API_URL ?? "http://127.0.0.1:4000";
+import { ENV } from "varlock/env";
 
 const nextConfig: NextConfig = {
   // effect-pi/api is TypeScript source in the workspace
@@ -20,7 +21,7 @@ const nextConfig: NextConfig = {
   },
   rewrites: () =>
     Promise.resolve([
-      { source: "/api/:path*", destination: `${API_URL}/api/:path*` },
+      { source: "/api/:path*", destination: `${ENV.API_URL}/api/:path*` },
     ]),
 };
 

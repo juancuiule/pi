@@ -38,23 +38,34 @@ To update: `git subtree pull --prefix=repos/pi https://github.com/earendil-works
 
 Use pnpm, never npm or yarn.
 
-- `pnpm start [--sandbox none|shell|desktop] [prompt]` runs `index.ts` with `.env` loaded (Node strips the types); the model comes from the environment, see Models below, and a faux model runs when none is configured
+- `pnpm start [--sandbox none|shell|desktop] [prompt]` runs `index.ts` (Node strips the types); configuration is loaded and validated by varlock (see Configuration), and a faux model runs when no model is configured
 - `pnpm typecheck` runs `tsc` (TypeScript 7)
 - `pnpm lint` / `pnpm lint:fix` run oxlint with the Ultracite core and vitest presets (`oxlint.config.ts`)
 - `pnpm format` / `pnpm format:check` run oxfmt with the Ultracite preset (`oxfmt.config.ts`)
+- `pnpm env:check` validates `.env.schema` and `web/.env.schema` against the current environment with varlock (silent when valid) and regenerates `src/env.d.ts` and `web/env.d.ts`; `pnpm env:types` then fails if either differs from what is staged, so a schema change cannot be pushed without its regenerated types
 - `pnpm test` runs vitest over `src/**/*.test.ts`; tests use pi-ai's faux provider, never a real model, and local-directory sandboxes (`src/testing/sandboxes.ts`)
 - `pnpm sandbox:build` builds the Docker sandbox images; `pnpm test:docker` runs the `*.docker.test.ts` integration tests against real containers (not part of `pnpm check` or the hooks)
 - `pnpm test:integration` runs the `*.integration.test.ts` tests against real network services (the eglc MCP server); not part of `pnpm check` or the hooks
 - `pnpm langfuse:up` / `pnpm langfuse:down` start and stop a local Langfuse (see Observability)
-- `pnpm check` runs all of the above; run it after code changes
-- `pnpm server` runs the HTTP server (`server.ts`, `:4000`)
-- `pnpm dev` runs the server in watch mode plus the web console on `:3001`
+- `pnpm check` runs `env:check` and `env:types` first, then all of the above; run it after code changes
+- `pnpm server` runs the HTTP server (`server.ts`, `SERVER_PORT`)
+- `pnpm dev` runs the server in watch mode plus the web console on `WEB_PORT` (3001). The server restarts when a file it imports changes (`node --watch`). Editing `.env` or `.env.schema` does not restart it, on purpose: varlock reads them outside the import graph, and watching them needs `--watch-path`, which Node supports only on macOS and Windows, so restart `pnpm dev` after changing the configuration
 - `pnpm --filter web <script>` runs a web script
 - `pnpm check` also runs `web`'s typecheck and tests
 
 Lefthook (`lefthook.yml`) runs these as git hooks: pre-commit formats and lint-fixes staged files, then runs typecheck and tests; pre-push runs `pnpm check`. Fix failures instead of skipping hooks.
 
 Some Ultracite rules are turned off in `oxlint.config.ts` because they conflict with Effect idioms; the reasons are in comments there.
+
+## Configuration
+
+`.env.schema` ([varlock](https://varlock.dev)) declares every environment variable with its type, default and sensitivity; values go in `.env` (git-ignored) or the shell, which wins.
+
+- `server.ts` and `index.ts` start with `import "varlock/auto-load"`: invalid values stop startup with varlock's report. `@sensitive` values (API keys, the Langfuse secret) are redacted from console output.
+- `src/config.ts` is the only module that reads varlock's `ENV`, and only the entry points import it. Modules and layers take plain options, never `process.env`, so tests pass options directly. pi-ai still reads the API keys from `process.env` itself. A blank value in `.env` means unset, so a variable with a default gets it. From the shell (`X= pnpm server`), a blank is different: for a variable with a default it fails validation (unset the variable instead), and for one without a default it arrives as `""`, which `config.ts` treats as unset.
+- To add a variable: declare it in `.env.schema`, run `pnpm env:check` (regenerates both `env.d.ts` files; stage them with the schema), then map it in `src/config.ts`.
+- `web/.env.schema` imports only `WEB_PORT`, `API_URL` and `SERVER_PORT` from the root schema (`pick=`), so API keys and secrets never reach the Next process, and sets Next's `PORT` from `WEB_PORT`; a new variable the console needs must be added to that `pick` list; `web`'s scripts run Next through `varlock run`. `API_URL` defaults to the server's `SERVER_PORT`.
+- `src/env.d.ts` and `web/env.d.ts` are generated (`processEnv=none`: only `ENV` is typed) and committed; do not edit them.
 
 ## Sandboxes
 
@@ -89,10 +100,10 @@ The user picks a sandbox when a conversation starts: `Agents.start({ sandbox: "n
 
 ## Models
 
-`src/models.ts` picks the model from environment variables:
+`src/models.ts` picks the model from the configuration (see `.env.schema` for defaults):
 
-- `MODEL_PROVIDER`: `anthropic` (`ANTHROPIC_API_KEY`), `vercel` (Vercel AI Gateway, `AI_GATEWAY_API_KEY`) or `ollama`. Unset, a set API key picks its provider.
-- `MODEL_ID` overrides the default model: `claude-sonnet-5-5`, `anthropic/claude-sonnet-5.5`, `qwen3.5:4b-64k`.
+- `MODEL_PROVIDER`: `anthropic` (`ANTHROPIC_API_KEY`), `vercel` (Vercel AI Gateway, `AI_GATEWAY_API_KEY`), `openai` (`OPENAI_API_KEY`) or `ollama`. Unset, a set API key picks its provider, in that order. The schema checks each key's prefix (`sk-ant-`, `vck_`, `sk-`), so a mistyped key stops startup instead of failing on the first request.
+- `MODEL_ID` overrides the default model: `claude-sonnet-5-5`, `anthropic/claude-sonnet-5.5`, `gpt-5.5`, `qwen3.5:4b-64k`.
 - `OLLAMA_URL`: the Ollama server, `http://192.168.1.20:11434` by default (a LAN machine).
 
 Ollama goes through its OpenAI-compatible API. The model's tools, vision, thinking and context size are read from Ollama's `/api/show` at startup; a model without `num_ctx` set is assumed to have a 4096-token context.
@@ -102,13 +113,13 @@ Ollama goes through its OpenAI-compatible API. The model's tools, vision, thinki
 Agents are traced with Effect spans, exported to Langfuse over OTLP.
 
 - `src/tracing.ts`: pi-durable runs model requests and tool calls outside Effect, so a `tracing` extension (selected by every conversation) opens and closes their spans from `GenerationTask` and `ToolTask` hooks. Spans nest under the `AgentConversation.ask` span of their conversation; a subagent's spans go under the tool call that created it, in the same Langfuse session. Session ids are `<run id>-<conversation id>`: conversation ids restart with every process when storage is `MemoryStorage` (persistent SQLite storage reuses them), so the per-process run id still keeps runs apart. Attributes follow Langfuse's OpenTelemetry mapping (`langfuse.observation.*`); base64 data such as screenshots is replaced by its size.
-- `src/langfuse.ts`: the OTLP exporter, enabled when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set (`LANGFUSE_BASE_URL` defaults to `http://localhost:3000`). Without them spans go to Effect's default tracer, which exports nothing.
+- `src/langfuse.ts`: the OTLP exporter, enabled when both Langfuse keys are set (see `.env.schema`); one key alone stops startup. Without them spans go to Effect's default tracer, which exports nothing.
 - `docker/langfuse/`: Langfuse's official compose file, bound to localhost. `pnpm langfuse:up` runs `init-env.ts` first, which writes random secrets and a headless-initialized org, project, API keys and user to `docker/langfuse/.env`, and the app's keys to `.env` (both git-ignored); it prints the login.
 - Langfuse v4 serves observations at `/api/public/v2/observations` (pass `fields=core,basic,io,usage,model`); `/api/public/traces` is gone.
 
 ## Web console
 
-- `server.ts` (`:4000`, bound to 127.0.0.1, no auth): `src/server/loopback.ts` answers 403 unless `Host`, and any `Origin` or `X-Forwarded-Host`, is loopback, so other websites (or DNS rebinding) cannot drive the API from a browser. `Conversations` with 3 sandboxes at most and a 1s graceful-shutdown timeout, so open SSE streams don't delay sandbox removal. Stopping the server removes all sandboxes. Conversations persist in a WAL SQLite file (`EFFECT_PI_DB`, default `data/effect-pi.sqlite`); `pnpm start` and tests use `MemoryStorage` instead.
+- `server.ts` (`SERVER_PORT`, 4000 by default, bound to 127.0.0.1, no auth): `src/server/loopback.ts` answers 403 unless `Host`, and any `Origin` or `X-Forwarded-Host`, is loopback, so other websites (or DNS rebinding) cannot drive the API from a browser. `Conversations` with `MAX_SANDBOXES` (3) at most and a `SHUTDOWN_TIMEOUT` (1s) graceful shutdown, so open SSE streams don't delay sandbox removal. Stopping the server removes all sandboxes. Conversations persist in a WAL SQLite file (`EFFECT_PI_DB`); `pnpm start` and tests use `MemoryStorage` instead.
 - Ended or restarted-out conversations stay listed: a stored shell/desktop conversation reports `ended`/`sandbox_removed` (its sandbox is gone), an explicitly ended one `ended`/`ended`, and a stored chat (`sandbox: "none"`) stays `idle` — `send` re-attaches it. On startup every conversation with live work is aborted, since a resumed run would call tools in a sandbox that no longer exists.
 - Approvals: `Agents.start({ approvals: "ask" | "auto" })` (default `auto`, create-payload `approvals`). Under `ask`, `withApproval` (src/approvals.ts) gates `write`, `edit`, `bash` and the desktop input tools; a call commits a `pending[key]` entry (`${conversationId}:${callId}`) on the root conversation's `ApprovalDoc` — subagent calls inherit it via `root` — and waits for `POST /conversations/:id/approvals` (`decide`, 404s on unknown keys). `"always"` flips the policy to `auto` and approves every other waiting call. `ConversationSummary.pendingApprovals` counts waits; startup recovery clears leftover pending/decisions.
 - `src/server/`:
@@ -125,4 +136,4 @@ Agents are traced with Effect spans, exported to Langfuse over OTLP.
   - `GET /api/capabilities` lists skills and MCP servers; the sidebar's Capabilities sheet shows them, and clicking a skill puts `/skill:<name> ` in the composer (`web/lib/draft.ts`). `Composer` autocompletes `/skill:` in both text areas (`web/lib/skill-autocomplete.ts`).
   - Fonts come from the shadcn preset: IBM Plex Sans, IBM Plex Mono and Montserrat headings (`layout.tsx`, `--font-*` in `globals.css`).
   - The shell panel uses wterm (`@wterm/react`), output-only (no-op `onData`); the first write happens in `onReady` (earlier writes are dropped), and colors/font come from `.console-terminal` CSS variables; `html`/`body` are `h-dvh overflow-hidden` and only inner regions scroll.
-- `web/next.config.ts` rewrites `/api/*` to `127.0.0.1:4000` with compression off, so SSE isn't buffered, and `experimental.proxyTimeout` at a day: the proxy otherwise cuts any stream silent for 30s, and the server sends no heartbeat.
+- `web/next.config.ts` rewrites `/api/*` to `API_URL` with compression off, so SSE isn't buffered, and `experimental.proxyTimeout` at a day: the proxy otherwise cuts any stream silent for 30s, and the server sends no heartbeat.

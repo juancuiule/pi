@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --port 3001",
+    "dev": "varlock run -- next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "varlock run -- next start",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "check": "pnpm typecheck && pnpm test"
@@ -31,6 +31,7 @@
     "shadcn": "4.21.4",
     "sonner": "2.0.8",
     "tw-animate-css": "1.4.0",
+    "varlock": "1.22.0",
     "zustand": "5.0.15"
   },
   "devDependencies": {

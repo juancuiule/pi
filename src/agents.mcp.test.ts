@@ -100,6 +100,22 @@ describe("Agents with MCP servers", () => {
     expect(answer).toBe("echo: hola");
   });
 
+  it("waits for each MCP server only as long as configured", async () => {
+    const hanging = fakeMcpServer("slow", [], { hang: true });
+    const agents = fauxAgents([], { mcp: [hanging], mcpConnectTimeoutMs: 50 });
+    const started = Date.now();
+    const capabilities = await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* Agents;
+        return yield* service.capabilities;
+      }).pipe(Effect.provide(agents.layer))
+    );
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(capabilities.mcp.map((s) => [s.name, s.status])).toStrictEqual([
+      ["slow", "unavailable"],
+    ]);
+  });
+
   it("reports skills and MCP servers as capabilities", async () => {
     const unreachable = {
       name: "down",

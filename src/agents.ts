@@ -312,6 +312,8 @@ export class Agents extends Context.Service<
     readonly storage?: Storage;
     /** Remote MCP servers; connected when the layer is built, closed when it is torn down. */
     readonly mcp?: readonly McpServerConfig[];
+    /** How long to wait for each MCP server when the layer is built; 10 seconds by default. */
+    readonly mcpConnectTimeoutMs?: number | undefined;
   }) =>
     Layer.effect(
       Agents,
@@ -335,7 +337,14 @@ export class Agents extends Context.Service<
         // Connected before the harness opens, so the tools are registered when conversations start. Never fails:
         // a server that cannot be reached is reported unavailable.
         const mcp = yield* Effect.acquireRelease(
-          Effect.promise(() => connectMcpServers(options.mcp ?? [])),
+          Effect.promise(() =>
+            connectMcpServers(
+              options.mcp ?? [],
+              options.mcpConnectTimeoutMs === undefined
+                ? {}
+                : { connectTimeoutMs: options.mcpConnectTimeoutMs }
+            )
+          ),
           (connections) => Effect.promise(() => connections.close())
         );
         registry.install(mcp.extension);

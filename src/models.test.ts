@@ -3,11 +3,11 @@ import { createServer } from "node:http";
 import type { IncomingMessage, Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { Agents } from "./agents.ts";
-import { DEFAULT_OLLAMA_URL, modelFromEnv, ollamaModel } from "./models.ts";
+import { DEFAULT_OLLAMA_URL, modelFromConfig, ollamaModel } from "./models.ts";
 import { Skills } from "./skills/skills.ts";
 import { ask } from "./testing/faux.ts";
 import { localSandboxes } from "./testing/sandboxes.ts";
@@ -45,17 +45,19 @@ describe(ollamaModel, () => {
   });
 });
 
-describe(modelFromEnv, () => {
+describe(modelFromConfig, () => {
   it("names no model when nothing is configured", async () => {
-    await expect(Effect.runPromise(modelFromEnv({}))).resolves.toBeUndefined();
+    await expect(
+      Effect.runPromise(modelFromConfig({}))
+    ).resolves.toBeUndefined();
   });
 
-  it("picks a provider from its API key, and MODEL_ID overrides the model", async () => {
+  it("picks a provider from its API key, and a model ID overrides the model", async () => {
     const anthropic = await Effect.runPromise(
-      modelFromEnv({ ANTHROPIC_API_KEY: "key" })
+      modelFromConfig({ hasAnthropicKey: true })
     );
     const vercel = await Effect.runPromise(
-      modelFromEnv({ AI_GATEWAY_API_KEY: "key", MODEL_ID: "openai/gpt-5" })
+      modelFromConfig({ hasGatewayKey: true, modelId: "openai/gpt-5" })
     );
 
     expect(anthropic?.model).toStrictEqual({
@@ -68,12 +70,30 @@ describe(modelFromEnv, () => {
     });
   });
 
-  it("rejects an unknown MODEL_PROVIDER", async () => {
-    const exit = await Effect.runPromiseExit(
-      modelFromEnv({ MODEL_PROVIDER: "openai" })
+  it("picks openai from its key, after anthropic and vercel", async () => {
+    const openai = await Effect.runPromise(
+      modelFromConfig({ hasOpenAIKey: true })
+    );
+    const both = await Effect.runPromise(
+      modelFromConfig({ hasOpenAIKey: true, hasGatewayKey: true })
     );
 
-    expect(Exit.isFailure(exit)).toBeTruthy();
+    expect(openai?.model).toStrictEqual({
+      provider: "openai",
+      modelId: "gpt-5.5",
+    });
+    expect(both?.model.provider).toBe("vercel-ai-gateway");
+  });
+
+  it("prefers the named provider over whichever key is set", async () => {
+    const setup = await Effect.runPromise(
+      modelFromConfig({ provider: "vercel", hasAnthropicKey: true })
+    );
+
+    expect(setup?.model).toStrictEqual({
+      provider: "vercel-ai-gateway",
+      modelId: "anthropic/claude-sonnet-5.5",
+    });
   });
 });
 
@@ -154,9 +174,10 @@ describe("an Ollama conversation", () => {
 
     const answer = await Effect.runPromise(
       Effect.gen(function* () {
-        const setup = yield* modelFromEnv({
-          MODEL_PROVIDER: "ollama",
-          OLLAMA_URL: `${ollama.url}/`,
+        // The trailing slash is stripped, as for a .env value ending in one.
+        const setup = yield* modelFromConfig({
+          provider: "ollama",
+          ollamaUrl: `${ollama.url}/`,
         });
         if (setup === undefined) {
           return yield* Effect.die("no model");
