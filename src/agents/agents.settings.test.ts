@@ -123,7 +123,7 @@ describe("conversation settings", () => {
       result.settings.extensions
         .filter((each) => each.enabled)
         .map((each) => each.name)
-    ).toStrictEqual(["calculator", "workspace", "mcp", "tracing"]);
+    ).toStrictEqual(["calculator", "workspace", "tracing"]);
   });
 
   it("approves the calls waiting for approval when the policy turns to auto", async () => {

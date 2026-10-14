@@ -47,12 +47,16 @@ export interface McpServerState {
 export interface McpConnections {
   readonly servers: readonly McpServerState[];
   /**
-   * Always defined, even with no tools: conversations record the extensions they select, so one created while every
-   * server was down still selects `mcp` and gets its tools after a restart that reaches them.
+   * One extension per configured server, `mcp-<server>`, so a conversation can turn a server off as a whole. Defined
+   * even for a server that is down: conversations record the extensions they select, so one created meanwhile still
+   * selects it and gets its tools after a restart that reaches it.
    */
-  readonly extension: Extension;
+  readonly extensions: readonly Extension[];
   close(): Promise<void>;
 }
+
+/** The extension holding one server's tools. */
+export const mcpExtensionName = (server: string): string => `mcp-${server}`;
 
 /** Providers accept at most 64 characters of `[A-Za-z0-9_-]` in a tool name. */
 export const mcpToolName = (server: string, tool: string): string =>
@@ -159,7 +163,7 @@ export const connectMcpServers = async (
 
   const servers: McpServerState[] = [];
   const connected: Connected[] = [];
-  const tools: ToolRegistration[] = [];
+  const extensions: Extension[] = [];
   const names = new Set<string>();
   for (const [index, outcome] of settled.entries()) {
     const config = configs[index] as McpServerConfig;
@@ -175,10 +179,12 @@ export const connectMcpServers = async (
         error,
         tools: [],
       });
+      extensions.push(defineExtension({ name: mcpExtensionName(config.name) }));
       continue;
     }
     const server = outcome.value;
     connected.push(server);
+    const tools: ToolRegistration[] = [];
     for (const tool of server.tools) {
       const name = mcpToolName(config.name, tool.name);
       if (names.has(name)) {
@@ -190,6 +196,9 @@ export const connectMcpServers = async (
       names.add(name);
       tools.push(toolFor(server, tool, name));
     }
+    extensions.push(
+      defineExtension({ name: mcpExtensionName(config.name), tools })
+    );
     servers.push({
       name: config.name,
       url: config.url,
@@ -203,7 +212,7 @@ export const connectMcpServers = async (
 
   return {
     servers,
-    extension: defineExtension({ name: "mcp", tools }),
+    extensions,
     close: async () => {
       await Promise.all(
         connected.map((server) =>

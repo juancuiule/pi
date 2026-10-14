@@ -94,7 +94,7 @@ The user picks a Level (`none`, `shell` or `desktop`) when a conversation starts
 
 `mcp.config.ts` lists the remote MCP servers (Streamable HTTP only; pi-mcp has no legacy SSE transport). `Agents.layer({ mcp })` connects them when the layer is built (`src/mcp.ts`, 10s timeout each) and closes them on teardown.
 
-- Each tool becomes `mcp_<server>_<tool>` in one `mcp` extension that every conversation selects; calls run on the host, so chat conversations have them. MCP `isError` results reach the model as failed calls. MCP tools are not gated by approvals.
+- Each tool becomes `mcp_<server>_<tool>` in its server's `mcp-<server>` extension, which every conversation selects and can switch off as a whole; calls run on the host, so chat conversations have them. MCP `isError` results reach the model as failed calls. MCP tools are not gated by approvals.
 - A server that fails to connect is logged and reported `unavailable`; there is no reconnect, restart the server.
 - A server entry can `transform` results before the model sees them: `src/mcp/eglc.ts` trims El Gato y La Caja's `get_wordpress_post` (the body three times as HTML plus WordPress metadata) to the article as text and its metadata, including `id_post`, the id `get_recommendations` takes.
 - Tests use `fakeMcpServer` (`src/testing/mcp.ts`, pi-mcp's in-memory transport).

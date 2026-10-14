@@ -1,9 +1,14 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
+import type { Extension } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 
 import { connectMcpServers, mcpToolName } from "./mcp.ts";
 import { fakeMcpServer } from "./testing/mcp.ts";
+
+/** Every MCP tool, across the servers' extensions. */
+const toolsOf = (connections: { readonly extensions: readonly Extension[] }) =>
+  connections.extensions.flatMap((extension) => extension.tools ?? []);
 
 const text = (value: string) => ({
   content: [{ type: "text" as const, text: value }],
@@ -26,7 +31,7 @@ const executeOf = (
   connections: Awaited<ReturnType<typeof connectMcpServers>>,
   name: string
 ) => {
-  const tool = connections.extension.tools?.find((t) => t.name === name);
+  const tool = toolsOf(connections).find((t) => t.name === name);
   if (tool === undefined) {
     throw new Error(`no tool ${name}`);
   }
@@ -123,9 +128,15 @@ describe(connectMcpServers, () => {
         tools: [],
       });
       expect(connections.servers[1]?.status).toBe("connected");
-      expect(connections.extension.tools?.map((t) => t.name)).toStrictEqual([
-        "mcp_test_echo",
-        "mcp_test_fail",
+      // One extension per server, the unavailable one too, so each can be switched off as a whole.
+      expect(
+        connections.extensions.map((extension) => [
+          extension.name,
+          (extension.tools ?? []).map((t) => t.name),
+        ])
+      ).toStrictEqual([
+        ["mcp-down", []],
+        ["mcp-test", ["mcp_test_echo", "mcp_test_fail"]],
       ]);
       expect(warnings.join("\n")).toContain("down");
     } finally {
@@ -143,7 +154,7 @@ describe(connectMcpServers, () => {
     expect(Date.now() - started).toBeLessThan(2000);
     expect(connections.servers[0]?.status).toBe("unavailable");
     expect(connections.servers[0]?.error).toContain("timed out");
-    expect(connections.extension.tools).toStrictEqual([]);
+    expect(toolsOf(connections)).toStrictEqual([]);
     await connections.close();
   });
 
@@ -157,7 +168,7 @@ describe(connectMcpServers, () => {
       warn: (message) => warnings.push(message),
     });
     try {
-      expect(connections.extension.tools?.map((t) => t.name)).toStrictEqual([
+      expect(toolsOf(connections).map((t) => t.name)).toStrictEqual([
         "mcp_c_a_b",
       ]);
       expect(warnings.join("\n")).toContain("a_b");
@@ -198,7 +209,7 @@ describe(connectMcpServers, () => {
   it("has an empty extension and nothing to close without servers", async () => {
     const connections = await connectMcpServers([]);
     expect(connections.servers).toStrictEqual([]);
-    expect(connections.extension.tools).toStrictEqual([]);
+    expect(toolsOf(connections)).toStrictEqual([]);
     await connections.close();
   });
 });

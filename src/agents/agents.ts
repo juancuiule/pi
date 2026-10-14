@@ -444,7 +444,9 @@ export class Agents extends Context.Service<
           ),
           (connections) => Effect.promise(() => connections.close())
         );
-        registry.install(mcp.extension);
+        for (const extension of mcp.extensions) {
+          registry.install(extension);
+        }
         const desktop = desktopExtension(
           options.saveScreenshot === undefined
             ? {}
@@ -489,13 +491,13 @@ export class Agents extends Context.Service<
           ...extensionsFor("desktop", desktop),
           workspaceExt,
           skillsExt,
-          mcp.extension,
+          ...mcp.extensions,
           tracing.extension,
         ];
         const everyLevel = new Set<Extension>([
           workspaceExt,
           skillsExt,
-          mcp.extension,
+          ...mcp.extensions,
           tracing.extension,
         ]);
         const levelsOf = (extension: Extension) =>
@@ -526,7 +528,7 @@ export class Agents extends Context.Service<
             ...extensionsFor(level, desktop),
             workspaceExt,
             ...(withSkills ? [skillsExt] : []),
-            mcp.extension,
+            ...mcp.extensions,
             tracing.extension,
           ].map((extension) => extension.name);
         // The agent change that selects a settings state's extensions and leaves out its disabled tools.

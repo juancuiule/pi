@@ -1,8 +1,13 @@
+import type { Extension } from "@earendil-works/pi-durable";
 // Against the real El Gato y La Caja server: `pnpm test:integration`.
 import { describe, expect, it } from "vitest";
 
 import { mcpServers } from "../mcp.config.ts";
 import { connectMcpServers } from "./mcp.ts";
+
+/** Every MCP tool, across the servers' extensions. */
+const toolsOf = (connections: { readonly extensions: readonly Extension[] }) =>
+  connections.extensions.flatMap((extension) => extension.tools ?? []);
 
 describe("eglc MCP server", () => {
   it("connects, searches and returns a trimmed post", async () => {
@@ -19,7 +24,7 @@ describe("eglc MCP server", () => {
         "search",
       ]);
       const call = (name: string, args: Record<string, unknown>) => {
-        const found = connections.extension.tools?.find((t) => t.name === name);
+        const found = toolsOf(connections).find((t) => t.name === name);
         if (found === undefined) {
           throw new Error(`no tool ${name}`);
         }
