@@ -95,6 +95,14 @@ const ConversationsHandlers = HttpApiBuilder.group(
           })
         )
       )
+      .handle("reset", ({ params }) =>
+        conversations.reset(params.id).pipe(
+          Effect.catchTags({
+            AgentError: Effect.die,
+            SandboxError: Effect.die,
+          })
+        )
+      )
       .handle("events", ({ params }) =>
         conversations.events(params.id).pipe(
           Effect.map((events) => events.pipe(Stream.map(asJson), Stream.orDie)),

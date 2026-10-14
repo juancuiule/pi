@@ -182,6 +182,12 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     success: ConversationAgent,
     error: NotFound,
   }),
+  // Back to what a new conversation at its Level gets; the approval policy stays.
+  HttpApiEndpoint.post("reset", "/conversations/:id/agent/reset", {
+    params: ById,
+    success: ConversationAgent,
+    error: [NotFound, Invalid],
+  }),
   // Turn extensions, tools and skills on or off, or set the approval policy; applies from the next model request.
   HttpApiEndpoint.patch("configure", "/conversations/:id/agent", {
     params: ById,

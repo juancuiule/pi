@@ -124,9 +124,13 @@ export const SettingsPanel = ({
                     <li key={tool.name}>
                       <Row
                         label={tool.name}
-                        hint={tool.description}
-                        checked={tool.enabled}
-                        disabled={disabled}
+                        hint={
+                          extension.enabled
+                            ? tool.description
+                            : "Off with its extension"
+                        }
+                        checked={tool.enabled && extension.enabled}
+                        disabled={disabled || !extension.enabled}
                         onChange={(on) => onTool(tool.name, on)}
                         mono
                       />

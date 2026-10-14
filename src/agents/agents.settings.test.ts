@@ -1,5 +1,8 @@
 // A conversation's settings: what turning extensions, tools and skills on or off does to what the model is offered.
-import { Effect, Exit, Fiber } from "effect";
+import { existsSync } from "node:fs";
+import path from "node:path";
+
+import { Effect, Exit, Fiber, Stream, Tracer } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { Skills } from "../skills/skills.ts";
@@ -11,6 +14,7 @@ import {
   offeredIn,
 } from "../testing/faux.ts";
 import { Agents } from "./agents.ts";
+import { SETTINGS_ENTRY } from "./settings.ts";
 
 const withSkills = { skills: Skills.directory("skills") };
 
@@ -156,5 +160,172 @@ describe("conversation settings", () => {
     );
 
     expect(answer).toContain("ran");
+  });
+
+  it("applies concurrent changes without one undoing the other", async () => {
+    const { layer } = fauxAgents([]);
+
+    const settings = await Effect.runPromise(
+      Effect.gen(function* () {
+        const agents = yield* Agents;
+        const id = yield* create({ level: "shell" });
+        yield* Effect.all(
+          [
+            agents.configure(id, { tools: { bash: false } }),
+            agents.configure(id, { tools: { write: false } }),
+            agents.configure(id, { extensions: { calculator: false } }),
+          ],
+          { concurrency: "unbounded" }
+        );
+        return yield* agents.agent(id);
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect([
+      settings.extensions.find((e) => e.name === "calculator")?.enabled,
+      settings.extensions
+        .flatMap((e) => e.tools)
+        .filter((t) => !t.enabled)
+        .map((t) => t.name)
+        .toSorted(),
+    ]).toStrictEqual([false, ["bash", "write"]]);
+  });
+
+  it("refuses a forced skill while the skills extension is off", async () => {
+    const { layer } = fauxAgents([], withSkills);
+
+    const exit = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create();
+          yield* agents.configure(id, { extensions: { skills: false } });
+          const seat = yield* agents.open(id);
+          return yield* Effect.exit(seat.send("/skill:unit-conversion 3 km"));
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(JSON.stringify(exit)).toContain("SkillNotFound");
+  });
+
+  it("deletes a skill turned off from the Sandbox, and copies it back when turned on", async () => {
+    const { layer } = fauxAgents([], withSkills);
+
+    const present = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create({ level: "shell" });
+          const seat = yield* agents.open(id);
+          const folder = path.join(
+            seat.sandbox?.id ?? "",
+            ".skills",
+            "unit-conversion"
+          );
+          const seen = [existsSync(folder)];
+          yield* agents.configure(id, { skills: { "unit-conversion": false } });
+          seen.push(existsSync(folder));
+          yield* agents.configure(id, { skills: { "unit-conversion": true } });
+          seen.push(existsSync(folder));
+          return seen;
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(present).toStrictEqual([true, false, true]);
+  });
+
+  it("records each change in the conversation, a reset and the agent's Upgrade included", async () => {
+    const { layer } = fauxAgents([
+      callTool("upgrade_workspace", { level: "shell", reason: "to run code" }),
+      echoToolResult,
+    ]);
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create({ approvals: "ask" });
+          yield* agents.configure(id, {
+            approvals: "auto",
+            tools: { calculate: false },
+          });
+          const reset = yield* agents.reset(id);
+          const seat = yield* agents.open(id);
+          yield* seat.ask("Get a shell.");
+          const events = yield* agents.events(id);
+          const [snapshot] = yield* events.pipe(
+            Stream.take(1),
+            Stream.runCollect
+          );
+          return {
+            reset,
+            records:
+              snapshot?.type === "snapshot"
+                ? snapshot.entries
+                    .filter((entry) => entry.kind === SETTINGS_ENTRY)
+                    .map((entry) => entry.data)
+                : [],
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(result.records).toStrictEqual([
+      {
+        by: "person",
+        reset: false,
+        changes: [
+          { type: "approvals", policy: "auto" },
+          { type: "tool", name: "calculate", on: false },
+        ],
+      },
+      {
+        by: "person",
+        reset: true,
+        changes: [{ type: "tool", name: "calculate", on: true }],
+      },
+      {
+        by: "agent",
+        changes: [{ type: "level", from: "none", to: "shell" }],
+      },
+    ]);
+    // A reset keeps the approval policy.
+    expect(result.reset.approvals).toBe("auto");
+  });
+
+  it("puts a settings change on the conversation's Langfuse session", async () => {
+    const spans: Tracer.NativeSpan[] = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    const { layer } = fauxAgents([]);
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const agents = yield* Agents;
+        const id = yield* create();
+        yield* agents.configure(id, { tools: { calculate: false } });
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(Tracer.Tracer, tracer)
+      )
+    );
+
+    const span = spans.find((each) => each.name === "Agents.configure");
+    expect([
+      span?.attributes.get("langfuse.observation.type"),
+      typeof span?.attributes.get("langfuse.session.id"),
+      span?.attributes.get("langfuse.observation.output"),
+    ]).toStrictEqual([
+      "event",
+      "string",
+      JSON.stringify([{ type: "tool", name: "calculate", on: false }]),
+    ]);
   });
 });

@@ -46,7 +46,21 @@ export const useConversationAgent = (
     queryFn: () =>
       runApi((c) => c.conversations.agent({ params: { id: id ?? 0 } })),
     enabled: enabled && id !== undefined,
+    // The agent changes its own settings too (an Upgrade), and so can another tab.
+    refetchInterval: 2000,
   });
+
+/** Put a conversation's settings back to its Level's defaults; the approval policy stays. */
+export const useResetSettings = (id: number | undefined) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      runApi((c) => c.conversations.reset({ params: { id: id ?? 0 } })),
+    onSuccess: (settings) => {
+      queryClient.setQueryData(["agent", id], settings);
+    },
+  });
+};
 
 /** Change a conversation's settings; the answer replaces the cached settings. */
 export const useConfigure = (id: number | undefined) => {

@@ -96,6 +96,23 @@ const envCall = <A extends { readonly ok: boolean }>(
     )
   );
 
+/** Delete skills' `.skills/<name>/` folders from a sandbox, ignoring ones already gone. */
+const uninstall = (
+  env: ExecutionEnv,
+  names: readonly string[],
+  context: ChordContext
+) =>
+  Effect.forEach(
+    names,
+    (name) => {
+      const target = path.posix.join(SANDBOX_SKILLS_DIR, name);
+      return envCall(`Could not remove ${target}`, () =>
+        env.remove(target, { recursive: true, force: true }, context)
+      );
+    },
+    { discard: true }
+  );
+
 export class Skills extends Context.Service<
   Skills,
   {
@@ -125,6 +142,12 @@ export class Skills extends Context.Service<
       skills: readonly Skill[],
       context: ChordContext
     ) => Effect.Effect<void, SkillSourceError | SkillInstallError>;
+    /** Delete the skills' `.skills/<name>/` folders from the sandbox, ignoring ones already gone. */
+    readonly uninstall: (
+      env: ExecutionEnv,
+      names: readonly string[],
+      context: ChordContext
+    ) => Effect.Effect<void, SkillInstallError>;
   }
 >()("effect-pi/skills/Skills") {
   static readonly layer = Layer.effect(
@@ -254,7 +277,7 @@ export class Skills extends Context.Service<
         }
       });
 
-      return Skills.of({ catalog, read, expand, install });
+      return Skills.of({ catalog, read, expand, install, uninstall });
     })
   );
 

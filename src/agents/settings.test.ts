@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyChange, describeSettings } from "./settings.ts";
+import { applyChange, changesBetween, describeSettings } from "./settings.ts";
 import type { InstalledExtension, SettingsState } from "./settings.ts";
 
 const tool = (name: string, approval = false) => ({
@@ -124,6 +124,25 @@ describe(describeSettings, () => {
     expect(settings.skills.map((s) => [s.name, s.enabled])).toStrictEqual([
       ["convert", true],
       ["notes", false],
+    ]);
+  });
+});
+
+describe(changesBetween, () => {
+  it("lists what was turned on and off, and a new policy", () => {
+    const after = applyChange(installed, catalog, chat, {
+      approvals: "auto",
+      extensions: { calculator: false },
+      tools: { skill: false },
+      skills: { notes: false },
+    });
+    expect(
+      "reason" in after ? after : changesBetween(chat, after)
+    ).toStrictEqual([
+      { type: "approvals", policy: "auto" },
+      { type: "extension", name: "calculator", on: false },
+      { type: "tool", name: "skill", on: false },
+      { type: "skill", name: "notes", on: false },
     ]);
   });
 });

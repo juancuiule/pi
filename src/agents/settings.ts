@@ -203,3 +203,54 @@ export const applyChange = (
 export const isProblem = (
   result: SettingsState | SettingsProblem
 ): result is SettingsProblem => "reason" in result;
+
+/** One thing that changed in a conversation's settings, as the conversation records it. */
+// A type, not an interface: it is stored in an entry's data, which must be a JSON type.
+// oxlint-disable-next-line typescript/consistent-type-definitions
+export type SettingsEvent =
+  | { type: "approvals"; policy: ApprovalPolicy }
+  | { type: "level"; from: SandboxChoice; to: SandboxChoice }
+  | { type: "extension" | "tool" | "skill"; name: string; on: boolean };
+
+/** What a conversation records when its settings change: who changed them and how. */
+// oxlint-disable-next-line typescript/consistent-type-definitions
+export type SettingsRecord = {
+  by: "person" | "agent";
+  /** True for a reset to the Level's defaults. */
+  reset?: boolean;
+  changes: SettingsEvent[];
+};
+
+/** The entry kind of a `SettingsRecord`; it carries no model messages, so the model never sees it. */
+export const SETTINGS_ENTRY = "app.settings";
+
+const toggled = (
+  type: "extension" | "tool" | "skill",
+  before: readonly string[],
+  after: readonly string[],
+  // For tools the lists hold the ones turned off.
+  off = false
+): SettingsEvent[] => [
+  ...after
+    .filter((name) => !before.includes(name))
+    .map((name) => ({ type, name, on: !off })),
+  ...before
+    .filter((name) => !after.includes(name))
+    .map((name) => ({ type, name, on: off })),
+];
+
+/** What differs between two states, in the order a person reads it. */
+export const changesBetween = (
+  before: SettingsState,
+  after: SettingsState
+): SettingsEvent[] => [
+  ...(before.level === after.level
+    ? []
+    : [{ type: "level" as const, from: before.level, to: after.level }]),
+  ...(before.approvals === after.approvals
+    ? []
+    : [{ type: "approvals" as const, policy: after.approvals }]),
+  ...toggled("extension", before.extensions, after.extensions),
+  ...toggled("tool", before.disabledTools, after.disabledTools, true),
+  ...toggled("skill", before.skills, after.skills),
+];

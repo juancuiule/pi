@@ -153,6 +153,13 @@ export class Conversations extends Context.Service<
     agent(
       id: number
     ): Effect.Effect<ConversationAgent, AgentError | ConversationNotFound>;
+    /** Back to what a new Conversation at its Level gets; the approval policy stays. */
+    reset(
+      id: number
+    ): Effect.Effect<
+      ConversationAgent,
+      AgentError | ConversationNotFound | InvalidSetting | SandboxError
+    >;
     /** Turn a Conversation's extensions, tools and skills on or off, or set its approval policy. */
     configure(
       id: number,
@@ -528,6 +535,7 @@ export class Conversations extends Context.Service<
           events: (id) => agents.events(asId(id)),
           agent: (id) => agents.agent(asId(id)),
           configure: (id, change) => agents.configure(asId(id), change),
+          reset: (id) => agents.reset(asId(id)),
           decide,
           capacity: capacity.usage,
         });

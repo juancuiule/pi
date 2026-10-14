@@ -14,11 +14,13 @@ import type {
   Harness as HarnessType,
   Storage,
   ToolRegistration,
+  Tx,
   WatchHandle,
 } from "@earendil-works/pi-durable";
 import {
   AgentDoc,
   AssistantEntry,
+  configure,
   createRegistry,
   Harness,
   LiveDoc,
@@ -66,6 +68,7 @@ import type {
 } from "../sandbox/sandbox.ts";
 import { SandboxDoc, SandboxError } from "../sandbox/sandbox.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
+import type { Skill } from "../skills/format.ts";
 import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
 import { Calculator } from "../tools/calculator.ts";
@@ -73,11 +76,19 @@ import { desktopExtension } from "../tools/desktop.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
 import { makeAgentTracing } from "../tracing.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
-import { applyChange, describeSettings, isProblem } from "./settings.ts";
+import {
+  applyChange,
+  changesBetween,
+  describeSettings,
+  isProblem,
+  SETTINGS_ENTRY,
+} from "./settings.ts";
 import type {
   ConversationSettings,
   InstalledExtension,
   SettingsChange,
+  SettingsProblem,
+  SettingsRecord,
   SettingsState,
 } from "./settings.ts";
 
@@ -146,25 +157,42 @@ export interface AgentModel {
   readonly modelId: string;
 }
 
-/**
- * Add extensions to a conversation's own selection. pi-durable reads `{ add }` as an edit of the host's default
- * selection (every installed extension), so the conversation's current list is passed whole, with the new ones.
- */
-const withExtensions = async (
-  conversation: Pick<Conversation, "agent" | "configure">,
-  added: readonly Extension[]
+// The skills a conversation could turn on: the source's now, and any it kept that the source dropped.
+const skillCatalogOf = (
+  source: readonly Skill[],
+  kept: readonly Skill[]
+): Skill[] => [
+  ...source,
+  ...kept.filter((skill) => !source.some((each) => each.name === skill.name)),
+];
+
+// A conversation's settings as they are stored, read inside a commit: the extensions it selects, the tools
+// it leaves out, its skills, approval policy and Level.
+const readState = async (
+  tx: Tx,
+  id: ConversationId,
+  source: readonly Skill[]
 ) => {
-  const { extensions } = await conversation.agent(context);
-  const names = new Set(extensions.map((extension) => extension.name));
-  await conversation.configure(
-    {
-      extensions: [
-        ...extensions,
-        ...added.filter((extension) => !names.has(extension.name)),
-      ],
-    },
-    context
-  );
+  const agent = await tx.doc(AgentDoc, id);
+  const skillsDoc = await tx.doc(SkillsDoc, id);
+  const approvals = await tx.doc(ApprovalDoc, id);
+  const workspace = await tx.doc(WorkspaceDoc, id);
+  const kept: Skill[] = (skillsDoc.skills ?? []).map((skill) => ({
+    ...skill,
+    files: [...skill.files],
+  }));
+  const state: SettingsState = {
+    level: workspace.level,
+    approvals: approvals.policy,
+    // Conversations this app creates select an array; another shape selects nothing it knows of.
+    extensions: Array.isArray(agent.extensions) ? [...agent.extensions] : [],
+    disabledTools:
+      agent.tools === undefined || Array.isArray(agent.tools)
+        ? []
+        : [...agent.tools.remove],
+    skills: kept.map((skill) => skill.name),
+  };
+  return { state, catalog: skillCatalogOf(source, kept) };
 };
 
 const LEVELS: readonly SandboxChoice[] = ["none", "shell", "desktop"];
@@ -264,7 +292,11 @@ export interface Seat {
    */
   upgrade(
     level: SandboxKind,
-    options?: { readonly wait?: boolean }
+    options?: {
+      readonly wait?: boolean;
+      /** Who asked, for the conversation's record; the person, unless said otherwise. */
+      readonly by?: "person" | "agent";
+    }
   ): Effect.Effect<
     void,
     | AgentError
@@ -365,6 +397,13 @@ export class Agents extends Context.Service<
       | CapacityExhausted
       | ClaimCancelled,
       Scope.Scope
+    >;
+    /** Back to what a new conversation at its Level gets: extensions, tools and skills; the approval policy stays. */
+    reset(
+      id: ConversationId
+    ): Effect.Effect<
+      ConversationAgent,
+      AgentError | ConversationNotFound | InvalidSetting | SandboxError
     >;
     /** Raise the Level of a Conversation without a Seat; its next Seat gets the Sandbox. */
     upgrade(
@@ -639,15 +678,86 @@ export class Agents extends Context.Service<
             )
           );
 
+        // With the skills extension off the conversation has no skills: a forced one is unknown, a mention is text.
+        const skillsOn = (id: ConversationId) =>
+          attempt(() => harness.snapshot(AgentDoc, id, context)).pipe(
+            Effect.map(
+              (agent) =>
+                !Array.isArray(agent?.extensions) ||
+                agent.extensions.includes(skillsExt.name)
+            )
+          );
+
         const expand = (prompt: string, id: ConversationId) =>
           prompt.includes("/skill:")
-            ? skillsOf(id).pipe(
+            ? Effect.all([skillsOf(id), skillsOn(id)]).pipe(
+                Effect.map(([available, on]) => (on ? available : [])),
                 Effect.flatMap((available) => skills.expand(prompt, available)),
                 Effect.catchTag("SkillSourceError", (cause) =>
                   Effect.fail(new AgentError({ cause }))
                 )
               )
             : Effect.succeed(prompt);
+
+        // Record a settings change in the conversation, where the console shows it; the model never sees it.
+        const record = (id: ConversationId, entry: SettingsRecord) =>
+          entry.changes.length === 0 && entry.reset !== true
+            ? Effect.void
+            : handleOf(id).pipe(
+                Effect.flatMap((handle) =>
+                  attempt(() =>
+                    handle.submit(
+                      {
+                        type: "write",
+                        entry: { kind: SETTINGS_ENTRY, data: entry },
+                      },
+                      context
+                    )
+                  )
+                ),
+                Effect.asVoid,
+                // Bookkeeping: a record that cannot be written does not undo the change it describes.
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Could not record a settings change", cause)
+                )
+              );
+
+        // Add extensions to a conversation's own selection, in one commit.
+        const addExtensions = (
+          id: ConversationId,
+          added: readonly Extension[]
+        ) =>
+          attempt(() =>
+            harness.commit(async (tx) => {
+              const agent = await tx.doc(AgentDoc, id);
+              const current = Array.isArray(agent.extensions)
+                ? [...agent.extensions]
+                : [];
+              agent.extensions = [
+                ...current,
+                ...added
+                  .map((extension) => extension.name)
+                  .filter((name) => !current.includes(name)),
+              ];
+            }, context)
+          );
+
+        // An Upgrade, recorded in the conversation and on its span for Langfuse.
+        const recordUpgrade = (
+          id: ConversationId,
+          from: SandboxChoice,
+          to: SandboxChoice,
+          by: "person" | "agent"
+        ) =>
+          Effect.annotateCurrentSpan({
+            "langfuse.observation.type": "event",
+            "langfuse.session.id": tracing.sessionOf(id),
+            "langfuse.observation.input": JSON.stringify({ from, to, by }),
+          }).pipe(
+            Effect.andThen(
+              record(id, { by, changes: [{ type: "level", from, to }] })
+            )
+          );
 
         const create = Effect.fn("Agents.create")(function* (createOptions: {
           readonly prompt: string;
@@ -833,7 +943,10 @@ export class Agents extends Context.Service<
           const upgrade = Effect.fn("Seat.upgrade")(
             function* (
               to: SandboxKind,
-              upgradeOptions: { readonly wait?: boolean } = {}
+              upgradeOptions: {
+                readonly wait?: boolean;
+                readonly by?: "person" | "agent";
+              } = {}
             ) {
               if (rank[to] <= rank[level]) {
                 return yield* new InvalidUpgrade({
@@ -850,8 +963,10 @@ export class Agents extends Context.Service<
               machine = yield* attach(to, {
                 wait: upgradeOptions.wait ?? false,
               });
+              const from = level;
               level = to;
-              yield* attempt(() => withExtensions(handle, added));
+              yield* addExtensions(id, added);
+              yield* recordUpgrade(id, from, to, upgradeOptions.by ?? "person");
               // The new Sandbox is recorded; the old one, and its claim, can go.
               if (previous !== undefined) {
                 yield* Scope.close(previous.scope, Exit.void);
@@ -859,7 +974,7 @@ export class Agents extends Context.Service<
             },
             (effect) => upgrading.withPermit(effect)
           );
-          upgrades.set(id, (to) => upgrade(to, { wait: true }));
+          upgrades.set(id, (to) => upgrade(to, { wait: true, by: "agent" }));
           seatSandboxes.set(id, () => machine?.sandbox);
 
           const annotate = (prompt: string) =>
@@ -1065,7 +1180,7 @@ export class Agents extends Context.Service<
           id: ConversationId,
           to: SandboxKind
         ) {
-          const handle = yield* handleOf(id);
+          yield* handleOf(id);
           const from = yield* attempt(() =>
             harness.commit(async (tx) => {
               const doc = await tx.doc(WorkspaceDoc, id);
@@ -1082,7 +1197,8 @@ export class Agents extends Context.Service<
           const added = extensionsFor(to, desktop).filter(
             (extension) => !extensionsFor(from, desktop).includes(extension)
           );
-          yield* attempt(() => withExtensions(handle, added));
+          yield* addExtensions(id, added);
+          yield* recordUpgrade(id, from, to, "person");
         });
 
         const events = Effect.fn("Agents.events")(function* (
@@ -1137,48 +1253,65 @@ export class Agents extends Context.Service<
           Effect.orDie
         );
 
-        // A conversation's settings as they are stored: the extensions it selects, the tools it leaves out, its
-        // skills, approval policy and Level.
-        const stateOf = Effect.fnUntraced(function* (id: ConversationId) {
-          const handle = yield* handleOf(id);
-          const agent = yield* attempt(() => handle.agent(context));
-          const agentDoc = yield* attempt(() =>
-            harness.snapshot(AgentDoc, id, context)
+        // Write a settings state: the agent's extensions and left-out tools, the skills, the approval policy.
+        const writeState = async (
+          tx: Tx,
+          id: ConversationId,
+          next: SettingsState,
+          skillCatalog: readonly Skill[]
+        ) => {
+          await configure(tx, id, agentChangeFor(next));
+          const skillsDoc = await tx.doc(SkillsDoc, id);
+          skillsDoc.skills = skillCatalog.filter((skill) =>
+            next.skills.includes(skill.name)
           );
-          const skillsDoc = yield* attempt(() =>
-            harness.snapshot(SkillsDoc, id, context)
-          );
-          const approvals = yield* attempt(() =>
-            harness.snapshot(ApprovalDoc, id, context)
-          );
-          const workspace = yield* attempt(() =>
-            harness.snapshot(WorkspaceDoc, id, context)
-          );
-          const tools = agentDoc?.tools;
-          const conversationSkills = skillsDoc?.skills ?? [];
-          // The skills it could turn on: the source's now, and any it kept that the source dropped.
-          const source = (yield* catalog).skills;
-          const skillCatalog = [
-            ...source,
-            ...conversationSkills.filter(
-              (kept) => !source.some((skill) => skill.name === kept.name)
-            ),
-          ];
-          const state: SettingsState = {
-            level: workspace?.level ?? "none",
-            approvals: approvals?.policy ?? "auto",
-            extensions: agent.extensions.map((extension) => extension.name),
-            disabledTools:
-              tools === undefined || Array.isArray(tools) ? [] : tools.remove,
-            skills: conversationSkills.map((skill) => skill.name),
-          };
-          return { handle, agent, state, skillCatalog };
+          const approvals = await tx.doc(ApprovalDoc, id);
+          approvals.policy = next.approvals;
+          // Under `auto` nothing waits: calls already waiting are approved, as "always" does.
+          if (next.approvals === "auto") {
+            for (const waiting of Object.keys(approvals.pending)) {
+              approvals.decisions[waiting] ??= "approve";
+            }
+          }
+        };
+
+        // Copy skills turned on into the Seat's Sandbox and delete the ones turned off, when it has one.
+        const syncSkills = Effect.fnUntraced(function* (
+          id: ConversationId,
+          added: readonly Skill[],
+          removed: readonly string[]
+        ) {
+          const sandbox = seatSandboxes.get(id)?.();
+          if (sandbox === undefined) {
+            return;
+          }
+          const env = workspaces.env(sandbox);
+          const failed = (cause: unknown) =>
+            new SandboxError({
+              message: `Could not update the skills in ${sandbox.id}`,
+              cause,
+            });
+          if (added.length > 0) {
+            yield* skills
+              .install(env, added, context)
+              .pipe(Effect.mapError(failed));
+          }
+          if (removed.length > 0) {
+            yield* skills
+              .uninstall(env, removed, context)
+              .pipe(Effect.mapError(failed));
+          }
         });
 
         const agentOf = Effect.fn("Agents.agent")(function* (
           id: ConversationId
         ) {
-          const { agent, state, skillCatalog } = yield* stateOf(id);
+          const handle = yield* handleOf(id);
+          const agent = yield* attempt(() => handle.agent(context));
+          const source = (yield* catalog).skills;
+          const { state, catalog: skillCatalog } = yield* attempt(() =>
+            harness.commit((tx) => readState(tx, id, source), context)
+          );
           return {
             ...describeSettings(installedInfo, skillCatalog, state),
             model:
@@ -1189,68 +1322,87 @@ export class Agents extends Context.Service<
           } satisfies ConversationAgent;
         });
 
+        // Read, decide and write a conversation's settings in one commit, so concurrent changes cannot undo each
+        // other; then sync its Sandbox's skills, record what changed, and annotate the span for Langfuse.
+        const changeSettings = Effect.fnUntraced(function* (
+          id: ConversationId,
+          decide: (
+            state: SettingsState,
+            skillCatalog: readonly Skill[],
+            source: readonly Skill[]
+          ) => SettingsState | SettingsProblem,
+          reset: boolean
+        ) {
+          yield* handleOf(id);
+          const source = (yield* catalog).skills;
+          const outcome = yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const { state, catalog: skillCatalog } = await readState(
+                tx,
+                id,
+                source
+              );
+              const next = decide(state, skillCatalog, source);
+              if (isProblem(next)) {
+                return { problem: next };
+              }
+              await writeState(tx, id, next, skillCatalog);
+              return {
+                changes: changesBetween(state, next),
+                added: skillCatalog.filter(
+                  (skill) =>
+                    next.skills.includes(skill.name) &&
+                    !state.skills.includes(skill.name)
+                ),
+                removed: state.skills.filter(
+                  (name) => !next.skills.includes(name)
+                ),
+              };
+            }, context)
+          );
+          if ("problem" in outcome) {
+            return yield* new InvalidSetting(outcome.problem);
+          }
+          yield* Effect.annotateCurrentSpan({
+            "langfuse.observation.type": "event",
+            "langfuse.session.id": tracing.sessionOf(id),
+            "langfuse.observation.output": JSON.stringify(outcome.changes),
+          });
+          yield* syncSkills(id, outcome.added, outcome.removed);
+          yield* record(id, { by: "person", reset, changes: outcome.changes });
+          return yield* agentOf(id);
+        });
+
         const configureSettings = Effect.fn("Agents.configure")(function* (
           id: ConversationId,
           change: SettingsChange
         ) {
-          const { handle, state, skillCatalog } = yield* stateOf(id);
-          const next = applyChange(installedInfo, skillCatalog, state, change);
-          if (isProblem(next)) {
-            return yield* new InvalidSetting(next);
-          }
-          if (
-            change.extensions !== undefined ||
-            change.tools !== undefined ||
-            change.skills !== undefined
-          ) {
-            yield* attempt(() =>
-              handle.configure(agentChangeFor(next), context)
-            );
-          }
-          if (change.skills !== undefined) {
-            const enabled = skillCatalog.filter((skill) =>
-              next.skills.includes(skill.name)
-            );
-            yield* attempt(() =>
-              harness.commit(async (tx) => {
-                const doc = await tx.doc(SkillsDoc, id);
-                doc.skills = [...enabled];
-              }, context)
-            );
-            const added = enabled.filter(
-              (skill) => !state.skills.includes(skill.name)
-            );
-            const sandbox = seatSandboxes.get(id)?.();
-            if (sandbox !== undefined && added.length > 0) {
-              yield* skills
-                .install(workspaces.env(sandbox), added, context)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new SandboxError({
-                        message: `Could not copy skills into ${sandbox.id}`,
-                        cause,
-                      })
-                  )
-                );
-            }
-          }
-          if (change.approvals !== undefined) {
-            const policy = change.approvals;
-            yield* attempt(() =>
-              harness.commit(async (tx) => {
-                const doc = await tx.doc(ApprovalDoc, id);
-                doc.policy = policy;
-                // Under `auto` nothing waits: calls already waiting are approved, as "always" does.
-                if (policy === "auto") {
-                  for (const waiting of Object.keys(doc.pending)) {
-                    doc.decisions[waiting] ??= "approve";
-                  }
-                }
-              }, context)
-            );
-          }
-          return yield* agentOf(id);
+          yield* Effect.annotateCurrentSpan(
+            "langfuse.observation.input",
+            JSON.stringify(change)
+          );
+          return yield* changeSettings(
+            id,
+            (state, skillCatalog) =>
+              applyChange(installedInfo, skillCatalog, state, change),
+            false
+          );
+        });
+
+        // Back to what a new conversation at its Level gets; the approval policy stays.
+        const resetSettings = Effect.fn("Agents.reset")(function* (
+          id: ConversationId
+        ) {
+          return yield* changeSettings(
+            id,
+            (state, _skillCatalog, source) => ({
+              ...state,
+              extensions: defaultExtensions(state.level, source.length > 0),
+              disabledTools: [],
+              skills: source.map((skill) => skill.name),
+            }),
+            true
+          );
         });
 
         return Agents.of({
@@ -1258,6 +1410,7 @@ export class Agents extends Context.Service<
           capabilities,
           agent: agentOf,
           configure: configureSettings,
+          reset: resetSettings,
           create,
           open,
           upgrade: upgradeStored,

@@ -20,6 +20,7 @@ import {
   useCapabilities,
   useConfigure,
   useConversationAgent,
+  useResetSettings,
 } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +68,7 @@ export const CapabilitiesSheet = ({
   const { data } = useCapabilities();
   const { data: agent } = useConversationAgent(conversationId, open);
   const configure = useConfigure(conversationId);
+  const reset = useResetSettings(conversationId);
   const save = (change: SettingsChange) =>
     configure.mutate(change, {
       onError: (error) => toast.error(error.message),
@@ -124,6 +126,19 @@ export const CapabilitiesSheet = ({
                       : ` · prompt sections: ${agent.sections.join(", ")}`}
                     . Changes apply from the agent&rsquo;s next model request.
                   </p>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    className="self-start"
+                    disabled={reset.isPending}
+                    onClick={() =>
+                      reset.mutate(undefined, {
+                        onError: (error) => toast.error(error.message),
+                      })
+                    }
+                  >
+                    Reset to defaults
+                  </Button>
                   <SettingsPanel
                     settings={agent}
                     approvals={{
