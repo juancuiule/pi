@@ -57,17 +57,15 @@ export const titleOf = (prompt: string): string => {
 interface Live {
   readonly seat: Seat;
   readonly scope: Scope.Closeable;
+  /** Whether a Run is going, as last read; `refresh` reads it again. */
   running: boolean;
-  /**
-   * Set by a send until the watch reports a Run: the watch's earlier values predate the send, so a `false` among
-   * them does not mean its Run ended.
-   */
-  awaiting: boolean;
   /** Set by Pause during a Run: the Seat closes once the Run ends, unless a `send` comes first. */
   pausing: boolean;
   lastActivity: number;
   /** Held by sends and by `close`, so no send is admitted after the scope starts closing. */
   readonly lock: Semaphore.Semaphore;
+  /** Serializes `refresh`. */
+  readonly reading: Semaphore.Semaphore;
 }
 
 const asId = (id: number) => id as ConversationId;
@@ -182,6 +180,19 @@ export class Conversations extends Context.Service<
             }).pipe(entry.lock.withPermit);
           });
 
+        // Read whether a Run is going. Reads are serialized and each reads the latest commit, so the last one to
+        // finish is never older than any change notified before it; a later change notifies again.
+        const refresh = (entry: Live) =>
+          entry.seat.running.pipe(
+            Effect.tap((value) =>
+              Effect.sync(() => {
+                entry.running = value;
+              })
+            ),
+            Effect.orDie,
+            entry.reading.withPermit
+          );
+
         // Submit to a Seat unless `close` got to it first; `false` means it has no Seat any more.
         const sendLive = (id: number, entry: Live, prompt: string) =>
           Effect.suspend(() => {
@@ -190,12 +201,10 @@ export class Conversations extends Context.Service<
             }
             entry.pausing = false;
             return entry.seat.send(prompt).pipe(
+              // A submit starts a Run in the commit that admits it, or queues behind the one going.
+              Effect.andThen(refresh(entry)),
               Effect.andThen(Clock.currentTimeMillis),
               Effect.map((now) => {
-                // A submit starts a Run in the commit that admits it, or queues behind the one going; the
-                // watch reports it later.
-                entry.running = true;
-                entry.awaiting = true;
                 entry.lastActivity = now;
                 return true;
               })
@@ -205,18 +214,13 @@ export class Conversations extends Context.Service<
         // Register a Seat and track whether a Run is going; a Pause waiting for the Run closes it when it ends.
         const register = Effect.fnUntraced(function* (id: number, entry: Live) {
           live.set(id, entry);
-          const running = yield* entry.seat.running.pipe(Effect.orDie);
-          yield* running.pipe(
-            Stream.runForEach((value) =>
+          const changes = yield* entry.seat.changes.pipe(Effect.orDie);
+          yield* changes.pipe(
+            Stream.runForEach(() =>
               Effect.gen(function* () {
                 entry.lastActivity = yield* Clock.currentTimeMillis;
-                if (value) {
-                  entry.awaiting = false;
-                } else if (entry.awaiting) {
-                  return;
-                }
-                entry.running = value;
-                if (!value && entry.pausing) {
+                const running = yield* refresh(entry);
+                if (!running && entry.pausing) {
                   // Forked into the layer's scope: closing the Seat's own scope interrupts this fiber.
                   yield* close(id).pipe(Effect.forkIn(layerScope));
                 }
@@ -260,10 +264,10 @@ export class Conversations extends Context.Service<
                 seat,
                 scope,
                 running: false,
-                awaiting: false,
                 pausing: false,
                 lastActivity: yield* Clock.currentTimeMillis,
                 lock: yield* Semaphore.make(1),
+                reading: yield* Semaphore.make(1),
               };
               yield* register(id, entry);
               return { id, entry };
@@ -373,9 +377,8 @@ export class Conversations extends Context.Service<
           }
           yield* entry.seat.stop;
           // `stop` returns once the conversation is idle; the watch may report it later.
-          entry.running = false;
-          entry.awaiting = false;
-          if (entry.pausing) {
+          yield* refresh(entry);
+          if (entry.pausing && !entry.running) {
             yield* close(id);
           }
         });

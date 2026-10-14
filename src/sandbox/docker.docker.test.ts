@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
 import { saveScreenshotsTo } from "../screenshots.ts";
@@ -29,6 +29,10 @@ const containerExists = (name: string) =>
   execFileSync("docker", ["ps", "-a", "--filter", `name=^${name}$`, "-q"], {
     encoding: "utf-8",
   }).trim() !== "";
+
+// Volumes these tests create carry this label, so they are removed afterwards without touching anyone else's.
+const TEST_LABEL = "effect-pi.test";
+const testWorkspaces = () => DockerVolumes.workspaces({ labels: [TEST_LABEL] });
 
 const volumeExists = (name: string) =>
   execFileSync("docker", ["volume", "ls", "--filter", `name=^${name}$`, "-q"], {
@@ -59,16 +63,26 @@ const dockerAgents = (
     models,
     model: { provider: "faux", modelId: "faux-1" },
     ...(saveScreenshot === undefined ? {} : { saveScreenshot }),
-  }).pipe(
-    Layer.provide(DockerVolumes.workspaces()),
-    Layer.provide(Skills.none)
-  );
+  }).pipe(Layer.provide(testWorkspaces()), Layer.provide(Skills.none));
 };
 
 describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
   "Docker sandboxes",
   { timeout: 120_000 },
   () => {
+    afterAll(() => {
+      const volumes = execFileSync(
+        "docker",
+        ["volume", "ls", "--filter", `label=${TEST_LABEL}`, "-q"],
+        { encoding: "utf-8" }
+      )
+        .split("\n")
+        .filter((name) => name !== "");
+      if (volumes.length > 0) {
+        execFileSync("docker", ["volume", "rm", "--force", ...volumes]);
+      }
+    });
+
     it("keeps a Workspace's files across its Sandboxes, of any Level, until discarded", async () => {
       const { first, second, storage, names } = await Effect.runPromise(
         Effect.gen(function* () {
@@ -104,7 +118,7 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
             storage: shell.storage,
             names: [shell.sandbox.id, desktop.sandbox.id],
           };
-        }).pipe(Effect.provide(DockerVolumes.workspaces()))
+        }).pipe(Effect.provide(testWorkspaces()))
       );
 
       expect(first).toStrictEqual({ ok: true, text: "/workspace\ngit\n" });

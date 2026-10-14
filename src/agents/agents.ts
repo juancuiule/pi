@@ -186,12 +186,14 @@ export interface Seat {
   ): Effect.Effect<void, AgentError | ApprovalNotFound>;
   /** Count of calls waiting for approval. */
   readonly pendingApprovals: Effect.Effect<number, AgentError>;
+  /** Whether a Run is going, as last committed. */
+  readonly running: Effect.Effect<boolean, AgentError>;
   /**
-   * Whether a Run is going: the current value first, then each change (consecutive equal values may repeat).
-   * Single-use, and must be run; finishing or interrupting it stops its watch.
+   * A count, one element after each commit that may change `running` (several commits may come as one), starting
+   * now; read `running` for the state. Single-use, and must be run; finishing or interrupting it stops its watch.
    */
-  readonly running: Effect.Effect<
-    Stream.Stream<boolean, AgentError>,
+  readonly changes: Effect.Effect<
+    Stream.Stream<number, AgentError>,
     AgentError
   >;
 }
@@ -598,9 +600,17 @@ export class Agents extends Context.Service<
             harness.snapshot(ApprovalDoc, id, context)
           ).pipe(Effect.map((doc) => Object.keys(doc?.pending ?? {}).length));
 
-          const running = watchStream(
+          const running = attempt(() =>
+            harness.snapshot(LiveDoc, id, context)
+          ).pipe(Effect.map((live) => live?.run !== undefined));
+
+          let delivered = 0;
+          const changes = watchStream(
             () => harness.watchDoc(LiveDoc, id, context),
-            (value) => value?.run !== undefined
+            () => {
+              delivered += 1;
+              return delivered;
+            }
           );
 
           return {
@@ -612,6 +622,7 @@ export class Agents extends Context.Service<
             decide,
             pendingApprovals,
             running,
+            changes,
           } satisfies Seat;
         });
 
