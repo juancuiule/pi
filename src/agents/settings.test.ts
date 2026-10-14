@@ -146,3 +146,23 @@ describe(changesBetween, () => {
     ]);
   });
 });
+
+describe("the skills extension", () => {
+  it("stays off through an unrelated change, and goes with the last skill", () => {
+    const off = applyChange(installed, catalog, chat, {
+      extensions: { skills: false },
+    });
+    const unrelated =
+      "reason" in off
+        ? off
+        : applyChange(installed, catalog, off, { approvals: "auto" });
+    const lastSkill = applyChange(installed, catalog, chat, {
+      skills: { convert: false, notes: false },
+    });
+    expect(
+      [unrelated, lastSkill].map((result) =>
+        "reason" in result ? result : result.extensions.includes("skills")
+      )
+    ).toStrictEqual([false, false]);
+  });
+});

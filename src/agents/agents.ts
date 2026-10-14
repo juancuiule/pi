@@ -668,14 +668,10 @@ export class Agents extends Context.Service<
           return handle;
         });
 
-        // The skills a conversation recorded, or those a new one would get for one recorded without them.
+        // The skills a conversation recorded; every conversation records them when it is created.
         const skillsOf = (id: ConversationId) =>
           attempt(() => harness.snapshot(SkillsDoc, id, context)).pipe(
-            Effect.flatMap((doc) =>
-              doc?.skills === undefined
-                ? catalog.pipe(Effect.map((current) => current.skills))
-                : Effect.succeed(doc.skills)
-            )
+            Effect.map((doc) => doc?.skills ?? [])
           );
 
         // With the skills extension off the conversation has no skills: a forced one is unknown, a mention is text.
@@ -758,6 +754,54 @@ export class Agents extends Context.Service<
               record(id, { by, changes: [{ type: "level", from, to }] })
             )
           );
+
+        // One lock per conversation for what changes its settings or its Sandbox's skills: settings changes, Seats
+        // opening and Upgrades. Commits are ordered anyway; the lock also orders what follows them (the Sandbox's
+        // files, the records), so a later change never lands before an earlier one.
+        const locks = new Map<ConversationId, Semaphore.Semaphore>();
+        const locked = <A, E, R>(
+          id: ConversationId,
+          effect: Effect.Effect<A, E, R>
+        ) =>
+          Effect.suspend(() => {
+            let lock = locks.get(id);
+            if (lock === undefined) {
+              lock = Semaphore.makeUnsafe(1);
+              locks.set(id, lock);
+            }
+            return lock.withPermit(effect);
+          });
+
+        // Make the Seat's Sandbox hold exactly the conversation's skills as committed: each enabled skill's folder
+        // replaced with the current files, each other known skill's folder deleted. Run after every change, so a copy
+        // that failed is made by the next one.
+        const reconcileSkills = Effect.fnUntraced(function* (
+          id: ConversationId
+        ) {
+          const sandbox = seatSandboxes.get(id)?.();
+          if (sandbox === undefined) {
+            return;
+          }
+          const enabled = yield* skillsOf(id);
+          const known = new Set([
+            ...(yield* catalog).skills.map((skill) => skill.name),
+            ...enabled.map((skill) => skill.name),
+          ]);
+          const env = workspaces.env(sandbox);
+          const failed = (cause: unknown) =>
+            new SandboxError({
+              message: `Could not update the skills in ${sandbox.id}`,
+              cause,
+            });
+          yield* skills
+            .uninstall(env, [...known], context)
+            .pipe(Effect.mapError(failed));
+          if (enabled.length > 0) {
+            yield* skills
+              .install(env, enabled, context)
+              .pipe(Effect.mapError(failed));
+          }
+        });
 
         const create = Effect.fn("Agents.create")(function* (createOptions: {
           readonly prompt: string;
@@ -965,8 +1009,16 @@ export class Agents extends Context.Service<
               });
               const from = level;
               level = to;
-              yield* addExtensions(id, added);
-              yield* recordUpgrade(id, from, to, upgradeOptions.by ?? "person");
+              yield* locked(
+                id,
+                addExtensions(id, added).pipe(
+                  Effect.andThen(
+                    recordUpgrade(id, from, to, upgradeOptions.by ?? "person")
+                  ),
+                  // A settings change during the Upgrade went to the old Sandbox.
+                  Effect.andThen(reconcileSkills(id))
+                )
+              );
               // The new Sandbox is recorded; the old one, and its claim, can go.
               if (previous !== undefined) {
                 yield* Scope.close(previous.scope, Exit.void);
@@ -976,6 +1028,8 @@ export class Agents extends Context.Service<
           );
           upgrades.set(id, (to) => upgrade(to, { wait: true, by: "agent" }));
           seatSandboxes.set(id, () => machine?.sandbox);
+          // A settings change between the Sandbox's copy and this registration found no Sandbox to update.
+          yield* locked(id, reconcileSkills(id));
 
           const annotate = (prompt: string) =>
             Effect.annotateCurrentSpan({
@@ -1197,8 +1251,12 @@ export class Agents extends Context.Service<
           const added = extensionsFor(to, desktop).filter(
             (extension) => !extensionsFor(from, desktop).includes(extension)
           );
-          yield* addExtensions(id, added);
-          yield* recordUpgrade(id, from, to, "person");
+          yield* locked(
+            id,
+            addExtensions(id, added).pipe(
+              Effect.andThen(recordUpgrade(id, from, to, "person"))
+            )
+          );
         });
 
         const events = Effect.fn("Agents.events")(function* (
@@ -1275,34 +1333,6 @@ export class Agents extends Context.Service<
           }
         };
 
-        // Copy skills turned on into the Seat's Sandbox and delete the ones turned off, when it has one.
-        const syncSkills = Effect.fnUntraced(function* (
-          id: ConversationId,
-          added: readonly Skill[],
-          removed: readonly string[]
-        ) {
-          const sandbox = seatSandboxes.get(id)?.();
-          if (sandbox === undefined) {
-            return;
-          }
-          const env = workspaces.env(sandbox);
-          const failed = (cause: unknown) =>
-            new SandboxError({
-              message: `Could not update the skills in ${sandbox.id}`,
-              cause,
-            });
-          if (added.length > 0) {
-            yield* skills
-              .install(env, added, context)
-              .pipe(Effect.mapError(failed));
-          }
-          if (removed.length > 0) {
-            yield* skills
-              .uninstall(env, removed, context)
-              .pipe(Effect.mapError(failed));
-          }
-        });
-
         const agentOf = Effect.fn("Agents.agent")(function* (
           id: ConversationId
         ) {
@@ -1322,56 +1352,53 @@ export class Agents extends Context.Service<
           } satisfies ConversationAgent;
         });
 
-        // Read, decide and write a conversation's settings in one commit, so concurrent changes cannot undo each
-        // other; then sync its Sandbox's skills, record what changed, and annotate the span for Langfuse.
-        const changeSettings = Effect.fnUntraced(function* (
-          id: ConversationId,
-          decide: (
-            state: SettingsState,
-            skillCatalog: readonly Skill[],
-            source: readonly Skill[]
-          ) => SettingsState | SettingsProblem,
-          reset: boolean
-        ) {
-          yield* handleOf(id);
-          const source = (yield* catalog).skills;
-          const outcome = yield* attempt(() =>
-            harness.commit(async (tx) => {
-              const { state, catalog: skillCatalog } = await readState(
-                tx,
-                id,
-                source
-              );
-              const next = decide(state, skillCatalog, source);
-              if (isProblem(next)) {
-                return { problem: next };
-              }
-              await writeState(tx, id, next, skillCatalog);
-              return {
-                changes: changesBetween(state, next),
-                added: skillCatalog.filter(
-                  (skill) =>
-                    next.skills.includes(skill.name) &&
-                    !state.skills.includes(skill.name)
-                ),
-                removed: state.skills.filter(
-                  (name) => !next.skills.includes(name)
-                ),
-              };
-            }, context)
-          );
-          if ("problem" in outcome) {
-            return yield* new InvalidSetting(outcome.problem);
-          }
-          yield* Effect.annotateCurrentSpan({
-            "langfuse.observation.type": "event",
-            "langfuse.session.id": tracing.sessionOf(id),
-            "langfuse.observation.output": JSON.stringify(outcome.changes),
-          });
-          yield* syncSkills(id, outcome.added, outcome.removed);
-          yield* record(id, { by: "person", reset, changes: outcome.changes });
-          return yield* agentOf(id);
-        });
+        // Read, decide and write a conversation's settings in one commit; then match its Sandbox's skills to them,
+        // record what changed, and annotate the span for Langfuse. All under the conversation's lock.
+        const changeSettings = Effect.fnUntraced(
+          function* (
+            id: ConversationId,
+            decide: (
+              state: SettingsState,
+              skillCatalog: readonly Skill[],
+              source: readonly Skill[]
+            ) => SettingsState | SettingsProblem,
+            reset: boolean
+          ) {
+            yield* handleOf(id);
+            const source = (yield* catalog).skills;
+            const outcome = yield* attempt(() =>
+              harness.commit(async (tx) => {
+                const { state, catalog: skillCatalog } = await readState(
+                  tx,
+                  id,
+                  source
+                );
+                const next = decide(state, skillCatalog, source);
+                if (isProblem(next)) {
+                  return { problem: next };
+                }
+                await writeState(tx, id, next, skillCatalog);
+                return { changes: changesBetween(state, next) };
+              }, context)
+            );
+            if ("problem" in outcome) {
+              return yield* new InvalidSetting(outcome.problem);
+            }
+            yield* Effect.annotateCurrentSpan({
+              "langfuse.observation.type": "event",
+              "langfuse.session.id": tracing.sessionOf(id),
+              "langfuse.observation.output": JSON.stringify(outcome.changes),
+            });
+            yield* reconcileSkills(id);
+            yield* record(id, {
+              by: "person",
+              reset,
+              changes: outcome.changes,
+            });
+            return yield* agentOf(id);
+          },
+          (effect, id) => locked(id, effect)
+        );
 
         const configureSettings = Effect.fn("Agents.configure")(function* (
           id: ConversationId,

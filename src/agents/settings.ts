@@ -182,8 +182,12 @@ export const applyChange = (
   if (problem !== undefined) {
     return problem;
   }
-  // An enabled skill needs the skills extension, unless this change turns that off itself.
-  if (skills.size > 0 && change.extensions?.skills !== false) {
+  // The skills extension (the skill tool and the skills list) goes with the last skill, and comes back with a
+  // skill turned on, unless this change turns it off itself; a change that turns no skill on leaves it as it is.
+  const turnedOn = [...skills].some((name) => !state.skills.includes(name));
+  if (skills.size === 0) {
+    extensions.delete("skills");
+  } else if (turnedOn && change.extensions?.skills !== false) {
     extensions.add("skills");
   }
   return {

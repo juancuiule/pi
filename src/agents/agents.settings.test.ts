@@ -1,5 +1,5 @@
 // A conversation's settings: what turning extensions, tools and skills on or off does to what the model is offered.
-import { existsSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { Effect, Exit, Fiber, Stream, Tracer } from "effect";
@@ -327,5 +327,80 @@ describe("conversation settings", () => {
       "string",
       JSON.stringify([{ type: "tool", name: "calculate", on: false }]),
     ]);
+  });
+
+  it("leaves the Sandbox matching the last of two opposite toggles sent at once", async () => {
+    const { layer } = fauxAgents([], withSkills);
+
+    const outcomes = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create({ level: "shell" });
+          const seat = yield* agents.open(id);
+          const folder = path.join(
+            seat.sandbox?.id ?? "",
+            ".skills",
+            "unit-conversion"
+          );
+          return yield* Effect.forEach(Array.from({ length: 5 }), () =>
+            Effect.gen(function* () {
+              yield* Effect.all(
+                [
+                  agents.configure(id, {
+                    skills: { "unit-conversion": false },
+                  }),
+                  agents.configure(id, { skills: { "unit-conversion": true } }),
+                ],
+                { concurrency: "unbounded" }
+              );
+              const settings = yield* agents.agent(id);
+              const enabled =
+                settings.skills.find((s) => s.name === "unit-conversion")
+                  ?.enabled ?? false;
+              return enabled === existsSync(folder);
+            })
+          );
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(outcomes).toStrictEqual([true, true, true, true, true]);
+  });
+
+  it("replaces stale skill files on reset, and repairs a missing copy on any later change", async () => {
+    const { layer } = fauxAgents([], withSkills);
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create({ level: "shell" });
+          const seat = yield* agents.open(id);
+          const folder = path.join(
+            seat.sandbox?.id ?? "",
+            ".skills",
+            "unit-conversion"
+          );
+          // A stale extra file, and a missing one, as after a skill changed at its source.
+          writeFileSync(path.join(folder, "stale.txt"), "old");
+          rmSync(path.join(folder, "SKILL.md"));
+          yield* agents.reset(id);
+          const afterReset = [
+            existsSync(path.join(folder, "stale.txt")),
+            existsSync(path.join(folder, "SKILL.md")),
+          ];
+          // As after a copy that failed: the next change, even one about something else, makes it.
+          rmSync(folder, { recursive: true });
+          yield* agents.configure(id, { approvals: "auto" });
+          return {
+            afterReset,
+            repaired: existsSync(path.join(folder, "SKILL.md")),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(result).toStrictEqual({ afterReset: [false, true], repaired: true });
   });
 });

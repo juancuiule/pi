@@ -294,25 +294,19 @@ export class Skills extends Context.Service<
   );
 }
 
-/**
- * The `skill` tool and the section listing the skills, both reading the conversation's `SkillsDoc`. A conversation
- * stored before skills were recorded falls back to the current catalog.
- */
-export const skillsExtension = (skills: Skills["Service"]): Extension => {
-  const conversationSkills = async (
-    reader: DocumentReader,
-    conversationId: ConversationId,
-    context: ChordContext
-  ): Promise<readonly Skill[]> => {
-    const doc = await reader.snapshot(SkillsDoc, conversationId, context);
-    return (
-      doc?.skills ??
-      (await Effect.runPromise(
-        skills.catalog.pipe(Effect.map((c) => c.skills))
-      ))
-    );
-  };
-  return defineExtension({
+/** The skills a conversation recorded; every conversation records them when it is created, so none without. */
+const conversationSkills = async (
+  reader: DocumentReader,
+  conversationId: ConversationId,
+  context: ChordContext
+): Promise<readonly Skill[]> => {
+  const doc = await reader.snapshot(SkillsDoc, conversationId, context);
+  return doc?.skills ?? [];
+};
+
+/** The `skill` tool and the section listing the skills, both reading the conversation's `SkillsDoc`. */
+export const skillsExtension = (skills: Skills["Service"]): Extension =>
+  defineExtension({
     name: "skills",
     sections: [
       section("skills", async (input, context) =>
@@ -364,4 +358,3 @@ export const skillsExtension = (skills: Skills["Service"]): Extension => {
       }),
     ],
   });
-};
