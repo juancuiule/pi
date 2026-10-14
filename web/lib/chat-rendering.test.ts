@@ -162,7 +162,7 @@ describe("chat traces", () => {
     expect(html).not.toContain("&lt;harness&gt;");
   });
 
-  it("shows a write call as a numbered file block titled by its path", () => {
+  it("shows a write call as a file preview instead of a JSON blob", () => {
     const write = {
       type: "toolCall",
       id: "c1",
@@ -182,10 +182,7 @@ describe("chat traces", () => {
         },
       })
     );
-    expect(html).toContain('data-slot="code-block-title"');
-    expect(html).toContain("/workspace/factorial.py");
-    expect(html).toContain("def factorial(n):");
-    expect(html).toContain("data-numbered");
+    expect(html).toContain("<diffs-container");
     expect(html).not.toContain("&quot;content&quot;");
   });
 
@@ -209,13 +206,11 @@ describe("chat traces", () => {
         },
       })
     );
-    expect(html).toContain('data-variant="removed"');
-    expect(html).toContain('data-variant="added"');
-    expect(html).toContain("a = 1");
-    expect(html).toContain("a = 2");
+    expect(html).toContain("<diffs-container");
+    expect(html).not.toContain("&quot;edits&quot;");
   });
 
-  it("renders a finished edit's details.diff instead of its boilerplate text", () => {
+  it("renders a finished edit's details.patch instead of its boilerplate text", () => {
     const edit = {
       type: "toolCall",
       id: "c1",
@@ -233,7 +228,10 @@ describe("chat traces", () => {
       content: [
         { type: "text", text: "Successfully replaced 1 block(s) in /x.py." },
       ],
-      details: { diff: " 1 const x = 0\n-2 a = 1\n+2 a = 2\n 3 print(a)" },
+      details: {
+        patch:
+          "--- /x.py\n+++ /x.py\n@@ -1,3 +1,3 @@\n const x = 0\n-a = 1\n+a = 2\n print(a)",
+      },
       isError: true,
     } as unknown as Message;
     const html = renderToStaticMarkup(
@@ -242,10 +240,11 @@ describe("chat traces", () => {
         state: { ...initialState, entries: [entry(result)] },
       })
     );
-    expect(html).toContain('data-variant="removed"');
-    expect(html).toContain('data-variant="added"');
-    expect(html).toContain("/x.py");
+    expect(html).toContain("<diffs-container");
     expect(html).not.toContain("Successfully replaced");
+    // The patch supersedes the requested-hunks diff: one diff total, and Input falls back to the raw arguments.
+    expect(html.match(/<diffs-container/gu)).toHaveLength(1);
+    expect(html).toContain("&quot;edits&quot;");
   });
 
   it("keeps the Output section when diagnostics are the result's only content", () => {

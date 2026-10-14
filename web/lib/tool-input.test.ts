@@ -1,29 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  diffOf,
-  diffRowsOf,
-  editHunksOf,
-  fileLanguage,
-  isEditConfirmation,
-} from "./tool-input";
-
-describe(fileLanguage, () => {
-  it.each([
-    ["/workspace/factorial.py", "python"],
-    ["src/app.tsx", "tsx"],
-    ["a.TOML", "toml"],
-    ["Makefile", "text"],
-    ["notes.txt", "text"],
-    ["/a/b/unknown.qq", "text"],
-  ])("%s → %s", (path, language) => {
-    expect(fileLanguage(path)).toBe(language);
-  });
-
-  it("falls back to text without a path", () => {
-    expect(fileLanguage()).toBe("text");
-  });
-});
+import { editHunksOf, isEditConfirmation, patchOf } from "./tool-input";
 
 describe(editHunksOf, () => {
   it("reads the edits array", () => {
@@ -55,23 +32,14 @@ describe(editHunksOf, () => {
   });
 });
 
-describe(diffOf, () => {
-  it("reads a non-empty diff string from details", () => {
-    expect(diffOf({ diff: "+1 a" })).toBe("+1 a");
-    expect(diffOf({ diff: "" })).toBeUndefined();
-    expect(diffOf({})).toBeUndefined();
-    expect(diffOf("x")).toBeUndefined();
-  });
-});
-
-describe(diffRowsOf, () => {
-  it("classifies rows by their leading sigil", () => {
-    expect(diffRowsOf(" 1 ctx\n-2 old\n+2 new\n    ...")).toStrictEqual([
-      { variant: "default", text: "1 ctx" },
-      { variant: "removed", text: "2 old" },
-      { variant: "added", text: "2 new" },
-      { variant: "default", text: "   ..." },
-    ]);
+describe(patchOf, () => {
+  it("reads a non-empty patch string from details", () => {
+    expect(patchOf({ patch: "@@ -1 +1 @@\n-a\n+b" })).toBe(
+      "@@ -1 +1 @@\n-a\n+b"
+    );
+    expect(patchOf({ patch: "" })).toBeUndefined();
+    expect(patchOf({})).toBeUndefined();
+    expect(patchOf("x")).toBeUndefined();
   });
 });
 
