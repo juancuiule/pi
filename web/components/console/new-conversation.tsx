@@ -59,13 +59,11 @@ export const NewConversation = ({
       return;
     }
     create.mutate(
-      // Chat has no gated tools, so no policy is sent for it.
+      // Sent for chats too: the agent's upgrade_workspace is gated like commands.
       {
         sandbox,
         prompt: text,
-        ...(sandbox === "none"
-          ? {}
-          : { approvals: approvals ? ("ask" as const) : ("auto" as const) }),
+        approvals: approvals ? ("ask" as const) : ("auto" as const),
       },
       {
         onSuccess: (created) => onCreated(created.id),
@@ -125,24 +123,23 @@ export const NewConversation = ({
           </RadioGroup>
         </div>
       </fieldset>
-      {sandbox === "none" ? null : (
-        <div className="flex items-start gap-3">
-          <Switch
-            checked={approvals}
-            onCheckedChange={setApprovals}
-            className="mt-0.5"
-            aria-label="Ask before running commands"
-          />
-          <span className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium">
-              Ask before running commands
-            </span>
-            <span className="text-muted-foreground text-xs">
-              You approve each command, file change and desktop action.
-            </span>
+      <div className="flex items-start gap-3">
+        <Switch
+          checked={approvals}
+          onCheckedChange={setApprovals}
+          className="mt-0.5"
+          aria-label="Ask before running commands"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium">
+            Ask before running commands
           </span>
-        </div>
-      )}
+          <span className="text-muted-foreground text-xs">
+            You approve each command, file change and desktop action, and the
+            agent asking for a bigger machine.
+          </span>
+        </span>
+      </div>
       <Composer
         prompt={prompt}
         onPrompt={setPrompt}
