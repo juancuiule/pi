@@ -82,6 +82,11 @@ const ConversationsHandlers = HttpApiBuilder.group(
           .unarchive(params.id)
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
+      .handle("agent", ({ params }) =>
+        conversations
+          .agent(params.id)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
       .handle("events", ({ params }) =>
         conversations.events(params.id).pipe(
           Effect.map((events) => events.pipe(Stream.map(asJson), Stream.orDie)),

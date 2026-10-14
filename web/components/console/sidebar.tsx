@@ -220,7 +220,7 @@ export const Sidebar = ({
         </div>
       )}
       <div className="border-border flex flex-col gap-1.5 border-t p-2">
-        <CapabilitiesSheet />
+        <CapabilitiesSheet conversationId={selectedId} />
         <span
           className="text-muted-foreground block truncate font-mono text-xs"
           title={info?.model}

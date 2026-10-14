@@ -70,6 +70,52 @@ describe("HTTP API", () => {
     ]);
   });
 
+  it("lists every extension, and what one conversation runs with", async () => {
+    const { extensions, agent } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const capabilities = yield* client.info.capabilities();
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hi" },
+        });
+        return {
+          extensions: capabilities.extensions,
+          agent: yield* client.conversations.agent({
+            params: { id: created.id },
+          }),
+        };
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("ok")])])))
+    );
+
+    const byName = new Map(extensions.map((each) => [each.name, each]));
+    expect(
+      ["calculator", "coding-tools", "desktop", "workspace", "tracing"].map(
+        (name) => byName.get(name)?.levels
+      )
+    ).toStrictEqual([
+      ["none", "shell", "desktop"],
+      ["shell", "desktop"],
+      ["desktop"],
+      ["none", "shell", "desktop"],
+      ["none", "shell", "desktop"],
+    ]);
+    // Which tools wait for a decision under `ask`.
+    expect(
+      byName
+        .get("coding-tools")
+        ?.tools.map((tool) => [tool.name, tool.approval])
+    ).toStrictEqual([
+      ["read", false],
+      ["write", true],
+      ["edit", true],
+      ["bash", true],
+    ]);
+    expect([
+      agent.tools.map((tool) => tool.name).toSorted(),
+      agent.sections,
+    ]).toStrictEqual([["calculate", "upgrade_workspace"], ["workspace"]]);
+  });
+
   it("expands /skill: on create and refuses an unknown skill on send", async () => {
     const agents = fauxAgents(
       [

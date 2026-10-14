@@ -52,121 +52,132 @@ const STOPPED_ABORT_TIMEOUT_MS = 10_000;
 const withoutKey = <V>(record: Record<string, V>, key: string) =>
   Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
 
+// The tools `withApproval` returned, so the console can show which ones wait for a decision under `ask`.
+const gatedTools = new WeakSet<ToolRegistration>();
+
+/** True for a tool `withApproval` returned. */
+export const isGated = (tool: ToolRegistration): boolean =>
+  gatedTools.has(tool);
+
 /**
  * Wrap a gated tool: under `policy: "ask"` its execute waits for a decision committed to its
  * conversation's ApprovalDoc before running. The UI sees the call through `details.approval`.
  */
-export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
-  ...tool,
-  execute: async (args, api, context) => {
-    const key = approvalKey(api.conversationId, api.callId);
-    // Reading the policy and registering happen in one commit, so an "always" decision cannot land
-    // between them and leave this call waiting under a policy that is already `auto`.
-    const gated = await api.commit(async (tx) => {
-      const doc = await tx.doc(ApprovalDoc, api.conversationId);
-      if (doc.policy !== "ask") {
-        return false;
-      }
-      doc.pending[key] = {
-        conversationId: String(api.conversationId),
-        callId: api.callId,
-        tool: tool.name,
-        requestedAt: Date.now(),
-      };
-      return true;
-    }, context);
-    if (!gated) {
-      return tool.execute(args, api, context);
-    }
-
-    const signal = context.abortSignal;
-    // Declared before the try so the finally can always detach the listener and stop the watch.
-    let watch: DocumentWatch<ApprovalState> | undefined;
-    const waiting = Promise.withResolvers<"approve" | "deny" | "stop">();
-    const onAbort = () => {
-      waiting.reject(
-        signal?.reason instanceof Error ? signal.reason : new Error("aborted")
-      );
-    };
-    const removeEntry = () =>
-      api.commit(async (tx) => {
+export const withApproval = (tool: ToolRegistration): ToolRegistration => {
+  const wrapped: ToolRegistration = {
+    ...tool,
+    execute: async (args, api, context) => {
+      const key = approvalKey(api.conversationId, api.callId);
+      // Reading the policy and registering happen in one commit, so an "always" decision cannot land
+      // between them and leave this call waiting under a policy that is already `auto`.
+      const gated = await api.commit(async (tx) => {
         const doc = await tx.doc(ApprovalDoc, api.conversationId);
-        doc.pending = withoutKey(doc.pending, key);
-        doc.decisions = withoutKey(doc.decisions, key);
-      }, context);
-    try {
-      await api.details({ approval: "pending", approvalKey: key }, context);
-      const opened = await api.watchDoc(
-        ApprovalDoc,
-        api.conversationId,
-        context
-      );
-      // Fail closed: without a watch there is no way a decision can arrive, so the tool must not run.
-      if (opened === undefined) {
-        throw new Error("Could not wait for approval.");
-      }
-      watch = opened;
-      let decision = opened.value?.decisions[key];
-      if (decision === undefined) {
-        signal?.throwIfAborted();
-        signal?.addEventListener("abort", onAbort, { once: true });
-        // A closed watch (session close, retired doc) settles with no decision.
-        void (async () => {
-          await opened.closed;
-          waiting.reject(new Error("Approval watch closed."));
-        })();
-        opened.start((value) => {
-          const found = value?.decisions[key];
-          if (found === undefined) {
-            return Promise.resolve();
-          }
-          waiting.resolve(found);
-          return Promise.resolve();
-        });
-        decision = await waiting.promise;
-      }
-      signal?.removeEventListener("abort", onAbort);
-      await opened.stop();
-      if (decision === "stop") {
-        // The abort that follows builds this call's result from what it reported, so the reason is
-        // reported first; `details` commits the output with it. Removing the entry tells
-        // `stopWaitingCalls` the reason is saved and the abort can go ahead.
-        api.output(STOPPED);
-        await api.details({ approval: "stopped" }, context);
-        await removeEntry();
-        const aborted = Promise.withResolvers<boolean>();
-        const timer = setTimeout(
-          () => aborted.resolve(true),
-          STOPPED_ABORT_TIMEOUT_MS
-        );
-        if (signal === undefined || signal.aborted) {
-          aborted.resolve(true);
-        } else {
-          signal.addEventListener("abort", () => aborted.resolve(true), {
-            once: true,
-          });
+        if (doc.policy !== "ask") {
+          return false;
         }
-        await aborted.promise;
-        clearTimeout(timer);
-        throw new Error(STOPPED);
+        doc.pending[key] = {
+          conversationId: String(api.conversationId),
+          callId: api.callId,
+          tool: tool.name,
+          requestedAt: Date.now(),
+        };
+        return true;
+      }, context);
+      if (!gated) {
+        return tool.execute(args, api, context);
       }
-      if (decision === "deny") {
-        await api.details({ approval: "denied" }, context);
-        throw new Error(DENIED);
+
+      const signal = context.abortSignal;
+      // Declared before the try so the finally can always detach the listener and stop the watch.
+      let watch: DocumentWatch<ApprovalState> | undefined;
+      const waiting = Promise.withResolvers<"approve" | "deny" | "stop">();
+      const onAbort = () => {
+        waiting.reject(
+          signal?.reason instanceof Error ? signal.reason : new Error("aborted")
+        );
+      };
+      const removeEntry = () =>
+        api.commit(async (tx) => {
+          const doc = await tx.doc(ApprovalDoc, api.conversationId);
+          doc.pending = withoutKey(doc.pending, key);
+          doc.decisions = withoutKey(doc.decisions, key);
+        }, context);
+      try {
+        await api.details({ approval: "pending", approvalKey: key }, context);
+        const opened = await api.watchDoc(
+          ApprovalDoc,
+          api.conversationId,
+          context
+        );
+        // Fail closed: without a watch there is no way a decision can arrive, so the tool must not run.
+        if (opened === undefined) {
+          throw new Error("Could not wait for approval.");
+        }
+        watch = opened;
+        let decision = opened.value?.decisions[key];
+        if (decision === undefined) {
+          signal?.throwIfAborted();
+          signal?.addEventListener("abort", onAbort, { once: true });
+          // A closed watch (session close, retired doc) settles with no decision.
+          void (async () => {
+            await opened.closed;
+            waiting.reject(new Error("Approval watch closed."));
+          })();
+          opened.start((value) => {
+            const found = value?.decisions[key];
+            if (found === undefined) {
+              return Promise.resolve();
+            }
+            waiting.resolve(found);
+            return Promise.resolve();
+          });
+          decision = await waiting.promise;
+        }
+        signal?.removeEventListener("abort", onAbort);
+        await opened.stop();
+        if (decision === "stop") {
+          // The abort that follows builds this call's result from what it reported, so the reason is
+          // reported first; `details` commits the output with it. Removing the entry tells
+          // `stopWaitingCalls` the reason is saved and the abort can go ahead.
+          api.output(STOPPED);
+          await api.details({ approval: "stopped" }, context);
+          await removeEntry();
+          const aborted = Promise.withResolvers<boolean>();
+          const timer = setTimeout(
+            () => aborted.resolve(true),
+            STOPPED_ABORT_TIMEOUT_MS
+          );
+          if (signal === undefined || signal.aborted) {
+            aborted.resolve(true);
+          } else {
+            signal.addEventListener("abort", () => aborted.resolve(true), {
+              once: true,
+            });
+          }
+          await aborted.promise;
+          clearTimeout(timer);
+          throw new Error(STOPPED);
+        }
+        if (decision === "deny") {
+          await api.details({ approval: "denied" }, context);
+          throw new Error(DENIED);
+        }
+        if (decision !== "approve") {
+          throw new Error("No approval decision.");
+        }
+        await api.details({ approval: "approved" }, context);
+        return await tool.execute(args, api, context);
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+        await watch?.stop().catch((): void => undefined);
+        // Best-effort cleanup: the call may have been aborted, which makes the commit fail.
+        await removeEntry().catch((): void => undefined);
       }
-      if (decision !== "approve") {
-        throw new Error("No approval decision.");
-      }
-      await api.details({ approval: "approved" }, context);
-      return await tool.execute(args, api, context);
-    } finally {
-      signal?.removeEventListener("abort", onAbort);
-      await watch?.stop().catch((): void => undefined);
-      // Best-effort cleanup: the call may have been aborted, which makes the commit fail.
-      await removeEntry().catch((): void => undefined);
-    }
-  },
-});
+    },
+  };
+  gatedTools.add(wrapped);
+  return wrapped;
+};
 
 /** The subset of a pi-durable Harness that `stopWaitingCalls` uses. */
 type ApprovalHost = Pick<Harness, "commit" | "watchDoc">;

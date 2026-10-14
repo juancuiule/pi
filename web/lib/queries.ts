@@ -32,6 +32,18 @@ export const useCapabilities = () =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
+/** What one conversation runs with now; fetched while `enabled`, e.g. while the Capabilities sheet is open. */
+export const useConversationAgent = (
+  id: number | undefined,
+  enabled: boolean
+) =>
+  useQuery({
+    queryKey: ["agent", id],
+    queryFn: () =>
+      runApi((c) => c.conversations.agent({ params: { id: id ?? 0 } })),
+    enabled: enabled && id !== undefined,
+  });
+
 /** Every Conversation's summary, fetched now; for waiting on a status change. */
 export const fetchConversations = () => runApi((c) => c.conversations.list());
 

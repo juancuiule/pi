@@ -16,7 +16,7 @@ import {
 } from "effect";
 
 import { Agents } from "../agents/agents.ts";
-import type { AgentError, Seat } from "../agents/agents.ts";
+import type { AgentError, ConversationAgent, Seat } from "../agents/agents.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
@@ -143,6 +143,10 @@ export class Conversations extends Context.Service<
     unarchive(
       id: number
     ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** What a Conversation runs with now. */
+    agent(
+      id: number
+    ): Effect.Effect<ConversationAgent, AgentError | ConversationNotFound>;
     /** Events of any Conversation, with a Seat or not. */
     events(
       id: number
@@ -506,6 +510,7 @@ export class Conversations extends Context.Service<
           archive,
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),
+          agent: (id) => agents.agent(asId(id)),
           decide,
           capacity: capacity.usage,
         });

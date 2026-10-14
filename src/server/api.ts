@@ -52,7 +52,33 @@ export const ConversationSummary = Schema.Struct({
 });
 export type ConversationSummary = typeof ConversationSummary.Type;
 
+export const ToolInfo = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  /** Waits for a person's decision under the `ask` approval policy. */
+  approval: Schema.Boolean,
+});
+export type ToolInfo = typeof ToolInfo.Type;
+
+/** What one conversation runs with now. */
+export const ConversationAgent = Schema.Struct({
+  model: Schema.String,
+  extensions: Schema.Array(Schema.String),
+  tools: Schema.Array(ToolInfo),
+  sections: Schema.Array(Schema.String),
+});
+export type ConversationAgent = typeof ConversationAgent.Type;
+
 export const Capabilities = Schema.Struct({
+  extensions: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      levels: Schema.Array(SandboxChoice),
+      tools: Schema.Array(ToolInfo),
+      sections: Schema.Array(Schema.String),
+      hooks: Schema.Number,
+    })
+  ),
   skills: Schema.Array(
     Schema.Struct({
       name: Schema.String,
@@ -106,6 +132,12 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     params: ById,
     payload: Schema.Struct({ prompt: Schema.NonEmptyString }),
     error: [NotFound, Full, Archived, UnknownSkill],
+  }),
+  // What the conversation runs with now: model, extensions, tools and prompt sections.
+  HttpApiEndpoint.get("agent", "/conversations/:id/agent", {
+    params: ById,
+    success: ConversationAgent,
+    error: NotFound,
   }),
   // One pi-durable AgentEvent per SSE message: a snapshot first, then each commit's events.
   HttpApiEndpoint.get("events", "/conversations/:id/events", {

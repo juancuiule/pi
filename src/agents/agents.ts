@@ -13,6 +13,7 @@ import type {
   Extension,
   Harness as HarnessType,
   Storage,
+  ToolRegistration,
   WatchHandle,
 } from "@earendil-works/pi-durable";
 import {
@@ -37,7 +38,12 @@ import {
 } from "effect";
 
 import type { ApprovalPolicy } from "../approvals.ts";
-import { ApprovalDoc, clearApprovals, stopWaitingCalls } from "../approvals.ts";
+import {
+  ApprovalDoc,
+  clearApprovals,
+  isGated,
+  stopWaitingCalls,
+} from "../approvals.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, ClaimCancelled } from "../capacity.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
@@ -89,7 +95,35 @@ export class AgentError extends Schema.TaggedError<AgentError>()("AgentError", {
 const attempt = <A>(run: () => Promise<A>) =>
   Effect.tryPromise({ try: run, catch: (cause) => new AgentError({ cause }) });
 
+export interface ToolInfo {
+  readonly name: string;
+  readonly description: string;
+  /** Waits for a person's decision when the conversation's approval policy is `ask`. */
+  readonly approval: boolean;
+}
+
+export interface ExtensionInfo {
+  readonly name: string;
+  /** The Levels whose conversations select it; the skills extension only when there are skills. */
+  readonly levels: readonly SandboxChoice[];
+  readonly tools: readonly ToolInfo[];
+  /** Keys of the system prompt sections it adds. */
+  readonly sections: readonly string[];
+  /** How many task hooks it installs (tracing's spans, for example). */
+  readonly hooks: number;
+}
+
+/** What one conversation runs with now, as pi-durable resolves it. */
+export interface ConversationAgent {
+  readonly model: string;
+  readonly extensions: readonly string[];
+  readonly tools: readonly ToolInfo[];
+  readonly sections: readonly string[];
+}
+
 export interface Capabilities {
+  /** Every installed extension, with what it gives the agent. */
+  readonly extensions: readonly ExtensionInfo[];
   readonly skills: readonly {
     readonly name: string;
     readonly description: string;
@@ -124,6 +158,14 @@ const withExtensions = async (
     context
   );
 };
+
+const LEVELS: readonly SandboxChoice[] = ["none", "shell", "desktop"];
+
+const toolInfo = (tool: ToolRegistration): ToolInfo => ({
+  name: tool.name,
+  description: tool.description,
+  approval: isGated(tool),
+});
 
 /** Levels in the order an Upgrade goes. */
 const rank: Record<SandboxChoice, number> = { none: 0, shell: 1, desktop: 2 };
@@ -262,8 +304,12 @@ export class Agents extends Context.Service<
   {
     /** The model new conversations run on; /api/info reports it. */
     readonly model: AgentModel;
-    /** The skills and MCP servers conversations can use, for the console. */
+    /** The extensions, skills and MCP servers conversations can use, for the console. */
     readonly capabilities: Effect.Effect<Capabilities>;
+    /** What a conversation runs with now: its model, extensions, tools and prompt sections. */
+    agent(
+      id: ConversationId
+    ): Effect.Effect<ConversationAgent, AgentError | ConversationNotFound>;
     /**
      * Record a new Conversation, with the skills the source has now. Fails `SkillNotFound`, creating nothing, when
      * `prompt` (its first prompt, sent later through its Seat) forces an unknown skill.
@@ -414,6 +460,20 @@ export class Agents extends Context.Service<
           );
         });
         registry.install(workspaceExt);
+        // Every installed extension, for the console; and those every conversation selects, whatever its Level.
+        const installed = [
+          ...extensionsFor("desktop", desktop),
+          workspaceExt,
+          skillsExt,
+          mcp.extension,
+          tracing.extension,
+        ];
+        const everyLevel = new Set<Extension>([
+          workspaceExt,
+          skillsExt,
+          mcp.extension,
+          tracing.extension,
+        ]);
 
         // The harness is opened when the layer is built and closed when it is torn down.
         const harness = yield* Effect.acquireRelease(
@@ -965,13 +1025,55 @@ export class Agents extends Context.Service<
               modelInvocable: !skill.disableModelInvocation,
             })),
             mcp: mcp.servers,
+            extensions: installed.map((extension): ExtensionInfo => ({
+              name: extension.name,
+              levels: LEVELS.filter(
+                (level) =>
+                  extensionsFor(level, desktop).includes(extension) ||
+                  everyLevel.has(extension)
+              ),
+              tools: (extension.tools ?? []).map(toolInfo),
+              sections: (extension.sections ?? []).map(
+                (section) => section.key
+              ),
+              hooks: extension.hooks?.length ?? 0,
+            })),
           })),
           Effect.orDie
         );
 
+        // Gated tools by name: the resolved agent's tools may be wrapped copies of the installed ones.
+        const gatedNames = new Set(
+          installed.flatMap((extension) =>
+            (extension.tools ?? []).flatMap((tool) =>
+              isGated(tool) ? [tool.name] : []
+            )
+          )
+        );
+
+        const agentOf = Effect.fn("Agents.agent")(function* (
+          id: ConversationId
+        ) {
+          const handle = yield* handleOf(id);
+          const agent = yield* attempt(() => handle.agent(context));
+          return {
+            model:
+              agent.model === undefined
+                ? ""
+                : `${agent.model.provider}/${agent.model.modelId}`,
+            extensions: agent.extensions.map((extension) => extension.name),
+            tools: agent.tools.map((tool) => ({
+              ...toolInfo(tool),
+              approval: gatedNames.has(tool.name),
+            })),
+            sections: agent.sections.map((section) => section.key),
+          } satisfies ConversationAgent;
+        });
+
         return Agents.of({
           model: options.model,
           capabilities,
+          agent: agentOf,
           create,
           open,
           upgrade: upgradeStored,
