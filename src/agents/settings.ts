@@ -214,12 +214,15 @@ export const isProblem = (
 export type SettingsEvent =
   | { type: "approvals"; policy: ApprovalPolicy }
   | { type: "level"; from: SandboxChoice; to: SandboxChoice }
+  // `provider/modelId`; `from` is "" for a conversation that had no model.
+  | { type: "model"; from: string; to: string }
   | { type: "extension" | "tool" | "skill"; name: string; on: boolean };
 
 /** What a conversation records when its settings change: who changed them and how. */
 // oxlint-disable-next-line typescript/consistent-type-definitions
 export type SettingsRecord = {
-  by: "person" | "agent";
+  /** `server` when the server changed them itself, as when a conversation's model is no longer available. */
+  by: "person" | "agent" | "server";
   /** True for a reset to the Level's defaults. */
   reset?: boolean;
   changes: SettingsEvent[];

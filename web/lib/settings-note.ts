@@ -1,16 +1,18 @@
 // The line the transcript shows for a settings record (an `app.settings` entry): who changed what.
-const LEVEL = {
+const LEVEL: Readonly<Record<string, string>> = {
   none: "a chat",
   shell: "a shell",
   desktop: "a desktop",
-} as const;
+};
 
 interface Change {
   readonly type: string;
   readonly name?: string;
   readonly on?: boolean;
   readonly policy?: string;
-  readonly to?: keyof typeof LEVEL;
+  /** A Level, or `provider/modelId` for a model change. */
+  readonly from?: string;
+  readonly to?: string;
 }
 
 const describe = (change: Change): string => {
@@ -21,7 +23,11 @@ const describe = (change: Change): string => {
         : "approvals off (auto)";
     }
     case "level": {
-      return `upgraded to ${LEVEL[change.to ?? "none"]}`;
+      const to = change.to ?? "none";
+      return `upgraded to ${LEVEL[to] ?? to}`;
+    }
+    case "model": {
+      return `model ${change.to ?? "?"}`;
     }
     default: {
       return `${change.name ?? "?"} ${change.on === true ? "on" : "off"}`;
@@ -39,11 +45,17 @@ export const settingsNote = (data: unknown): string | undefined => {
     readonly reset?: boolean;
     readonly changes: readonly Change[];
   };
+  const [only] = record.changes;
+  // The server moves a conversation off a model it does not have.
+  if (record.changes.length === 1 && only?.type === "model") {
+    const from =
+      only.from === undefined || only.from === "" ? "" : `${only.from} `;
+    return `Switched to ${only.to ?? "?"}: the model ${from}is not available`;
+  }
   const who = record.by === "agent" ? "The agent" : "You";
   if (record.reset === true) {
     return `${who} reset the settings to their defaults`;
   }
-  const [only] = record.changes;
   if (record.changes.length === 1 && only?.type === "level") {
     return `${who} ${describe(only)}`;
   }

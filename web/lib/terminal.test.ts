@@ -1,4 +1,4 @@
-import type { AgentEvent, EntryRecord } from "effect-pi/api";
+import type { ConversationEvent, EntryRecord } from "effect-pi/api";
 import { describe, expect, it } from "vitest";
 
 import { applyEvent, initialState } from "./conversation-state";
@@ -12,13 +12,13 @@ const entry = (id: number, message: unknown) =>
     model: [message],
   }) as unknown as EntryRecord;
 
-const run = (messages: unknown[], update?: AgentEvent) => {
+const run = (messages: unknown[], update?: ConversationEvent) => {
   let state = initialState;
   for (const [i, m] of messages.entries()) {
     state = applyEvent(state, {
       type: "entry_appended",
       entry: entry(i + 1, m),
-    } as AgentEvent);
+    } as ConversationEvent);
   }
   return update === undefined ? state : applyEvent(state, update);
 };
@@ -86,7 +86,7 @@ describe(terminalText, () => {
     ];
     let state = initialState;
     for (const event of events) {
-      state = applyEvent(state, event as AgentEvent);
+      state = applyEvent(state, event as ConversationEvent);
     }
 
     expect(terminalText(state)).toBe(
@@ -141,7 +141,7 @@ describe(terminalText, () => {
     state = applyEvent(state, {
       type: "entry_appended",
       entry: resultEntry,
-    } as AgentEvent);
+    } as ConversationEvent);
     expect(terminalText(state)).toBe(
       "$ ls missing\r\nls: missing: No such file"
     );
@@ -189,7 +189,7 @@ describe(terminalText, () => {
         toolName: "bash",
         output: { set: "step 1" },
         details: { ansi: "\u001B[36mstep 1\u001B[0m" },
-      } as AgentEvent
+      } as ConversationEvent
     );
     expect(terminalText(state)).toBe("$ make\r\n\u001B[36mstep 1\u001B[0m");
   });
@@ -214,7 +214,7 @@ describe(terminalText, () => {
         toolCallId: "a",
         toolName: "bash",
         details: { approval: "pending", approvalKey: "1:a" },
-      } as AgentEvent
+      } as ConversationEvent
     );
     expect(terminalText(state)).toBe("$ pwd\r\n/work");
   });

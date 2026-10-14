@@ -2,7 +2,7 @@
 // its Capacity claim, its Sandbox and the fiber that tracks whether a Run is going. Pause closes that scope; the
 // Conversation and its Workspace's files stay, and `send` or `resume` gives it a new Seat. Every Conversation is
 // paused after a restart.
-import type { AgentEvent, ConversationId } from "@earendil-works/pi-durable";
+import type { ConversationId } from "@earendil-works/pi-durable";
 import {
   Clock,
   Context,
@@ -21,6 +21,7 @@ import type { SettingsChange } from "../agents/settings.ts";
 import type { ApprovalChoice } from "../approvals.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
+import type { ConversationEvent } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
 import { ApprovalNotFound, ConversationArchived } from "../errors.ts";
 import type {
@@ -173,7 +174,7 @@ export class Conversations extends Context.Service<
     events(
       id: number
     ): Effect.Effect<
-      Stream.Stream<AgentEvent, AgentError>,
+      Stream.Stream<ConversationEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
     /** Decide a call waiting for approval; only a Seat has any, so without one every key is unknown. */

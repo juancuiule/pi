@@ -1,7 +1,13 @@
 // A conversation's settings: what turning extensions, tools and skills on or off does to what the model is offered.
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
+import {
+  fauxAssistantMessage,
+  fauxText,
+} from "@earendil-works/pi-ai/providers/faux";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { Effect, Exit, Fiber, Layer, Stream, Tracer } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -31,6 +37,15 @@ const create = (
       createdAt: 0,
       ...options,
     });
+  });
+
+/** The first event of a conversation's stream, its snapshot. */
+const snapshotOf = (id: Parameters<(typeof Agents)["Service"]["open"]>[0]) =>
+  Effect.gen(function* () {
+    const agents = yield* Agents;
+    const events = yield* agents.events(id);
+    const [first] = yield* events.pipe(Stream.take(1), Stream.runCollect);
+    return first?.type === "snapshot" ? first : undefined;
   });
 
 describe("conversation settings", () => {
@@ -439,5 +454,90 @@ describe("conversation settings", () => {
     );
 
     expect(result).toStrictEqual({ kept: true, listed: false, deleted: true });
+  });
+
+  it("moves a conversation off a model the server no longer has, and keeps the unanswered input", async () => {
+    const dbFile = path.join(
+      mkdtempSync(path.join(tmpdir(), "model-")),
+      "db.sqlite"
+    );
+    // One Agents layer over the same database per server run, with its configured model.
+    const run = <A, E>(
+      model: { provider: string; modelId: string },
+      program: Effect.Effect<A, E, Agents>
+    ) =>
+      Effect.promise(() => openNodeSqliteStorage(dbFile)).pipe(
+        Effect.flatMap((storage) =>
+          program.pipe(
+            Effect.provide(
+              fauxAgents([fauxAssistantMessage([fauxText("answered")])], {
+                storage,
+                model,
+              }).layer
+            )
+          )
+        )
+      );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        // Created with a model this server does not have, and the configured one is missing too: no answer.
+        const first = yield* run(
+          { provider: "faux", modelId: "gone" },
+          Effect.scoped(
+            Effect.gen(function* () {
+              const id = yield* create();
+              const seat = yield* (yield* Agents).open(id);
+              const failed = yield* Effect.exit(seat.ask("hello"));
+              const snapshot = yield* snapshotOf(id);
+              return { id, failed: Exit.isFailure(failed), snapshot };
+            })
+          )
+        );
+        // The next server has a model: opening the conversation moves it there.
+        const second = yield* run(
+          { provider: "faux", modelId: "faux-1" },
+          Effect.scoped(
+            Effect.gen(function* () {
+              const agents = yield* Agents;
+              const seat = yield* agents.open(first.id);
+              const answer = yield* seat.ask("again");
+              const { model } = yield* agents.agent(first.id);
+              const snapshot = yield* snapshotOf(first.id);
+              return { answer, model, snapshot };
+            })
+          )
+        );
+        return { first, second };
+      })
+    );
+
+    const userEntry = result.first.snapshot?.entries.find(
+      (entry) => entry.kind === "pi.user"
+    )?.id;
+    expect({
+      failed: result.first.failed,
+      unanswered: result.first.snapshot?.unanswered,
+    }).toStrictEqual({
+      failed: true,
+      unanswered: [{ entry: userEntry, reason: "no_model" }],
+    });
+    expect({
+      answer: result.second.answer,
+      model: result.second.model,
+      records: result.second.snapshot?.entries
+        .filter((entry) => entry.kind === SETTINGS_ENTRY)
+        .map((entry) => entry.data),
+      unanswered: result.second.snapshot?.unanswered,
+    }).toStrictEqual({
+      answer: "answered",
+      model: "faux/faux-1",
+      records: [
+        {
+          by: "server",
+          changes: [{ type: "model", from: "faux/gone", to: "faux/faux-1" }],
+        },
+      ],
+      unanswered: [{ entry: userEntry, reason: "no_model" }],
+    });
   });
 });

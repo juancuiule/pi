@@ -107,6 +107,8 @@ The user picks a Level (`none`, `shell` or `desktop`) when a conversation starts
 - `MODEL_ID` overrides the default model: `claude-sonnet-5-5`, `alibaba/qwen3.8-27b`, `gpt-5.5`, `qwen3.5:4b-64k`.
 - `OLLAMA_URL`: the Ollama server, `http://192.168.1.20:11434` by default (a LAN machine).
 
+A conversation keeps the model it was created with. When a Seat opens and this server does not have that model (the configuration changed since), `Agents.open` moves the conversation to the configured one and records an `app.settings` entry `by: "server"`, instead of every request failing with `no_model`.
+
 Ollama goes through its OpenAI-compatible API. The model's tools, vision, thinking and context size are read from Ollama's `/api/show` at startup; a model without `num_ctx` set is assumed to have a 4096-token context.
 
 ## Observability
@@ -128,7 +130,7 @@ Agents are traced with Effect spans, exported to Langfuse over OTLP.
   - `api.ts`: the `HttpApi` definition, shared with `web/` as `effect-pi/api`, with no runtime pi imports;
   - `handlers.ts`;
   - `faux.ts`: echo model, used when no model is configured.
-- Events: `Agents.events(id)` wraps pi-durable's `watchEvents` and attaches its watch when the effect runs, not when the stream is run. The returned stream is single-use and must be run; interrupting it stops the watch. SSE sends one `AgentEvent` per message, `snapshot` first.
+- Events: `Agents.events(id)` wraps pi-durable's `watchEvents` and attaches its watch when the effect runs, not when the stream is run. The returned stream is single-use and must be run; interrupting it stops the watch. SSE sends one `ConversationEvent` per message (`src/conversation-events.ts`), `snapshot` first; the snapshot adds `unanswered`, the user messages whose run ended without an answer (read from storage's submissions), and live `submission` events add to it. The console shows the reason under the message (`web/lib/unanswered-note.ts`). pi-durable emits `task_failed` only for faulted or orphaned tasks, so a generation that fails (`no_model`, `model_error`) shows only this way.
 - `web/`: Next.js App Router, shadcn, and TanStack Query for REST (`web/lib/queries.ts`). A Zustand store (`web/lib/store.ts`) is fed by the pure `applyEvent` in `web/lib/conversation-state.ts`.
   - `web/lib/subscribe.ts` and `refcount.ts`: one shared SSE subscription per conversation id, stopped when its last caller unsubscribes. It reconnects after a drop and stops on a 404 (`ConversationNotFound`). Each subscription holds one of the browser's 6 connections per host.
   - `terminal.ts` and `vnc.ts`: pure helpers for the terminal text and the noVNC URL. `export.ts` builds the header menu's Markdown/JSON Lines downloads (`ansi` details supply terminal colors; tool cards stay clean).

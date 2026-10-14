@@ -20,6 +20,11 @@ import {
 
 export type { AssistantMessage, Message, Usage } from "@earendil-works/pi-ai";
 export type {
+  ConversationEvent,
+  ConversationSnapshot,
+  UnansweredInput,
+} from "../conversation-events.ts";
+export type {
   AgentEvent,
   EntryRecord,
   MessageChange,
@@ -198,7 +203,7 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     success: ConversationAgent,
     error: [NotFound, Invalid],
   }),
-  // One pi-durable AgentEvent per SSE message: a snapshot first, then each commit's events.
+  // One ConversationEvent per SSE message: a snapshot first, then each commit's events.
   HttpApiEndpoint.get("events", "/conversations/:id/events", {
     params: ById,
     success: HttpApiSchema.StreamSse({ data: Schema.Json }),

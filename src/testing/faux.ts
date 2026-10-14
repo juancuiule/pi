@@ -11,6 +11,7 @@ import type { Storage } from "@earendil-works/pi-durable";
 import { Effect, Layer } from "effect";
 
 import { Agents } from "../agents/agents.ts";
+import type { AgentModel } from "../agents/agents.ts";
 import type { ApprovalPolicy } from "../approvals.ts";
 import { Capacity } from "../capacity.ts";
 import type { Limits } from "../capacity.ts";
@@ -32,6 +33,8 @@ export const fauxAgents = (
     readonly mcpConnectTimeoutMs?: number;
     /** Capacity limits; the layer provides that Capacity too, for a Conversations layer to share. */
     readonly limits?: Partial<Limits>;
+    /** The configured model; the faux provider has only `faux/faux-1`, the default. */
+    readonly model?: AgentModel;
   } = {}
 ) => {
   const models = createModels();
@@ -44,7 +47,7 @@ export const fauxAgents = (
     sandboxes,
     layer: Agents.layer({
       models,
-      model: { provider: "faux", modelId: "faux-1" },
+      model: options.model ?? { provider: "faux", modelId: "faux-1" },
       ...(options.storage === undefined ? {} : { storage: options.storage }),
       ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
       ...(options.mcpConnectTimeoutMs === undefined

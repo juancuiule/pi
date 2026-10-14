@@ -107,6 +107,7 @@ const state: ConversationState = {
   queued: 0,
   usage: undefined,
   failures: [],
+  unanswered: {},
 };
 
 describe(exportSlug, () => {

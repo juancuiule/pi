@@ -3,9 +3,11 @@
 import type {
   AgentEvent,
   AssistantMessage,
+  ConversationEvent,
   EntryRecord,
   Message,
   MessageChange,
+  UnansweredInput,
   UsageState,
 } from "effect-pi/api";
 
@@ -25,6 +27,8 @@ export interface ConversationState {
   readonly queued: number;
   readonly usage: UsageState | undefined;
   readonly failures: readonly string[];
+  /** User messages whose run ended without an answer, by entry id. */
+  readonly unanswered: Readonly<Record<number, UnansweredInput>>;
 }
 
 export const initialState: ConversationState = {
@@ -35,6 +39,7 @@ export const initialState: ConversationState = {
   queued: 0,
   usage: undefined,
   failures: [],
+  unanswered: {},
 };
 
 const withEntry = (
@@ -120,9 +125,30 @@ const withTool = (
   return { ...state, tools: { ...state.tools, [callId]: change(tool) } };
 };
 
+/** A submission that settled: an input left without an answer is kept, by its entry. */
+const withSettled = (
+  state: ConversationState,
+  record: Extract<AgentEvent, { type: "submission" }>["record"]
+): ConversationState =>
+  record.type === "input" &&
+  record.status === "unanswered" &&
+  record.entry !== undefined
+    ? {
+        ...state,
+        unanswered: {
+          ...state.unanswered,
+          [record.entry]: {
+            entry: record.entry,
+            reason: record.reason,
+            ...(record.detail === undefined ? {} : { detail: record.detail }),
+          },
+        },
+      }
+    : state;
+
 export const applyEvent = (
   state: ConversationState,
-  event: AgentEvent
+  event: ConversationEvent
 ): ConversationState => {
   switch (event.type) {
     case "snapshot": {
@@ -133,6 +159,9 @@ export const applyEvent = (
         running: event.run !== undefined,
         queued: event.inbox.length,
         usage: event.usage,
+        unanswered: Object.fromEntries(
+          event.unanswered.map((input) => [input.entry, input])
+        ),
         tools: Object.fromEntries(
           event.tools.map((slot) => [
             slot.callId,
@@ -210,6 +239,9 @@ export const applyEvent = (
     }
     case "usage_changed": {
       return { ...state, usage: event.usage };
+    }
+    case "submission": {
+      return withSettled(state, event.record);
     }
     case "task_failed": {
       return {

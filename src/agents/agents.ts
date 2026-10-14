@@ -5,7 +5,6 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
 import type {
-  AgentEvent,
   Conversation,
   ConversationId,
   Cursor,
@@ -49,6 +48,10 @@ import {
 } from "../approvals.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, ClaimCancelled } from "../capacity.ts";
+import type {
+  ConversationEvent,
+  UnansweredInput,
+} from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
 import { MetaDoc } from "../conversation-meta.ts";
 import type { CapacityExhausted, SkillNotFound } from "../errors.ts";
@@ -433,7 +436,7 @@ export class Agents extends Context.Service<
     events(
       id: ConversationId
     ): Effect.Effect<
-      Stream.Stream<AgentEvent, AgentError>,
+      Stream.Stream<ConversationEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
   }
@@ -592,11 +595,13 @@ export class Agents extends Context.Service<
           () => SandboxInfo | undefined
         >();
 
+        // Read directly only for what the harness does not expose: a conversation's unanswered inputs.
+        const durableStorage = options.storage ?? new MemoryStorage();
         // The harness is opened when the layer is built and closed when it is torn down.
         const harness = yield* Effect.acquireRelease(
           attempt(() =>
             Harness.open(
-              options.storage ?? new MemoryStorage(),
+              durableStorage,
               {
                 models: options.models,
                 registry,
@@ -657,6 +662,39 @@ export class Agents extends Context.Service<
             )
           );
         });
+
+        // The inputs of a conversation whose runs ended without an answer, in paged scans; pages are sequential
+        // because each needs the previous cursor.
+        const unansweredInputs = async (
+          id: ConversationId,
+          cursor?: Cursor,
+          found: UnansweredInput[] = []
+        ): Promise<UnansweredInput[]> => {
+          const page = await durableStorage.scanSubmissions(
+            { conversationId: id, status: "unanswered" },
+            500,
+            cursor,
+            context
+          );
+          for (const record of page.items) {
+            if (
+              record.status === "unanswered" &&
+              record.type === "input" &&
+              record.entry !== undefined
+            ) {
+              found.push({
+                entry: record.entry,
+                reason: record.reason,
+                ...(record.detail === undefined
+                  ? {}
+                  : { detail: record.detail }),
+              });
+            }
+          }
+          return page.next === undefined
+            ? found
+            : unansweredInputs(id, page.next, found);
+        };
 
         const handleOf = Effect.fnUntraced(function* (id: ConversationId) {
           const handle = yield* attempt(() =>
@@ -754,6 +792,45 @@ export class Agents extends Context.Service<
               record(id, { by, changes: [{ type: "level", from, to }] })
             )
           );
+
+        // A conversation keeps the model it was created with. When this server does not have it (the configuration
+        // changed since), the conversation moves to the configured model, recorded like a settings change, instead
+        // of failing every request with `no_model`.
+        const ensureModel = (id: ConversationId) =>
+          Effect.gen(function* () {
+            const configured = options.model;
+            const available = (model: AgentModel | undefined) =>
+              model !== undefined &&
+              options.models.getModel(model.provider, model.modelId) !==
+                undefined;
+            if (!available(configured)) {
+              return;
+            }
+            const from = yield* attempt(() =>
+              harness.commit(async (tx) => {
+                const agent = await tx.doc(AgentDoc, id);
+                const current = agent.model;
+                if (available(current)) {
+                  return;
+                }
+                await configure(tx, id, { model: { ...configured } });
+                return current === undefined
+                  ? ""
+                  : `${current.provider}/${current.modelId}`;
+              }, context)
+            );
+            if (from === undefined) {
+              return;
+            }
+            const to = `${configured.provider}/${configured.modelId}`;
+            yield* Effect.logInfo(
+              `Conversation ${id} moved to ${to}: ${from || "its model"} is not available`
+            );
+            yield* record(id, {
+              by: "server",
+              changes: [{ type: "model", from, to }],
+            });
+          });
 
         // One lock per conversation for what changes its settings or its Sandbox's skills: settings changes, Seats
         // opening and Upgrades. Commits are ordered anyway; the lock also orders what follows them (the Sandbox's
@@ -903,6 +980,7 @@ export class Agents extends Context.Service<
           if (meta?.meta?.archivedAt !== undefined) {
             return yield* new ConversationArchived({ id: Number(id) });
           }
+          yield* locked(id, ensureModel(id));
           const workspace = yield* attempt(() =>
             harness.snapshot(WorkspaceDoc, id, context)
           );
@@ -1289,13 +1367,31 @@ export class Agents extends Context.Service<
           // the stream's finalizer stops it.
           return yield* Effect.uninterruptible(
             Effect.gen(function* () {
-              const queue = yield* Queue.unbounded<AgentEvent, Cause.Done>();
+              const queue = yield* Queue.unbounded<
+                ConversationEvent,
+                Cause.Done
+              >();
               const watch = yield* attempt(() =>
                 watchEvents(harness, id, context)
               );
-              Queue.offerUnsafe(queue, watch.snapshot);
+              // Read after the watch attached: an input settled since arrives as a `submission` event as well.
+              const unanswered = yield* Effect.exit(
+                attempt(() => unansweredInputs(id))
+              );
+              if (Exit.isFailure(unanswered)) {
+                yield* Effect.promise(() => watch.stop());
+                return yield* Effect.failCause(unanswered.cause);
+              }
+              Queue.offerUnsafe(queue, {
+                ...watch.snapshot,
+                unanswered: unanswered.value,
+              });
               watch.start((batch) => {
-                Queue.offerAllUnsafe(queue, batch);
+                // Only the first event is a snapshot; batches never carry one.
+                Queue.offerAllUnsafe(
+                  queue,
+                  batch.filter((event) => event.type !== "snapshot")
+                );
                 return Promise.resolve();
               });
               void (async () => {
