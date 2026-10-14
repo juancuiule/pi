@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { formatCost, formatTokens, relativeTime } from "./format";
+import {
+  formatCost,
+  formatDuration,
+  formatTokens,
+  relativeTime,
+} from "./format";
 
 describe(formatCost, () => {
   it("formats zero, fractions of a cent and normal amounts", () => {
@@ -37,6 +42,24 @@ describe(formatTokens, () => {
       [1_200_000, "1.2M"],
     ];
     expect(cases.map(([input]) => formatTokens(input))).toStrictEqual(
+      cases.map(([, expected]) => expected)
+    );
+  });
+});
+
+describe(formatDuration, () => {
+  it("shows tenths under ten seconds, whole seconds under a minute, then minutes", () => {
+    const cases: [number, string][] = [
+      [0, "0s"],
+      [-5, "0s"],
+      [400, "0.4s"],
+      [2400, "2.4s"],
+      [9999, "10s"],
+      [42_000, "42s"],
+      [65_000, "1m 5s"],
+      [600_000, "10m 0s"],
+    ];
+    expect(cases.map(([input]) => formatDuration(input))).toStrictEqual(
       cases.map(([, expected]) => expected)
     );
   });

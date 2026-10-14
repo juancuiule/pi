@@ -151,6 +151,31 @@ describe(applyEvent, () => {
     expect(toolResultOf(ended, "c1")).toMatchObject({ role: "toolResult" });
   });
 
+  it("stamps a call's start and end so its line can show a duration", () => {
+    const started = applyEvent(
+      initialState,
+      {
+        type: "tool_execution_start",
+        toolCallId: "c1",
+        toolName: "bash",
+        args: {},
+      } as ConversationEvent,
+      1000
+    );
+    expect(started.tools.c1?.startedAt).toBe(1000);
+
+    const ended = applyEvent(
+      started,
+      {
+        type: "tool_execution_end",
+        toolCallId: "c1",
+        toolName: "bash",
+      } as ConversationEvent,
+      3400
+    );
+    expect(ended.tools.c1?.endedAt).toBe(3400);
+  });
+
   it("records task failures and queued prompts", () => {
     const state = fold([
       snapshot([]),

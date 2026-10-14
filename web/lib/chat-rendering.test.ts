@@ -365,6 +365,40 @@ describe("chat traces", () => {
     }
   );
 
+  it("shows the elapsed time ticking on a running call's line", () => {
+    const html = toolCall({
+      ...initialState,
+      running: true,
+      tools: { c1: { ...tool, startedAt: Date.now() - 2400 } },
+    });
+    expect(html).toContain("Running · 2.4s");
+  });
+
+  it("shows a finished call's duration, and none for a snapshot-restored one", () => {
+    const result = {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "bash",
+      content: [{ type: "text", text: "ok" }],
+    } as unknown as Message;
+    const timed = toolCall({
+      ...initialState,
+      entries: [entry(result)],
+      tools: {
+        c1: { ...tool, status: "done", startedAt: 1000, endedAt: 3400 },
+      },
+    });
+    expect(timed).toContain("2.4s");
+    expect(timed).not.toContain("Running");
+
+    const restored = toolCall({
+      ...initialState,
+      entries: [entry(result)],
+      tools: { c1: { ...tool, status: "done" } },
+    });
+    expect(restored).not.toContain("trace-description");
+  });
+
   it("does not leave an interrupted tool shimmering", () => {
     const html = toolCall({ ...initialState, tools: { c1: tool } });
     expect(html).toContain("Stopped");

@@ -27,6 +27,18 @@ export const formatTokens = (n: number): string => {
   return `${trimDecimal(n / 1_000_000)}M`;
 };
 
+/** Elapsed milliseconds: "0.4s" under ten seconds, "12s" under a minute, then "1m 5s". */
+export const formatDuration = (ms: number): string => {
+  const seconds = Math.max(0, ms / 1000);
+  if (seconds < 10) {
+    return `${trimDecimal(seconds)}s`;
+  }
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  }
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+};
+
 const dateFormat = new Intl.DateTimeFormat("en", {
   month: "short",
   day: "numeric",

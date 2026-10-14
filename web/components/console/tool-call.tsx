@@ -3,7 +3,7 @@
 import type { ApprovalChoice, Message } from "effect-pi/api";
 import { CircleAlert, Info, LoaderCircle, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { createElement, useState } from "react";
+import { createElement, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -31,6 +31,7 @@ import { toolResultEntryOf, toolResultOf } from "@/lib/conversation-state";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
 import type { ToolDiagnostic } from "@/lib/diagnostics";
 import { diagnosticsOf, visibleResultContent } from "@/lib/diagnostics";
+import { formatDuration } from "@/lib/format";
 import { editHunksOf, isEditConfirmation, patchOf } from "@/lib/tool-input";
 import { toolSummary } from "@/lib/tool-summary";
 import { cn } from "@/lib/utils";
@@ -273,6 +274,34 @@ const LINE_STATUS: Record<
   done: undefined,
 };
 
+/**
+ * The call's measured clock: ticks while a measured call is live, freezes at `endedAt` once done, and stays
+ * undefined for snapshot-restored slots, which carry no timing.
+ */
+const useElapsed = (
+  step: CallState,
+  tool: ToolRun | undefined
+): string | undefined => {
+  const startedAt = tool?.startedAt;
+  const endedAt = tool?.endedAt;
+  const live =
+    startedAt !== undefined &&
+    endedAt === undefined &&
+    (step === "running" || step === "awaiting");
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) {
+      return;
+    }
+    const interval = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(interval);
+  }, [live]);
+  if (startedAt === undefined) {
+    return undefined;
+  }
+  return formatDuration(Math.max(0, (endedAt ?? now) - startedAt));
+};
+
 const Section = ({
   label,
   children,
@@ -406,6 +435,8 @@ export const ToolCall = ({
     approval.awaiting
   );
 
+  const elapsed = useElapsed(step, tool);
+
   return (
     <TraceCollapsible open={open} onOpenChange={setOpen}>
       <TraceCollapsibleTrigger>
@@ -419,8 +450,12 @@ export const ToolCall = ({
               <span className="font-mono"> {summary}</span>
             )}
           </TraceTitle>
-          {labelNode === undefined ? null : (
-            <TraceDescription>{labelNode}</TraceDescription>
+          {labelNode === undefined && elapsed === undefined ? null : (
+            <TraceDescription>
+              {labelNode}
+              {labelNode !== undefined && elapsed !== undefined ? " · " : null}
+              {elapsed}
+            </TraceDescription>
           )}
         </TraceLine>
       </TraceCollapsibleTrigger>
