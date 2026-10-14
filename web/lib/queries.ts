@@ -2,14 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  ApprovalChoice,
   ConversationSummary,
   SandboxChoice,
   SettingsChange,
 } from "effect-pi/api";
 
 import { runApi } from "./api";
-import { useCapacityGuard } from "./capacity-context";
 import type { CapacityGuard } from "./capacity-context";
+import { useCapacityGuard } from "./capacity-context";
 
 const LIST = ["conversations"] as const;
 
@@ -117,10 +118,8 @@ export const useSendMessage = (id: number) => {
 export const useDecideApproval = (id: number) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: {
-      key: string;
-      decision: "approve" | "deny" | "always";
-    }) => runApi((c) => c.conversations.approvals({ params: { id }, payload })),
+    mutationFn: (payload: { key: string; decision: ApprovalChoice }) =>
+      runApi((c) => c.conversations.approvals({ params: { id }, payload })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: LIST }),
   });
 };

@@ -18,6 +18,7 @@ import {
 import { Agents } from "../agents/agents.ts";
 import type { AgentError, ConversationAgent, Seat } from "../agents/agents.ts";
 import type { SettingsChange } from "../agents/settings.ts";
+import type { ApprovalChoice } from "../approvals.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
@@ -179,7 +180,7 @@ export class Conversations extends Context.Service<
     decide(
       id: number,
       key: string,
-      decision: "approve" | "deny" | "always"
+      decision: ApprovalChoice
     ): Effect.Effect<
       void,
       AgentError | ConversationNotFound | ApprovalNotFound
@@ -485,7 +486,7 @@ export class Conversations extends Context.Service<
         const decide = Effect.fn("Conversations.decide")(function* (
           id: number,
           key: string,
-          decision: "approve" | "deny" | "always"
+          decision: ApprovalChoice
         ) {
           const entry = live.get(id);
           if (entry === undefined) {

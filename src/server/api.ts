@@ -39,6 +39,9 @@ export {
 export const SandboxChoice = Schema.Literals(["none", "shell", "desktop"]);
 export type SandboxChoice = typeof SandboxChoice.Type;
 
+export const ApprovalChoice = Schema.Literals(["approve", "deny", "always"]);
+export type ApprovalChoice = typeof ApprovalChoice.Type;
+
 export const ConversationSummary = Schema.Struct({
   id: Schema.Number,
   sandbox: SandboxChoice,
@@ -250,7 +253,7 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     params: ById,
     payload: Schema.Struct({
       key: Schema.String,
-      decision: Schema.Literals(["approve", "deny", "always"]),
+      decision: ApprovalChoice,
     }),
     success: HttpApiSchema.NoContent,
     error: [NotFound, ApprovalNotFound.pipe(HttpApiSchema.status(404))],

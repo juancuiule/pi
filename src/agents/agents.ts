@@ -40,7 +40,7 @@ import {
   Stream,
 } from "effect";
 
-import type { ApprovalPolicy } from "../approvals.ts";
+import type { ApprovalChoice, ApprovalPolicy } from "../approvals.ts";
 import {
   ApprovalDoc,
   clearApprovals,
@@ -323,7 +323,7 @@ export interface Seat {
    */
   decide(
     key: string,
-    decision: "approve" | "deny" | "always"
+    decision: ApprovalChoice
   ): Effect.Effect<void, AgentError | ApprovalNotFound>;
   /** Count of calls waiting for approval. */
   readonly pendingApprovals: Effect.Effect<number, AgentError>;
@@ -1106,7 +1106,7 @@ export class Agents extends Context.Service<
 
           const decide = Effect.fn("Seat.decide")(function* (
             key: string,
-            decision: "approve" | "deny" | "always"
+            decision: ApprovalChoice
           ) {
             const found = yield* attempt(() =>
               harness.commit(async (tx) => {
