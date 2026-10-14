@@ -1,9 +1,15 @@
 "use client";
 
 import type { ApprovalChoice, Message } from "effect-pi/api";
-import { CircleAlert, Info, LoaderCircle, TriangleAlert } from "lucide-react";
+import {
+  CircleAlert,
+  FileCode,
+  Info,
+  LoaderCircle,
+  TriangleAlert,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { createElement, useState } from "react";
+import { createElement, Fragment, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -13,7 +19,9 @@ import {
   CodeBlockActions,
   CodeBlockContent,
   CodeBlockCopyButton,
+  CodeBlockHeader,
   CodeBlockLine,
+  CodeBlockTitle,
 } from "@/components/ui/code-block";
 import {
   TraceCollapsible,
@@ -31,6 +39,14 @@ import { toolResultEntryOf, toolResultOf } from "@/lib/conversation-state";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
 import type { ToolDiagnostic } from "@/lib/diagnostics";
 import { diagnosticsOf, visibleResultContent } from "@/lib/diagnostics";
+import type { EditHunk } from "@/lib/tool-input";
+import {
+  diffOf,
+  diffRowsOf,
+  editHunksOf,
+  fileLanguage,
+  isEditConfirmation,
+} from "@/lib/tool-input";
 import { toolSummary } from "@/lib/tool-summary";
 import { cn } from "@/lib/utils";
 
@@ -91,8 +107,139 @@ const ResultBlock = ({
     />
   );
 
+const pathArg = (call: ToolCallBlock): string | undefined => {
+  const { path } = (call.arguments ?? {}) as Record<string, unknown>;
+  return typeof path === "string" ? path : undefined;
+};
+
+/** A file being written: the path as title, its content highlighted and numbered like an editor. */
+const FileBlock = ({ path, content }: { path: string; content: string }) => {
+  const lines = useHighlightedCode(content, fileLanguage(path));
+  return (
+    <CodeBlock size="sm">
+      <CodeBlockHeader>
+        <CodeBlockTitle>
+          <FileCode aria-hidden />
+          {path}
+        </CodeBlockTitle>
+        <CodeBlockActions>
+          <CodeBlockCopyButton value={content} />
+        </CodeBlockActions>
+      </CodeBlockHeader>
+      <CodeBlockContent lineNumbers className="max-h-80">
+        {lines.map((line, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- lines have no id; input only grows or is replaced
+          <CodeBlockLine key={index}>{line}</CodeBlockLine>
+        ))}
+      </CodeBlockContent>
+    </CodeBlock>
+  );
+};
+
+/** One requested replacement: old lines removed, new lines added, highlighted as the file's language. */
+const HunkLines = ({
+  hunk,
+  language,
+}: {
+  readonly hunk: EditHunk;
+  readonly language: string;
+}) => {
+  const removed = useHighlightedCode(hunk.oldText, language);
+  const added = useHighlightedCode(hunk.newText, language);
+  return (
+    <>
+      {removed.map((line, index) => (
+        // oxlint-disable-next-line react/no-array-index-key
+        <CodeBlockLine key={`r${index}`} variant="removed">
+          {line}
+        </CodeBlockLine>
+      ))}
+      {added.map((line, index) => (
+        // oxlint-disable-next-line react/no-array-index-key
+        <CodeBlockLine key={`a${index}`} variant="added">
+          {line}
+        </CodeBlockLine>
+      ))}
+    </>
+  );
+};
+
+/** The edit a call asks for, shown as a diff before the result's real diff exists. */
+const EditInput = ({
+  path,
+  hunks,
+}: {
+  readonly path: string;
+  readonly hunks: readonly EditHunk[];
+}) => {
+  const language = fileLanguage(path);
+  return (
+    <CodeBlock size="sm">
+      <CodeBlockHeader>
+        <CodeBlockTitle>
+          <FileCode aria-hidden />
+          {path}
+        </CodeBlockTitle>
+      </CodeBlockHeader>
+      <CodeBlockContent className="max-h-80">
+        {hunks.map((hunk, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- hunks have no id; input only grows or is replaced
+          <Fragment key={index}>
+            {index === 0 ? null : <CodeBlockLine>…</CodeBlockLine>}
+            <HunkLines hunk={hunk} language={language} />
+          </Fragment>
+        ))}
+      </CodeBlockContent>
+    </CodeBlock>
+  );
+};
+
+/** The real diff a finished edit produced (`details.diff`), tinted per row. */
+const DiffBlock = ({
+  path,
+  diff,
+}: {
+  readonly path: string | undefined;
+  readonly diff: string;
+}) => (
+  <CodeBlock size="sm">
+    {path === undefined ? null : (
+      <CodeBlockHeader>
+        <CodeBlockTitle>
+          <FileCode aria-hidden />
+          {path}
+        </CodeBlockTitle>
+        <CodeBlockActions>
+          <CodeBlockCopyButton value={diff} />
+        </CodeBlockActions>
+      </CodeBlockHeader>
+    )}
+    <CodeBlockContent className="max-h-80">
+      {diffRowsOf(diff).map((row, index) => (
+        // oxlint-disable-next-line react/no-array-index-key -- diff rows are fixed for a result
+        <CodeBlockLine key={index} variant={row.variant}>
+          {row.text}
+        </CodeBlockLine>
+      ))}
+    </CodeBlockContent>
+  </CodeBlock>
+);
+
 const Arguments = ({ call }: { call: ToolCallBlock }) => {
   const args = call.arguments as Record<string, unknown> | undefined;
+  const path = pathArg(call);
+  if (call.name === "write") {
+    const content = args?.content;
+    if (path !== undefined && typeof content === "string") {
+      return <FileBlock path={path} content={content} />;
+    }
+  }
+  if (call.name === "edit" && path !== undefined) {
+    const hunks = editHunksOf(args);
+    if (hunks.length > 0) {
+      return <EditInput path={path} hunks={hunks} />;
+    }
+  }
   const command =
     call.name === "bash" && typeof args?.command === "string"
       ? args.command
@@ -295,6 +442,62 @@ const hasInput = (call: ToolCallBlock): boolean => {
     : args !== undefined && args !== null;
 };
 
+type ToolResult = Extract<Message, { role: "toolResult" }>;
+
+/** The Output section: live text while running; diff, content blocks and diagnostics once finished. */
+const CallOutput = ({
+  call,
+  tool,
+  toolResult,
+  diagnostics,
+}: {
+  readonly call: ToolCallBlock;
+  readonly tool: ToolRun | undefined;
+  readonly toolResult: ToolResult | undefined;
+  readonly diagnostics: readonly ToolDiagnostic[];
+}) => {
+  const finished = toolResult !== undefined;
+  const editDiff =
+    call.name === "edit" ? diffOf(toolResult?.details) : undefined;
+  const visibleContent = finished
+    ? visibleResultContent(toolResult.content, diagnostics).filter(
+        (block) =>
+          editDiff === undefined ||
+          block.type !== "text" ||
+          !isEditConfirmation(block.text)
+      )
+    : [];
+  const hasOutput = finished
+    ? editDiff !== undefined ||
+      visibleContent.length > 0 ||
+      diagnostics.length > 0
+    : (tool?.output ?? "") !== "";
+  if (!hasOutput) {
+    return null;
+  }
+  return (
+    <Section label="Output">
+      {finished ? (
+        <>
+          {editDiff === undefined ? null : (
+            <DiffBlock path={pathArg(call)} diff={editDiff} />
+          )}
+          {visibleContent.map((block, index) => (
+            <ResultBlock
+              key={`${call.id}:${index}`}
+              block={block}
+              failed={toolResult.isError}
+            />
+          ))}
+          <Diagnostics items={diagnostics} />
+        </>
+      ) : (
+        <OutputBlock text={tool?.output ?? ""} />
+      )}
+    </Section>
+  );
+};
+
 export const ToolCall = ({
   call,
   state,
@@ -315,13 +518,6 @@ export const ToolCall = ({
   const label = LABELS[step];
   const labelNode =
     step === "awaiting" ? <span className="text-warning">{label}</span> : label;
-
-  const visibleContent = finished
-    ? visibleResultContent(toolResult.content, diagnostics)
-    : [];
-  const showOutput = finished
-    ? visibleContent.length > 0 || diagnostics.length > 0
-    : (tool?.output ?? "") !== "";
 
   const [open, setOpen] = useToolCallOpen(
     isError || !finished,
@@ -356,24 +552,12 @@ export const ToolCall = ({
           {approval.awaiting && approval.key !== undefined ? (
             <ApprovalActions approvalKey={approval.key} />
           ) : null}
-          {showOutput ? (
-            <Section label="Output">
-              {finished ? (
-                <>
-                  {visibleContent.map((c, index) => (
-                    <ResultBlock
-                      key={`${call.id}:${index}`}
-                      block={c}
-                      failed={isError}
-                    />
-                  ))}
-                  <Diagnostics items={diagnostics} />
-                </>
-              ) : (
-                <OutputBlock text={tool?.output ?? ""} />
-              )}
-            </Section>
-          ) : null}
+          <CallOutput
+            call={call}
+            tool={tool}
+            toolResult={toolResult}
+            diagnostics={diagnostics}
+          />
         </div>
       </TraceCollapsibleContent>
     </TraceCollapsible>

@@ -162,6 +162,92 @@ describe("chat traces", () => {
     expect(html).not.toContain("&lt;harness&gt;");
   });
 
+  it("shows a write call as a numbered file block titled by its path", () => {
+    const write = {
+      type: "toolCall",
+      id: "c1",
+      name: "write",
+      arguments: {
+        path: "/workspace/factorial.py",
+        content: "def factorial(n):\n    return 1\n",
+      },
+    } as unknown as ToolCallBlock;
+    const html = renderToStaticMarkup(
+      createElement(ToolCall, {
+        call: write,
+        state: {
+          ...initialState,
+          running: true,
+          tools: { c1: { ...tool, name: "write" } },
+        },
+      })
+    );
+    expect(html).toContain('data-slot="code-block-title"');
+    expect(html).toContain("/workspace/factorial.py");
+    expect(html).toContain("def factorial(n):");
+    expect(html).toContain("data-numbered");
+    expect(html).not.toContain("&quot;content&quot;");
+  });
+
+  it("shows an edit call's hunks as a diff", () => {
+    const edit = {
+      type: "toolCall",
+      id: "c1",
+      name: "edit",
+      arguments: {
+        path: "/x.py",
+        edits: [{ oldText: "a = 1", newText: "a = 2" }],
+      },
+    } as unknown as ToolCallBlock;
+    const html = renderToStaticMarkup(
+      createElement(ToolCall, {
+        call: edit,
+        state: {
+          ...initialState,
+          running: true,
+          tools: { c1: { ...tool, name: "edit" } },
+        },
+      })
+    );
+    expect(html).toContain('data-variant="removed"');
+    expect(html).toContain('data-variant="added"');
+    expect(html).toContain("a = 1");
+    expect(html).toContain("a = 2");
+  });
+
+  it("renders a finished edit's details.diff instead of its boilerplate text", () => {
+    const edit = {
+      type: "toolCall",
+      id: "c1",
+      name: "edit",
+      arguments: {
+        path: "/x.py",
+        edits: [{ oldText: "a = 1", newText: "a = 2" }],
+      },
+    } as unknown as ToolCallBlock;
+    // isError keeps the line expanded so the result content is mounted.
+    const result = {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "edit",
+      content: [
+        { type: "text", text: "Successfully replaced 1 block(s) in /x.py." },
+      ],
+      details: { diff: " 1 const x = 0\n-2 a = 1\n+2 a = 2\n 3 print(a)" },
+      isError: true,
+    } as unknown as Message;
+    const html = renderToStaticMarkup(
+      createElement(ToolCall, {
+        call: edit,
+        state: { ...initialState, entries: [entry(result)] },
+      })
+    );
+    expect(html).toContain('data-variant="removed"');
+    expect(html).toContain('data-variant="added"');
+    expect(html).toContain("/x.py");
+    expect(html).not.toContain("Successfully replaced");
+  });
+
   it("keeps the Output section when diagnostics are the result's only content", () => {
     const result = {
       role: "toolResult",
