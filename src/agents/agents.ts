@@ -772,35 +772,53 @@ export class Agents extends Context.Service<
             return lock.withPermit(effect);
           });
 
-        // Make the Seat's Sandbox hold exactly the conversation's skills as committed: each enabled skill's folder
-        // replaced with the current files, each other known skill's folder deleted. Run after every change, so a copy
-        // that failed is made by the next one.
+        // Bring the Seat's Sandbox in line with the conversation's committed skills: replace the ones in `refresh`
+        // (turned on, or every one on a reset) with the source's files, copy any enabled one whose folder is missing
+        // (a copy that failed earlier), and delete the folders of `removed` and of other known skills. Each skill is
+        // replaced from staged files, so a skill the source can no longer supply keeps its old copy; such problems
+        // are logged rather than failing the change that led here.
         const reconcileSkills = Effect.fnUntraced(function* (
-          id: ConversationId
+          id: ConversationId,
+          sync: {
+            readonly refresh: "all" | readonly string[];
+            readonly removed: readonly string[];
+          }
         ) {
           const sandbox = seatSandboxes.get(id)?.();
           if (sandbox === undefined) {
             return;
           }
+          const env = workspaces.env(sandbox);
           const enabled = yield* skillsOf(id);
+          const enabledNames = new Set(enabled.map((skill) => skill.name));
           const known = new Set([
             ...(yield* catalog).skills.map((skill) => skill.name),
-            ...enabled.map((skill) => skill.name),
+            ...sync.removed,
           ]);
-          const env = workspaces.env(sandbox);
-          const failed = (cause: unknown) =>
-            new SandboxError({
-              message: `Could not update the skills in ${sandbox.id}`,
-              cause,
-            });
+          const stale = [...known].filter((name) => !enabledNames.has(name));
+          const warn = (what: string) => (cause: unknown) =>
+            Effect.logWarning(`${what} in ${sandbox.id}`, cause);
           yield* skills
-            .uninstall(env, [...known], context)
-            .pipe(Effect.mapError(failed));
-          if (enabled.length > 0) {
-            yield* skills
-              .install(env, enabled, context)
-              .pipe(Effect.mapError(failed));
-          }
+            .uninstall(env, stale, context)
+            .pipe(Effect.catchCause(warn("Could not delete skills")));
+          yield* Effect.forEach(
+            enabled,
+            (skill) =>
+              Effect.gen(function* () {
+                const refresh =
+                  sync.refresh === "all" ||
+                  sync.refresh.includes(skill.name) ||
+                  !(yield* skills.isInstalled(env, skill.name, context));
+                if (refresh) {
+                  yield* skills.replace(env, skill, context);
+                }
+              }).pipe(
+                Effect.catchCause(
+                  warn(`Could not update the skill ${skill.name}`)
+                )
+              ),
+            { discard: true }
+          );
         });
 
         const create = Effect.fn("Agents.create")(function* (createOptions: {
@@ -1016,7 +1034,9 @@ export class Agents extends Context.Service<
                     recordUpgrade(id, from, to, upgradeOptions.by ?? "person")
                   ),
                   // A settings change during the Upgrade went to the old Sandbox.
-                  Effect.andThen(reconcileSkills(id))
+                  Effect.andThen(
+                    reconcileSkills(id, { refresh: [], removed: [] })
+                  )
                 )
               );
               // The new Sandbox is recorded; the old one, and its claim, can go.
@@ -1029,7 +1049,7 @@ export class Agents extends Context.Service<
           upgrades.set(id, (to) => upgrade(to, { wait: true, by: "agent" }));
           seatSandboxes.set(id, () => machine?.sandbox);
           // A settings change between the Sandbox's copy and this registration found no Sandbox to update.
-          yield* locked(id, reconcileSkills(id));
+          yield* locked(id, reconcileSkills(id, { refresh: [], removed: [] }));
 
           const annotate = (prompt: string) =>
             Effect.annotateCurrentSpan({
@@ -1378,7 +1398,15 @@ export class Agents extends Context.Service<
                   return { problem: next };
                 }
                 await writeState(tx, id, next, skillCatalog);
-                return { changes: changesBetween(state, next) };
+                return {
+                  changes: changesBetween(state, next),
+                  turnedOn: next.skills.filter(
+                    (name) => !state.skills.includes(name)
+                  ),
+                  removed: state.skills.filter(
+                    (name) => !next.skills.includes(name)
+                  ),
+                };
               }, context)
             );
             if ("problem" in outcome) {
@@ -1389,7 +1417,10 @@ export class Agents extends Context.Service<
               "langfuse.session.id": tracing.sessionOf(id),
               "langfuse.observation.output": JSON.stringify(outcome.changes),
             });
-            yield* reconcileSkills(id);
+            yield* reconcileSkills(id, {
+              refresh: reset ? "all" : outcome.turnedOn,
+              removed: outcome.removed,
+            });
             yield* record(id, {
               by: "person",
               reset,

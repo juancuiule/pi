@@ -134,6 +134,44 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       expect(volumeExists(storage.id)).toBeFalsy();
     });
 
+    it("replaces a skill's folder in a container from staged files", async () => {
+      const listing = await Effect.runPromise(
+        Effect.gen(function* () {
+          const workspaces = yield* Workspaces;
+          const skills = yield* Skills;
+          const { skills: available } = yield* skills.catalog;
+          const skill = available.find(
+            (each) => each.name === "unit-conversion"
+          );
+          if (skill === undefined) {
+            return yield* Effect.die(new Error("no unit-conversion skill"));
+          }
+          return yield* Effect.scoped(
+            Effect.gen(function* () {
+              const { sandbox } = yield* workspaces.sandbox({ level: "shell" });
+              const env = workspaces.env(sandbox);
+              yield* run(
+                env,
+                "mkdir -p .skills/unit-conversion && echo old > .skills/unit-conversion/stale.txt"
+              );
+              yield* skills.replace(env, skill, BACKGROUND_CONTEXT);
+              return yield* run(env, "ls -A .skills .skills/unit-conversion");
+            })
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.merge(testWorkspaces(), Skills.directory("skills"))
+          )
+        )
+      );
+
+      expect(listing.ok).toBeTruthy();
+      // The stale file and the staging folder are gone; the skill's files are there.
+      expect(listing.text).not.toContain("stale.txt");
+      expect(listing.text).not.toContain("staging");
+      expect(listing.text).toContain("SKILL.md");
+    });
+
     it("gives the model a PNG screenshot of the desktop and keeps it on the host", async () => {
       const root = mkdtempSync(path.join(tmpdir(), "effect-pi-screenshots-"));
       const layer = dockerAgents(

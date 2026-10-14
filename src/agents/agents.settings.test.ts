@@ -2,10 +2,11 @@
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { Effect, Exit, Fiber, Stream, Tracer } from "effect";
+import { Effect, Exit, Fiber, Layer, Stream, Tracer } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { Skills } from "../skills/skills.ts";
+import { SkillSource } from "../skills/source.ts";
 import {
   callTool,
   echoToolResult,
@@ -402,5 +403,41 @@ describe("conversation settings", () => {
     );
 
     expect(result).toStrictEqual({ afterReset: [false, true], repaired: true });
+  });
+
+  it("keeps a skill's working copy when its source loses a file, and deletes it once a reset drops the skill", async () => {
+    // A source a test can change while the conversation runs.
+    const files: Record<string, string> = {
+      "alpha/SKILL.md":
+        "---\nname: alpha\ndescription: Alpha.\n---\nDo alpha.\n",
+      "alpha/scripts/run.sh": "echo alpha\n",
+    };
+    const { layer } = fauxAgents([], {
+      skills: Skills.layer.pipe(Layer.provide(SkillSource.memory(files))),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create({ level: "shell" });
+          const seat = yield* agents.open(id);
+          const folder = path.join(seat.sandbox?.id ?? "", ".skills", "alpha");
+          delete files["alpha/SKILL.md"];
+          // An unrelated change keeps the copy: the source cannot supply the skill any more.
+          yield* agents.configure(id, { approvals: "ask" });
+          const kept = existsSync(path.join(folder, "SKILL.md"));
+          // A reset takes the source as it is now, without alpha: its folder goes.
+          const settings = yield* agents.reset(id);
+          return {
+            kept,
+            listed: settings.skills.some((skill) => skill.name === "alpha"),
+            deleted: !existsSync(folder),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(result).toStrictEqual({ kept: true, listed: false, deleted: true });
   });
 });
