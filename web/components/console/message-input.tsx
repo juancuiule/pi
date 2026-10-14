@@ -8,9 +8,16 @@ import { useSendMessage } from "@/lib/queries";
 
 import { Composer } from "./composer";
 
-const hintFor = (running: boolean, paused: boolean): string => {
+const hintFor = (
+  running: boolean,
+  resuming: boolean,
+  paused: boolean
+): string => {
   if (running) {
     return "The agent is working. New messages are queued.";
+  }
+  if (resuming) {
+    return "Resuming the conversation — this can take a moment.";
   }
   return paused
     ? "Paused. Sending a message resumes it."
@@ -20,10 +27,13 @@ const hintFor = (running: boolean, paused: boolean): string => {
 export const MessageInput = ({
   id,
   running,
+  resuming = false,
   paused = false,
 }: {
   id: number;
   running: boolean;
+  /** A resume is in flight; sending waits on it (it queues behind it server-side). */
+  resuming?: boolean;
   /** Sending resumes a paused conversation first. */
   paused?: boolean;
 }) => {
@@ -56,7 +66,7 @@ export const MessageInput = ({
         pending={send.isPending}
         running={running}
         placeholder="Message the agent"
-        hint={hintFor(running, paused)}
+        hint={hintFor(running, resuming, paused)}
         inputRef={textarea}
       />
     </div>

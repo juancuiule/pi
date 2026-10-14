@@ -11,6 +11,7 @@ import type {
 import { runApi } from "./api";
 import type { CapacityGuard } from "./capacity-context";
 import { useCapacityGuard } from "./capacity-context";
+import { useConversationStore } from "./store";
 
 const LIST = ["conversations"] as const;
 
@@ -105,13 +106,24 @@ export const useSendMessage = (id: number) => {
   const queryClient = useQueryClient();
   const guard = useCapacityGuard();
   return useMutation({
-    mutationFn: (prompt: string) =>
-      guard(() =>
+    mutationFn: (prompt: string) => {
+      // Counts on live conversations too; the resuming view only shows while the summary still says paused.
+      useConversationStore.getState().beginResume(id);
+      return guard(() =>
         runApi((c) =>
           c.conversations.send({ params: { id }, payload: { prompt } })
         )
-      ),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: LIST }),
+      );
+    },
+    // The flag outlives the request itself so the view never falls back to "paused" before the list catches up.
+    onSettled: async () => {
+      try {
+        await queryClient.invalidateQueries({ queryKey: LIST });
+      } catch {
+        // A failed refetch must not strand the flag.
+      }
+      useConversationStore.getState().endResume(id);
+    },
   });
 };
 
@@ -183,6 +195,7 @@ export const useConversationAction = () => {
       const params = { params: { id } };
       switch (action) {
         case "resume": {
+          useConversationStore.getState().beginResume(id);
           return resumeWith(guard, id);
         }
         case "pause": {
@@ -202,6 +215,16 @@ export const useConversationAction = () => {
         }
       }
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: LIST }),
+    // The flag outlives the request itself so the view never falls back to "paused" before the list catches up.
+    onSettled: async (_data, _error, variables) => {
+      try {
+        await queryClient.invalidateQueries({ queryKey: LIST });
+      } catch {
+        // A failed refetch must not strand the flag.
+      }
+      if (variables.action === "resume") {
+        useConversationStore.getState().endResume(variables.id);
+      }
+    },
   });
 };

@@ -1,6 +1,12 @@
 "use client";
 
-import { ExternalLink, Monitor, MousePointer2 } from "lucide-react";
+import {
+  ExternalLink,
+  LoaderCircle,
+  Monitor,
+  MousePointer2,
+  RotateCw,
+} from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -12,25 +18,43 @@ import {
 } from "@/components/ui/tooltip";
 import { vncViewUrl } from "@/lib/vnc";
 
+const placeholderText = (resuming: boolean, paused: boolean): string => {
+  if (resuming) {
+    return "Resuming — the desktop is starting over the saved workspace.";
+  }
+  if (paused) {
+    return "Paused. The desktop comes back when the conversation resumes.";
+  }
+  return "No desktop view for this sandbox.";
+};
+
 export const DesktopPanel = ({
   vncUrl,
   paused,
+  resuming = false,
 }: {
   vncUrl: string | undefined;
   /** Without a Seat, so without a desktop until it is resumed. */
   paused?: boolean;
+  /** A resume is in flight: the new sandbox is still starting. */
+  resuming?: boolean;
 }) => {
   const [control, setControl] = useState(false);
+  // Bumps to remount the iframe: the sandbox can be up while noVNC's page failed to load or stalled.
+  const [reloadKey, setReloadKey] = useState(0);
 
   if (vncUrl === undefined) {
     return (
       <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4">
-        <Monitor className="size-5" />
-        <p className="text-sm">
-          {paused
-            ? "Paused. The desktop comes back when the conversation resumes."
-            : "No desktop view for this sandbox."}
-        </p>
+        {resuming ? (
+          <LoaderCircle
+            aria-hidden
+            className="size-5 motion-safe:animate-spin"
+          />
+        ) : (
+          <Monitor className="size-5" />
+        )}
+        <p className="text-sm">{placeholderText(resuming, paused ?? false)}</p>
       </div>
     );
   }
@@ -56,6 +80,21 @@ export const DesktopPanel = ({
               <Button
                 variant="ghost"
                 size="icon-sm"
+                aria-label="Reload desktop view"
+                onClick={() => setReloadKey((key) => key + 1)}
+              >
+                <RotateCw />
+              </Button>
+            }
+          />
+          <TooltipContent>Reload the desktop view</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 nativeButton={false}
                 render={
                   <a
@@ -75,6 +114,7 @@ export const DesktopPanel = ({
       </div>
       {/* noVNC needs scripts and its own origin (another port than this page, so it cannot reach this page). */}
       <iframe
+        key={reloadKey}
         src={src}
         title="Sandbox desktop"
         // oxlint-disable-next-line react/iframe-missing-sandbox

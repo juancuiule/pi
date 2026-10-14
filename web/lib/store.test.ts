@@ -28,4 +28,19 @@ describe(useConversationStore, () => {
     expect(useConversationStore.getState().ended[2]).toBeUndefined();
     expect(useConversationStore.getState().ended[3]).toBeTruthy();
   });
+
+  it("counts overlapping resumes, so one settling cannot clear the other's wait; stray ends are no-ops", () => {
+    const store = useConversationStore.getState();
+    store.beginResume(5);
+    store.beginResume(5);
+    store.beginResume(6);
+
+    store.endResume(5);
+    expect(useConversationStore.getState().resuming[5]).toBe(1);
+
+    store.endResume(5);
+    store.endResume(5);
+    expect(useConversationStore.getState().resuming[5]).toBeUndefined();
+    expect(useConversationStore.getState().resuming[6]).toBe(1);
+  });
 });

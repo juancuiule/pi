@@ -3,7 +3,7 @@
 import { Terminal } from "@wterm/react";
 import type { TerminalHandle } from "@wterm/react";
 import "@wterm/react/css";
-import { SquareTerminal } from "lucide-react";
+import { LoaderCircle, SquareTerminal } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import type { ConversationState } from "@/lib/conversation-state";
@@ -14,7 +14,14 @@ const ignoreInput = () => {
   // Intentionally empty.
 };
 
-export const TerminalPanel = ({ state }: { state: ConversationState }) => {
+export const TerminalPanel = ({
+  state,
+  resuming = false,
+}: {
+  state: ConversationState;
+  /** A resume is in flight: the sandbox this terminal will stream is still starting. */
+  resuming?: boolean;
+}) => {
   const term = useRef<TerminalHandle | null>(null);
   // What the terminal shows; `null` until onReady (writes before init are dropped).
   const written = useRef<string | null>(null);
@@ -46,6 +53,12 @@ export const TerminalPanel = ({ state }: { state: ConversationState }) => {
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
         <SquareTerminal className="text-muted-foreground size-4" />
         <span className="text-ui font-medium">Terminal</span>
+        {resuming ? (
+          <LoaderCircle
+            aria-hidden
+            className="text-muted-foreground size-3.5 motion-safe:animate-spin"
+          />
+        ) : null}
       </div>
       <div className="relative min-h-0 flex-1">
         <Terminal
@@ -71,7 +84,9 @@ export const TerminalPanel = ({ state }: { state: ConversationState }) => {
         />
         {text === "" ? (
           <p className="text-muted-foreground pointer-events-none absolute inset-0 flex items-center justify-center p-4 text-center text-sm">
-            Commands the agent runs appear here.
+            {resuming
+              ? "Resuming — the sandbox is starting."
+              : "Commands the agent runs appear here."}
           </p>
         ) : null}
       </div>

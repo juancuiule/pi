@@ -29,8 +29,10 @@ import { exportSlug, toJsonl, toMarkdown } from "@/lib/export";
 import { formatCost, formatTokens } from "@/lib/format";
 import { useConversationAction } from "@/lib/queries";
 import type { ConversationAction } from "@/lib/queries";
+import { useResuming } from "@/lib/store";
 
 import { ConversationActions } from "./conversation-actions";
+import { ResumingNotice } from "./resuming-notice";
 import { SandboxBadge } from "./sandbox-badge";
 import { WaitingNotice } from "./waiting-notice";
 
@@ -52,6 +54,7 @@ export const ConversationHeader = ({
   };
 }) => {
   const act = useConversationAction();
+  const resuming = useResuming(conversation);
   const { tokens, cost } = totalUsage(state.usage);
   const { status } = conversation;
 
@@ -127,7 +130,16 @@ export const ConversationHeader = ({
             {state.queued > 0 ? (
               <span className="tabular-nums">{state.queued} queued</span>
             ) : null}
-            {status === "paused" ? <span>Paused</span> : null}
+            {status === "paused" && !resuming ? <span>Paused</span> : null}
+            {resuming ? (
+              <span className="inline-flex items-center gap-1">
+                <LoaderCircle
+                  aria-hidden
+                  className="size-3 motion-safe:animate-spin"
+                />
+                Resuming
+              </span>
+            ) : null}
             {status === "archived" ? <span>Archived</span> : null}
             {conversation.pausing ? (
               <span className="inline-flex items-center gap-1">
@@ -192,6 +204,7 @@ export const ConversationHeader = ({
         <ConversationActions conversation={conversation} />
       </header>
       <WaitingNotice conversation={conversation} />
+      <ResumingNotice conversation={conversation} />
     </>
   );
 };
