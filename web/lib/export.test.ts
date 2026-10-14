@@ -52,7 +52,10 @@ const state: ConversationState = {
         role: "toolResult",
         toolCallId: "c1",
         isError: false,
-        content: [{ type: "text", text: "hosts\n```\nnested fence\n```" }],
+        content: [
+          { type: "text", text: "hosts\n```\nnested fence\n```" },
+          { type: "image", mimeType: "image/png", data: "BBBB" },
+        ],
       },
     ]),
     entry(4, [
@@ -74,6 +77,27 @@ const state: ConversationState = {
         toolCallId: "c2",
         isError: true,
         content: [{ type: "text", text: "permission denied" }],
+      },
+    ]),
+    entry(6, [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "c3",
+            name: "desktop_screenshot",
+            arguments: {},
+          },
+        ],
+      },
+    ]),
+    entry(7, [
+      {
+        role: "toolResult",
+        toolCallId: "c3",
+        isError: false,
+        content: [{ type: "image", mimeType: "image/png", data: "CCCC" }],
       },
     ]),
   ],
@@ -99,7 +123,11 @@ describe(toJsonl, () => {
       .split("\n")
       .filter((line) => line !== "")
       .map((line) => JSON.parse(line) as EntryRecord);
-    expect(parsed.map((r) => r.id)).toStrictEqual([1, 2, 3, 4, 5]);
+    expect(parsed.map((r) => r.id)).toStrictEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("keeps image blocks' base64 data", () => {
+    expect(toJsonl(state)).toContain('"data":"AAAA"');
   });
 });
 
@@ -109,7 +137,9 @@ describe(toMarkdown, () => {
     const checks = [
       md.startsWith("# List files & count"),
       md.includes("Sandbox: Shell · Started 1970-01-01T00:00:00.000Z"),
-      md.includes("## User\n\nList /etc\n\n[image]"),
+      md.includes(
+        "## User\n\nList /etc\n\n![image](data:image/png;base64,AAAA)"
+      ),
       md.includes("## Assistant\n\nHere is **the list**."),
       md.includes("### Tool: bash\n"),
       md.includes("### Tool: write (failed)"),
@@ -118,7 +148,13 @@ describe(toMarkdown, () => {
       !md.includes("let me think"),
       // The output's inner ``` run forces a longer fence.
       md.includes("````\nhosts\n```\nnested fence\n```\n````"),
+      // A result's images follow its fenced text output.
+      md.includes("````\n\n![image](data:image/png;base64,BBBB)"),
+      // An image-only result has no empty text fence.
+      md.includes(
+        "### Tool: desktop_screenshot\n\n```json\n{}\n```\n\n![image](data:image/png;base64,CCCC)"
+      ),
     ];
-    expect(checks).toStrictEqual(Array.from({ length: 10 }, () => true));
+    expect(checks).toStrictEqual(Array.from({ length: 12 }, () => true));
   });
 });

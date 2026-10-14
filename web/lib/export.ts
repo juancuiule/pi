@@ -6,7 +6,7 @@ import type { ConversationState } from "./conversation-state";
 import { toolResultOf } from "./conversation-state";
 import { SANDBOX_LABEL } from "./sandbox-info";
 import { toolSummary } from "./tool-summary";
-import { userParts } from "./transcript";
+import { imageSrc, userParts } from "./transcript";
 
 /** `title-id` for download filenames: lowercase, dashes, no trailing dash. */
 export const exportSlug = (title: string, id: number): string =>
@@ -16,7 +16,10 @@ export const exportSlug = (title: string, id: number): string =>
     .replaceAll(/-+/gu, "-")
     .replaceAll(/^-|-$/gu, "")}-${id}`;
 
-/** One committed entry record per line, in transcript order, with a trailing newline. */
+/**
+ * One committed entry record per line, in transcript order, with a trailing newline. Records serialize whole, so
+ * image blocks keep their base64 `data`.
+ */
 export const toJsonl = (state: ConversationState): string =>
   `${state.entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 
@@ -34,19 +37,29 @@ const fenced = (content: string, language?: string): string => {
   return `${f}${language ?? ""}\n${content}\n${f}`;
 };
 
-/** The text of a tool result's content blocks; images become `[image]`. */
-const resultText = (
+/** The text of a tool result's content blocks, and its images as data URLs. */
+const resultParts = (
   state: ConversationState,
   callId: string
-): { output: string; failed: boolean } => {
+): {
+  output: string;
+  failed: boolean;
+  images: readonly { readonly src: string }[];
+} => {
   const result = toolResultOf(state, callId);
   if (result === undefined || result.role !== "toolResult") {
-    return { output: "(no result)", failed: false };
+    return { output: "(no result)", failed: false, images: [] };
   }
-  const output = result.content
-    .map((block) => (block.type === "text" ? block.text : "[image]"))
-    .join("\n");
-  return { output, failed: result.isError ?? false };
+  const texts: string[] = [];
+  const images: { src: string }[] = [];
+  for (const block of result.content) {
+    if (block.type === "text") {
+      texts.push(block.text);
+    } else {
+      images.push({ src: imageSrc(block) });
+    }
+  }
+  return { output: texts.join("\n"), failed: result.isError ?? false, images };
 };
 
 export const toMarkdown = (
@@ -67,8 +80,8 @@ export const toMarkdown = (
         if (text !== "") {
           parts.push(text, "");
         }
-        for (const _image of images) {
-          parts.push("[image]", "");
+        for (const image of images) {
+          parts.push(`![image](${image.src})`, "");
         }
         continue;
       }
@@ -79,17 +92,22 @@ export const toMarkdown = (
         if (block.type === "text") {
           parts.push("## Assistant", "", block.text, "");
         } else if (block.type === "toolCall") {
-          const { output, failed } = resultText(state, block.id);
+          const { output, failed, images } = resultParts(state, block.id);
           parts.push(
             `### Tool: ${block.name}${failed ? " (failed)" : ""}`,
             "",
             toolSummary(block.name, block.arguments),
             "",
             fenced(JSON.stringify(block.arguments ?? {}, null, 2), "json"),
-            "",
-            fenced(output),
             ""
           );
+          // An image-only result has no text to fence; the images render outside one anyway.
+          if (output !== "" || images.length === 0) {
+            parts.push(fenced(output), "");
+          }
+          for (const image of images) {
+            parts.push(`![image](${image.src})`, "");
+          }
         }
         // Thinking blocks are omitted.
       }

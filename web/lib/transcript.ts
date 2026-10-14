@@ -24,6 +24,12 @@ export interface UserParts {
   readonly images: readonly { readonly src: string }[];
 }
 
+/** An image block's inline `data:` URL. */
+export const imageSrc = (block: {
+  readonly mimeType: string;
+  readonly data: string;
+}): string => `data:${block.mimeType};base64,${block.data}`;
+
 /** The text of a user message (text blocks joined) and its images as data URLs. */
 export const userParts = (message: UserMessage): UserParts => {
   if (typeof message.content === "string") {
@@ -35,7 +41,7 @@ export const userParts = (message: UserMessage): UserParts => {
     if (block.type === "text") {
       texts.push(block.text);
     } else {
-      images.push({ src: `data:${block.mimeType};base64,${block.data}` });
+      images.push({ src: imageSrc(block) });
     }
   }
   return { text: texts.join("\n"), images };
