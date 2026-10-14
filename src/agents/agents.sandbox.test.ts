@@ -14,6 +14,7 @@ import {
   callTool,
   echoToolResult,
   fauxAgents,
+  offered,
   openSeat,
 } from "../testing/faux.ts";
 
@@ -103,27 +104,6 @@ describe("conversation sandboxes", () => {
     });
   });
 });
-
-const nameOf = (tool: unknown) =>
-  typeof tool === "string" ? tool : (tool as { name: string }).name;
-
-/** A model turn that answers with the tools it was offered and every system message, as JSON. */
-const offered: FauxResponseStep = (request) => {
-  const system = request.messages.filter((m) => m.role === "system");
-  // pi-durable sends tool changes on positional system messages; the offered tools are their sum.
-  const tools = new Set<string>();
-  for (const message of system) {
-    for (const tool of message.toolsRemoved ?? []) {
-      tools.delete(nameOf(tool));
-    }
-    for (const tool of message.toolsAdded ?? []) {
-      tools.add(nameOf(tool));
-    }
-  }
-  return fauxAssistantMessage([
-    fauxText(JSON.stringify({ tools: [...tools], system })),
-  ]);
-};
 
 describe("Upgrade", () => {
   it("adds the Level's tools to the conversation's own, and tells the agent what machine it has", async () => {

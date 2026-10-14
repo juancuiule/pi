@@ -42,3 +42,9 @@ export class InvalidUpgrade extends Schema.TaggedError<InvalidUpgrade>()(
     to: Schema.Literals(["none", "shell", "desktop"]),
   }
 ) {}
+
+/** A settings change that cannot be applied: an unknown name, a locked extension, or one the Level does not allow. */
+export class InvalidSetting extends Schema.TaggedError<InvalidSetting>()(
+  "InvalidSetting",
+  { name: Schema.String, reason: Schema.String }
+) {}

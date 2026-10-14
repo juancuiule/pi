@@ -17,6 +17,7 @@ import {
 
 import { Agents } from "../agents/agents.ts";
 import type { AgentError, ConversationAgent, Seat } from "../agents/agents.ts";
+import type { SettingsChange } from "../agents/settings.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
@@ -24,6 +25,7 @@ import { ApprovalNotFound, ConversationArchived } from "../errors.ts";
 import type {
   CapacityExhausted,
   ConversationNotFound,
+  InvalidSetting,
   InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
@@ -113,7 +115,11 @@ export class Conversations extends Context.Service<
       readonly sandbox: SandboxChoice;
       readonly prompt: string;
       readonly approvals?: "ask" | "auto" | undefined;
-    }): Effect.Effect<ConversationSummary, SeatError | SkillNotFound>;
+      readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
+    }): Effect.Effect<
+      ConversationSummary,
+      SeatError | SkillNotFound | InvalidSetting
+    >;
     readonly list: Effect.Effect<readonly ConversationSummary[], AgentError>;
     /** Send a prompt, resuming a paused Conversation first; a pending Pause is cancelled. */
     send(
@@ -143,10 +149,18 @@ export class Conversations extends Context.Service<
     unarchive(
       id: number
     ): Effect.Effect<void, AgentError | ConversationNotFound>;
-    /** What a Conversation runs with now. */
+    /** What a Conversation runs with now: its settings, model and prompt sections. */
     agent(
       id: number
     ): Effect.Effect<ConversationAgent, AgentError | ConversationNotFound>;
+    /** Turn a Conversation's extensions, tools and skills on or off, or set its approval policy. */
+    configure(
+      id: number,
+      change: SettingsChange
+    ): Effect.Effect<
+      ConversationAgent,
+      AgentError | ConversationNotFound | InvalidSetting | SandboxError
+    >;
     /** Events of any Conversation, with a Seat or not. */
     events(
       id: number
@@ -313,6 +327,7 @@ export class Conversations extends Context.Service<
           readonly sandbox: SandboxChoice;
           readonly prompt: string;
           readonly approvals?: "ask" | "auto" | undefined;
+          readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
         }) {
           const { id, entry } = yield* seatIn(input.sandbox, (claimed) =>
             Effect.gen(function* () {
@@ -323,6 +338,7 @@ export class Conversations extends Context.Service<
                 level: input.sandbox,
                 createdAt: yield* Clock.currentTimeMillis,
                 approvals: input.approvals,
+                settings: input.settings,
               });
               yield* claimed.assign(Number(created));
               return {
@@ -511,6 +527,7 @@ export class Conversations extends Context.Service<
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),
           agent: (id) => agents.agent(asId(id)),
+          configure: (id, change) => agents.configure(asId(id), change),
           decide,
           capacity: capacity.usage,
         });

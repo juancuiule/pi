@@ -110,10 +110,22 @@ describe("HTTP API", () => {
       ["edit", true],
       ["bash", true],
     ]);
+    // A chat runs with the calculator, the workspace tool and the locked tracing; nothing that needs a sandbox.
     expect([
-      agent.tools.map((tool) => tool.name).toSorted(),
+      agent.extensions.flatMap((each) =>
+        each.enabled
+          ? each.tools.filter((t) => t.enabled).map((t) => t.name)
+          : []
+      ),
+      agent.extensions
+        .filter((each) => !each.available)
+        .map((each) => each.name),
       agent.sections,
-    ]).toStrictEqual([["calculate", "upgrade_workspace"], ["workspace"]]);
+    ]).toStrictEqual([
+      ["calculate", "upgrade_workspace"],
+      ["coding-tools", "desktop"],
+      ["workspace"],
+    ]);
   });
 
   it("expands /skill: on create and refuses an unknown skill on send", async () => {

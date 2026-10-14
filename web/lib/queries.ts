@@ -1,7 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ConversationSummary, SandboxChoice } from "effect-pi/api";
+import type {
+  ConversationSummary,
+  SandboxChoice,
+  SettingsChange,
+} from "effect-pi/api";
 
 import { runApi } from "./api";
 import { useCapacityGuard } from "./capacity-context";
@@ -44,6 +48,21 @@ export const useConversationAgent = (
     enabled: enabled && id !== undefined,
   });
 
+/** Change a conversation's settings; the answer replaces the cached settings. */
+export const useConfigure = (id: number | undefined) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: SettingsChange) =>
+      runApi((c) =>
+        c.conversations.configure({ params: { id: id ?? 0 }, payload })
+      ),
+    onSuccess: (settings) => {
+      queryClient.setQueryData(["agent", id], settings);
+      return queryClient.invalidateQueries({ queryKey: LIST });
+    },
+  });
+};
+
 /** Every Conversation's summary, fetched now; for waiting on a status change. */
 export const fetchConversations = () => runApi((c) => c.conversations.list());
 
@@ -55,6 +74,7 @@ export const useCreateConversation = () => {
       sandbox: SandboxChoice;
       prompt: string;
       approvals?: "ask" | "auto";
+      settings?: Omit<SettingsChange, "approvals">;
     }) => guard(() => runApi((c) => c.conversations.create({ payload }))),
     onSuccess: (created: ConversationSummary) => {
       queryClient.setQueryData<readonly ConversationSummary[]>(LIST, (all) => [

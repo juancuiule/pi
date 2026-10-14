@@ -1,9 +1,10 @@
 "use client";
 
 import { Collapsible } from "@base-ui/react/collapsible";
-import type { ToolInfo } from "effect-pi/api";
+import type { SettingsChange, ToolInfo } from "effect-pi/api";
 import { BookOpen, ChevronRight, Plug, ShieldAlert } from "lucide-react";
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -15,8 +16,14 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { focusAfterSheet, useDraft } from "@/lib/draft";
-import { useCapabilities, useConversationAgent } from "@/lib/queries";
+import {
+  useCapabilities,
+  useConfigure,
+  useConversationAgent,
+} from "@/lib/queries";
 import { cn } from "@/lib/utils";
+
+import { SettingsPanel } from "./settings-panel";
 
 const LEVEL_LABEL = {
   none: "chat",
@@ -59,6 +66,11 @@ export const CapabilitiesSheet = ({
   const [open, setOpen] = useState(false);
   const { data } = useCapabilities();
   const { data: agent } = useConversationAgent(conversationId, open);
+  const configure = useConfigure(conversationId);
+  const save = (change: SettingsChange) =>
+    configure.mutate(change, {
+      onError: (error) => toast.error(error.message),
+    });
   const offer = useDraft((store) => store.offer);
   // Set when the sheet closes because a skill was picked, so focus goes to the composer instead of the trigger.
   const picked = useRef(false);
@@ -106,12 +118,26 @@ export const CapabilitiesSheet = ({
                     This conversation
                   </h3>
                   <p className="text-muted-foreground text-xs">
-                    {agent.model} · extensions: {agent.extensions.join(", ")}
+                    {agent.model}
                     {agent.sections.length === 0
                       ? ""
                       : ` · prompt sections: ${agent.sections.join(", ")}`}
+                    . Changes apply from the agent&rsquo;s next model request.
                   </p>
-                  <ToolList tools={agent.tools} />
+                  <SettingsPanel
+                    settings={agent}
+                    approvals={{
+                      ask: agent.approvals === "ask",
+                      handleChange: (ask) =>
+                        save({ approvals: ask ? "ask" : "auto" }),
+                    }}
+                    onExtension={(name, on) =>
+                      save({ extensions: { [name]: on } })
+                    }
+                    onTool={(name, on) => save({ tools: { [name]: on } })}
+                    onSkill={(name, on) => save({ skills: { [name]: on } })}
+                    disabled={configure.isPending}
+                  />
                 </section>
               )}
               <section

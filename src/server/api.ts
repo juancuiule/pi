@@ -13,6 +13,7 @@ import {
   CapacityExhausted,
   ConversationArchived,
   ConversationNotFound,
+  InvalidSetting,
   InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
@@ -30,6 +31,7 @@ export {
   CapacityExhausted,
   ConversationArchived,
   ConversationNotFound,
+  InvalidSetting,
   InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
@@ -60,11 +62,43 @@ export const ToolInfo = Schema.Struct({
 });
 export type ToolInfo = typeof ToolInfo.Type;
 
-/** What one conversation runs with now. */
+const Toggles = Schema.optionalKey(
+  Schema.Record(Schema.String, Schema.Boolean)
+);
+
+/** Each entry turns one extension, tool or skill on (`true`) or off (`false`). */
+export const SettingsChange = Schema.Struct({
+  approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
+  extensions: Toggles,
+  tools: Toggles,
+  skills: Toggles,
+});
+export type SettingsChange = typeof SettingsChange.Type;
+
+/** A conversation's settings, and the model and prompt sections it runs with now. */
 export const ConversationAgent = Schema.Struct({
   model: Schema.String,
-  extensions: Schema.Array(Schema.String),
-  tools: Schema.Array(ToolInfo),
+  level: SandboxChoice,
+  approvals: Schema.Literals(["ask", "auto"]),
+  extensions: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      enabled: Schema.Boolean,
+      /** False when the Level does not allow it; it can then only be off. */
+      available: Schema.Boolean,
+      locked: Schema.Boolean,
+      tools: Schema.Array(
+        Schema.Struct({ ...ToolInfo.fields, enabled: Schema.Boolean })
+      ),
+    })
+  ),
+  skills: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      description: Schema.String,
+      enabled: Schema.Boolean,
+    })
+  ),
   sections: Schema.Array(Schema.String),
 });
 export type ConversationAgent = typeof ConversationAgent.Type;
@@ -113,6 +147,7 @@ const UnknownSkill = SkillNotFound.pipe(HttpApiSchema.status(400));
 const NotFound = ConversationNotFound.pipe(HttpApiSchema.status(404));
 const Full = CapacityExhausted.pipe(HttpApiSchema.status(409));
 const Archived = ConversationArchived.pipe(HttpApiSchema.status(409));
+const Invalid = InvalidSetting.pipe(HttpApiSchema.status(400));
 const ById = { id: Schema.Int };
 
 const ConversationGroup = HttpApiGroup.make("conversations").add(
@@ -124,20 +159,35 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
       sandbox: SandboxChoice,
       prompt: Schema.NonEmptyString,
       approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
+      /** Changes to what a conversation at this Level gets by default. */
+      settings: Schema.optionalKey(
+        Schema.Struct({
+          extensions: Toggles,
+          tools: Toggles,
+          skills: Toggles,
+        })
+      ),
     }),
     success: ConversationSummary.pipe(HttpApiSchema.status(201)),
-    error: [Full, UnknownSkill],
+    error: [Full, UnknownSkill, Invalid],
   }),
   HttpApiEndpoint.post("send", "/conversations/:id/messages", {
     params: ById,
     payload: Schema.Struct({ prompt: Schema.NonEmptyString }),
     error: [NotFound, Full, Archived, UnknownSkill],
   }),
-  // What the conversation runs with now: model, extensions, tools and prompt sections.
+  // What the conversation runs with now: its settings, model and prompt sections.
   HttpApiEndpoint.get("agent", "/conversations/:id/agent", {
     params: ById,
     success: ConversationAgent,
     error: NotFound,
+  }),
+  // Turn extensions, tools and skills on or off, or set the approval policy; applies from the next model request.
+  HttpApiEndpoint.patch("configure", "/conversations/:id/agent", {
+    params: ById,
+    payload: SettingsChange,
+    success: ConversationAgent,
+    error: [NotFound, Invalid],
   }),
   // One pi-durable AgentEvent per SSE message: a snapshot first, then each commit's events.
   HttpApiEndpoint.get("events", "/conversations/:id/events", {

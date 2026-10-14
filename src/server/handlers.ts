@@ -87,6 +87,14 @@ const ConversationsHandlers = HttpApiBuilder.group(
           .agent(params.id)
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
+      .handle("configure", ({ params, payload }) =>
+        conversations.configure(params.id, payload).pipe(
+          Effect.catchTags({
+            AgentError: Effect.die,
+            SandboxError: Effect.die,
+          })
+        )
+      )
       .handle("events", ({ params }) =>
         conversations.events(params.id).pipe(
           Effect.map((events) => events.pipe(Stream.map(asJson), Stream.orDie)),

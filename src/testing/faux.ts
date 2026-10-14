@@ -106,3 +106,45 @@ export const echoToolResult: FauxResponseStep = (request) => {
     fauxText(result?.isError ? `error: ${text}` : text),
   ]);
 };
+
+const nameOf = (tool: unknown) =>
+  typeof tool === "string" ? tool : (tool as { name: string }).name;
+
+/** A model turn that answers with the tools it was offered and every system message, as JSON (see `offeredIn`). */
+export const offered: FauxResponseStep = (request) => {
+  const system = request.messages.filter((m) => m.role === "system");
+  // pi-durable sends tool changes on positional system messages; the offered tools are their sum.
+  const tools = new Set<string>();
+  for (const message of system) {
+    for (const tool of message.toolsRemoved ?? []) {
+      tools.delete(nameOf(tool));
+    }
+    for (const tool of message.toolsAdded ?? []) {
+      tools.add(nameOf(tool));
+    }
+  }
+  return fauxAssistantMessage([
+    fauxText(JSON.stringify({ tools: [...tools], system })),
+  ]);
+};
+
+/**
+ * The answer of an `offered` turn: the tool names, and the prompt sections as the model last got them (a later system
+ * message replaces a section), as one string.
+ */
+export const offeredIn = (
+  answer: string
+): { readonly tools: string[]; readonly system: string } => {
+  const parsed = JSON.parse(answer) as {
+    tools: string[];
+    system: { sections?: Record<string, string> }[];
+  };
+  const sections: Record<string, string> = {};
+  for (const message of parsed.system) {
+    Object.assign(sections, message.sections ?? {});
+  }
+  return {
+    tools: parsed.tools.toSorted(),
+    system: JSON.stringify(sections),
+  };
+};
