@@ -1,4 +1,4 @@
-import type { AgentEvent } from "effect-pi/api";
+import type { ConversationEvent } from "effect-pi/api";
 import { describe, expect, it } from "vitest";
 
 import { useConversationStore } from "./store";
@@ -11,9 +11,10 @@ const snapshot = {
   inbox: [],
   agent: {},
   usage: { models: {}, tools: {} },
-} as unknown as AgentEvent;
+  unanswered: [],
+} as unknown as ConversationEvent;
 
-const runEnd = { type: "run_end" } as unknown as AgentEvent;
+const runEnd = { type: "run_end" } as unknown as ConversationEvent;
 
 describe(useConversationStore, () => {
   it("clears an ended id when a snapshot arrives for it, as after a server restart reuses the id", () => {

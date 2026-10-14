@@ -27,4 +27,13 @@ describe(settingsNote, () => {
       undefined,
     ]);
   });
+
+  it("says the server switched a model it does not have", () => {
+    expect(
+      settingsNote({
+        by: "server",
+        changes: [{ type: "model", from: "ollama/qwen", to: "faux/faux-1" }],
+      })
+    ).toBe("Switched to faux/faux-1: the model ollama/qwen is not available");
+  });
 });

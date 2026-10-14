@@ -10,7 +10,7 @@ import {
   LoaderCircle,
   SlidersHorizontal,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
 import { CodeBlock, CodeBlockContent } from "@/components/ui/code-block";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -32,6 +32,7 @@ import {
   splitSkillHints,
 } from "@/lib/skill-message";
 import { isNearBottom, userParts } from "@/lib/transcript";
+import { unansweredNote } from "@/lib/unanswered-note";
 
 import { Markdown } from "./markdown";
 import { ToolCall } from "./tool-call";
@@ -323,6 +324,16 @@ const StatusLine = ({
   );
 };
 
+const Failure = ({ children }: { children: string }) => (
+  <p
+    role="alert"
+    className="border-destructive/40 bg-destructive/5 text-destructive flex items-center gap-2 rounded-lg border p-3 text-sm"
+  >
+    <CircleAlert className="size-4 shrink-0" />
+    {children}
+  </p>
+);
+
 const Body = ({
   state,
   resuming,
@@ -331,21 +342,22 @@ const Body = ({
   resuming: boolean;
 }) => (
   <>
-    {state.entries.map((entry) => (
-      <Entry key={entry.id} entry={entry} state={state} />
-    ))}
+    {state.entries.map((entry) => {
+      const unanswered = state.unanswered[entry.id];
+      const note =
+        unanswered === undefined ? undefined : unansweredNote(unanswered);
+      return (
+        <Fragment key={entry.id}>
+          <Entry entry={entry} state={state} />
+          {note === undefined ? null : <Failure>{note}</Failure>}
+        </Fragment>
+      );
+    })}
     {state.streaming === undefined ? null : (
       <AssistantBlocks message={state.streaming} state={state} caret />
     )}
     {state.failures.map((failure) => (
-      <p
-        key={failure}
-        role="alert"
-        className="border-destructive/40 bg-destructive/5 text-destructive flex items-center gap-2 rounded-lg border p-3 text-sm"
-      >
-        <CircleAlert className="size-4 shrink-0" />
-        {failure}
-      </p>
+      <Failure key={failure}>{failure}</Failure>
     ))}
     <StatusLine state={state} resuming={resuming} />
   </>

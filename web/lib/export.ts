@@ -7,6 +7,7 @@ import { toolResultOf } from "./conversation-state";
 import { SANDBOX_LABEL } from "./sandbox-info";
 import { toolSummary } from "./tool-summary";
 import { imageSrc, userParts } from "./transcript";
+import { unansweredNote } from "./unanswered-note";
 
 /** `title-id` for download filenames: lowercase, dashes, no trailing dash. */
 export const exportSlug = (title: string, id: number): string =>
@@ -18,7 +19,8 @@ export const exportSlug = (title: string, id: number): string =>
 
 /**
  * One committed entry record per line, in transcript order, with a trailing newline. Records serialize whole, so
- * image blocks keep their base64 `data`.
+ * image blocks keep their base64 `data`. Only entries: why a message went unanswered is a submission's, not an
+ * entry's, and shows in the Markdown export.
  */
 export const toJsonl = (state: ConversationState): string =>
   `${state.entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
@@ -82,6 +84,12 @@ export const toMarkdown = (
         }
         for (const image of images) {
           parts.push(`![image](${image.src})`, "");
+        }
+        const unanswered = state.unanswered[entry.id];
+        const note =
+          unanswered === undefined ? undefined : unansweredNote(unanswered);
+        if (note !== undefined) {
+          parts.push(`> ${note}`, "");
         }
         continue;
       }

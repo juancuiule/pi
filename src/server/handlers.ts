@@ -1,16 +1,16 @@
 // Handlers for the API in api.ts. Agent and sandbox failures are defects: they surface as 500s.
-import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { Schema } from "effect";
 import { Effect, Layer, Stream } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 
 import { Agents } from "../agents/agents.ts";
+import type { ConversationEvent } from "../conversation-events.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";
 
-// AgentEvents are plain JSON (they are what pi-durable commits); the cast only names that for the SSE schema.
-const asJson = (event: AgentEvent) => event as unknown as Schema.Json;
+// ConversationEvents are plain JSON (pi-durable's committed AgentEvents, and storage records); the cast only names that for the SSE schema.
+const asJson = (event: ConversationEvent) => event as unknown as Schema.Json;
 
 const ConversationsHandlers = HttpApiBuilder.group(
   Api,

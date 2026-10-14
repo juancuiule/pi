@@ -1,5 +1,5 @@
 import { Effect, Fiber, Schedule, Stream } from "effect";
-import type { AgentEvent } from "effect-pi/api";
+import type { ConversationEvent } from "effect-pi/api";
 import { Api } from "effect-pi/api";
 import { FetchHttpClient } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
@@ -16,8 +16,8 @@ const startSubscription = (id: number): (() => void) => {
     });
     const events = yield* client.conversations.events({ params: { id } });
     yield* Stream.runForEach(events, (event) =>
-      // The wire schema is JSON; the server sends AgentEvents.
-      Effect.sync(() => apply(id, event as unknown as AgentEvent))
+      // The wire schema is JSON; the server sends ConversationEvents.
+      Effect.sync(() => apply(id, event as unknown as ConversationEvent))
     );
   }).pipe(
     Effect.catchTag("ConversationNotFound", () =>

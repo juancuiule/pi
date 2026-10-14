@@ -1,4 +1,4 @@
-import type { AgentEvent, ConversationSummary } from "effect-pi/api";
+import type { ConversationEvent, ConversationSummary } from "effect-pi/api";
 import { create } from "zustand";
 
 import { applyEvent, initialState } from "./conversation-state";
@@ -13,7 +13,7 @@ interface Store {
    * overlap. The summary keeps saying "paused" until the new Seat exists, so the flag stands in for that gap.
    */
   readonly resuming: Readonly<Record<number, number>>;
-  apply(id: number, event: AgentEvent): void;
+  apply(id: number, event: ConversationEvent): void;
   markEnded(id: number): void;
   beginResume(id: number): void;
   endResume(id: number): void;
