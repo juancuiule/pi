@@ -1386,13 +1386,18 @@ export class Agents extends Context.Service<
                 ...watch.snapshot,
                 unanswered: unanswered.value,
               });
-              watch.start((batch) => {
-                // Only the first event is a snapshot; batches never carry one.
-                Queue.offerAllUnsafe(
-                  queue,
-                  batch.filter((event) => event.type !== "snapshot")
+              // A watch that falls behind replaces its undelivered batches with a fresh snapshot, which gets the
+              // unanswered inputs read again. Deliveries are awaited one at a time, so the order holds; a read that
+              // fails ends the watch, and the stream with it.
+              watch.start(async (batch) => {
+                const delivered = await Promise.all(
+                  batch.map(async (event): Promise<ConversationEvent> =>
+                    event.type === "snapshot"
+                      ? { ...event, unanswered: await unansweredInputs(id) }
+                      : event
+                  )
                 );
-                return Promise.resolve();
+                Queue.offerAllUnsafe(queue, delivered);
               });
               void (async () => {
                 await watch.closed;

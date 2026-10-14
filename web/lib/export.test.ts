@@ -158,4 +158,17 @@ describe(toMarkdown, () => {
     ];
     expect(checks).toStrictEqual(Array.from({ length: 12 }, () => true));
   });
+
+  it("notes a message that was never answered", () => {
+    const md = toMarkdown(summary, {
+      ...state,
+      entries: [entry(7, [{ role: "user", content: "hello" }])],
+      unanswered: {
+        7: { entry: 7, reason: "no_model" },
+      } as unknown as ConversationState["unanswered"],
+    });
+    expect(md).toContain(
+      "## User\n\nhello\n\n> Not answered: the conversation's model is not available"
+    );
+  });
 });
