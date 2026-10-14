@@ -1,12 +1,10 @@
 "use client";
 
-import { Collapsible } from "@base-ui/react/collapsible";
 import type { AssistantMessage, EntryRecord } from "effect-pi/api";
 import {
   ArrowDown,
   BookOpen,
   Brain,
-  ChevronRight,
   CircleAlert,
   Info,
   LoaderCircle,
@@ -14,7 +12,17 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { CodeBlock, CodeBlockContent } from "@/components/ui/code-block";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceIcon,
+  TraceLine,
+  TraceTitle,
+} from "@/components/ui/trace";
 import { hasPendingApproval } from "@/lib/approval";
 import type { ConversationState } from "@/lib/conversation-state";
 import { settingsNote } from "@/lib/settings-note";
@@ -42,29 +50,33 @@ const Thinking = ({
   thinking: string;
   /** The run's live block: show it's still going. */
   streaming?: boolean;
-}) => (
-  <Collapsible.Root>
-    <Collapsible.Trigger className="text-muted-foreground group focus-visible:ring-ring/50 flex items-center gap-1.5 rounded-sm text-xs outline-none focus-visible:ring-2">
-      <Brain className="size-3.5" />
-      <span>
-        Thinking
-        {streaming ? "…" : ""}
-      </span>
-      {streaming ? (
-        <span
-          aria-hidden
-          className="bg-muted-foreground/40 h-1.5 w-8 rounded-full motion-safe:animate-pulse"
-        />
-      ) : null}
-      <ChevronRight className="size-3.5 transition-transform duration-150 group-data-panel-open:rotate-90" />
-    </Collapsible.Trigger>
-    <Collapsible.Panel>
-      <p className="border-border text-muted-foreground mt-1.5 border-l-2 pl-3 text-sm whitespace-pre-wrap">
+}) => {
+  // The person's open/close wins over the stream's default (open while thinking, closed once done).
+  const [open, setOpen] = useState<boolean>();
+  const line = (
+    <TraceLine status={streaming ? "running" : undefined}>
+      <TraceIcon>
+        {streaming ? (
+          <LoaderCircle className="motion-safe:animate-spin" />
+        ) : (
+          <Brain />
+        )}
+      </TraceIcon>
+      <TraceTitle>{streaming ? "Thinking" : "Thought"}</TraceTitle>
+    </TraceLine>
+  );
+  if (thinking.length === 0) {
+    return line;
+  }
+  return (
+    <TraceCollapsible open={open ?? streaming} onOpenChange={setOpen}>
+      <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
+      <TraceCollapsibleContent className="whitespace-pre-wrap">
         {thinking}
-      </p>
-    </Collapsible.Panel>
-  </Collapsible.Root>
-);
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
+  );
+};
 
 /** A forced skill's instructions, collapsed under its name. */
 const SkillChip = ({
@@ -74,18 +86,21 @@ const SkillChip = ({
   skill: string;
   instructions: string;
 }) => (
-  <Collapsible.Root>
-    <Collapsible.Trigger className="text-muted-foreground group focus-visible:ring-ring/50 flex items-center gap-1.5 rounded-sm text-xs font-medium outline-none focus-visible:ring-2">
-      <BookOpen className="size-3.5" />
-      <span>skill: {skill}</span>
-      <ChevronRight className="size-3.5 transition-transform duration-150 group-data-panel-open:rotate-90" />
-    </Collapsible.Trigger>
-    <Collapsible.Panel>
-      <div className="border-border mt-1.5 border-l-2 pl-3 text-sm">
+  <Trace>
+    <TraceCollapsible>
+      <TraceCollapsibleTrigger>
+        <TraceLine>
+          <TraceIcon>
+            <BookOpen />
+          </TraceIcon>
+          <TraceTitle>skill: {skill}</TraceTitle>
+        </TraceLine>
+      </TraceCollapsibleTrigger>
+      <TraceCollapsibleContent>
         <Markdown>{instructions}</Markdown>
-      </div>
-    </Collapsible.Panel>
-  </Collapsible.Root>
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
+  </Trace>
 );
 
 /** A `/skill:<name>` hint in the user's text: the model was told about the skill, not made to use it. */
@@ -98,6 +113,55 @@ const SkillMention = ({ skill }: { skill: string }) => (
     {skill}
   </span>
 );
+
+type ContentBlock = AssistantMessage["content"][number];
+
+/** One rendered piece: text on its own, or a run of thinking/tool-call blocks sharing a Trace. */
+type Segment =
+  | { readonly kind: "text"; readonly index: number; readonly text: string }
+  | {
+      readonly kind: "steps";
+      readonly items: { index: number; block: ContentBlock }[];
+    };
+
+const segmentsOf = (blocks: readonly ContentBlock[]): Segment[] => {
+  const segments: Segment[] = [];
+  for (const [index, block] of blocks.entries()) {
+    if (block.type === "text") {
+      segments.push({ kind: "text", index, text: block.text });
+      continue;
+    }
+    if (block.type !== "thinking" && block.type !== "toolCall") {
+      continue;
+    }
+    const last = segments.at(-1);
+    if (last?.kind === "steps") {
+      last.items.push({ index, block });
+    } else {
+      segments.push({ kind: "steps", items: [{ index, block }] });
+    }
+  }
+  return segments;
+};
+
+/** One line inside a message's Trace: thinking or a tool call. */
+const Step = ({
+  block,
+  streaming,
+  state,
+}: {
+  block: ContentBlock;
+  streaming: boolean;
+  state: ConversationState;
+}) => {
+  if (block.type === "thinking") {
+    return <Thinking thinking={block.thinking} streaming={streaming} />;
+  }
+  if (block.type === "toolCall") {
+    return <ToolCall call={block} state={state} />;
+  }
+  return null;
+};
 
 const AssistantBlocks = ({
   message,
@@ -117,36 +181,26 @@ const AssistantBlocks = ({
   const lastIndex = message.content.length - 1;
   return (
     <div className="flex flex-col gap-3">
-      {message.content.map((block, index) => {
-        const streaming = caret && index === lastIndex;
-        switch (block.type) {
-          case "text": {
-            return (
-              // oxlint-disable-next-line react/no-array-index-key -- blocks have no id; the list only grows
-              <div key={index}>
-                <Markdown>{block.text}</Markdown>
-                {caret && index === lastTextIndex ? <Caret /> : null}
-              </div>
-            );
-          }
-          case "thinking": {
-            return (
-              // oxlint-disable-next-line react/no-array-index-key -- blocks have no id; the list only grows
-              <Thinking
-                key={index}
-                thinking={block.thinking}
-                streaming={streaming}
+      {segmentsOf(message.content).map((segment) =>
+        segment.kind === "text" ? (
+          <div key={`t${segment.index}`}>
+            <Markdown>{segment.text}</Markdown>
+            {caret && segment.index === lastTextIndex ? <Caret /> : null}
+          </div>
+        ) : (
+          <Trace key={`s${segment.items[0]?.index ?? 0}`}>
+            {segment.items.map(({ index, block }) => (
+              <Step
+                // oxlint-disable-next-line react/no-array-index-key -- thinking blocks have no id; the list only grows
+                key={block.type === "toolCall" ? block.id : index}
+                block={block}
+                streaming={caret === true && index === lastIndex}
+                state={state}
               />
-            );
-          }
-          case "toolCall": {
-            return <ToolCall key={block.id} call={block} state={state} />;
-          }
-          default: {
-            return null;
-          }
-        }
-      })}
+            ))}
+          </Trace>
+        )
+      )}
     </div>
   );
 };
@@ -171,15 +225,25 @@ const Entry = ({
   }
   if (message === undefined) {
     return (
-      <details className="text-muted-foreground text-xs">
-        <summary className="inline-flex cursor-pointer items-center gap-1.5">
-          <Info className="size-3.5" />
-          {entry.kind}
-        </summary>
-        <pre className="mt-1 overflow-x-auto pl-5">
-          {JSON.stringify(entry.data, null, 2)}
-        </pre>
-      </details>
+      <Trace>
+        <TraceCollapsible>
+          <TraceCollapsibleTrigger>
+            <TraceLine>
+              <TraceIcon>
+                <Info />
+              </TraceIcon>
+              <TraceTitle>{entry.kind}</TraceTitle>
+            </TraceLine>
+          </TraceCollapsibleTrigger>
+          <TraceCollapsibleContent>
+            <CodeBlock size="sm">
+              <CodeBlockContent wrap className="max-h-64">
+                {JSON.stringify(entry.data, null, 2)}
+              </CodeBlockContent>
+            </CodeBlock>
+          </TraceCollapsibleContent>
+        </TraceCollapsible>
+      </Trace>
     );
   }
   switch (message.role) {
@@ -246,13 +310,16 @@ const StatusLine = ({
     return null;
   }
   return (
-    <p
-      aria-live="polite"
-      className="text-muted-foreground flex items-center gap-1.5 text-sm"
-    >
-      <LoaderCircle aria-hidden className="size-3.5 motion-safe:animate-spin" />
-      {resuming ? "Resuming…" : "Working…"}
-    </p>
+    <div aria-live="polite">
+      <Trace>
+        <TraceLine status="running">
+          <TraceIcon>
+            <LoaderCircle className="motion-safe:animate-spin" />
+          </TraceIcon>
+          <TraceTitle>{resuming ? "Resuming…" : "Working…"}</TraceTitle>
+        </TraceLine>
+      </Trace>
+    </div>
   );
 };
 

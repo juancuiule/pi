@@ -223,14 +223,26 @@ export const applyEvent = (
   }
 };
 
+/** The committed entry carrying a call's tool result, once there is one; its `data` holds the diagnostics. */
+export const toolResultEntryOf = (
+  state: ConversationState,
+  callId: string
+): EntryRecord | undefined =>
+  state.entries.find((entry) =>
+    (entry.model ?? []).some(
+      (m) => m.role === "toolResult" && m.toolCallId === callId
+    )
+  );
+
 /** The committed tool result message for a call, once there is one. */
 export const toolResultOf = (
   state: ConversationState,
   callId: string
-): Message | undefined =>
-  state.entries
-    .flatMap((entry) => entry.model ?? [])
-    .find((m) => m.role === "toolResult" && m.toolCallId === callId);
+): Extract<Message, { role: "toolResult" }> | undefined =>
+  toolResultEntryOf(state, callId)?.model?.find(
+    (m): m is Extract<Message, { role: "toolResult" }> =>
+      m.role === "toolResult" && m.toolCallId === callId
+  );
 
 export const totalUsage = (usage: UsageState | undefined) => {
   let tokens = 0;

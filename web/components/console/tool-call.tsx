@@ -1,24 +1,36 @@
 "use client";
 
-import { Collapsible } from "@base-ui/react/collapsible";
 import type { ApprovalChoice, Message } from "effect-pi/api";
-import {
-  Ban,
-  Check,
-  ChevronRight,
-  CircleStop,
-  CircleX,
-  LoaderCircle,
-  ShieldAlert,
-} from "lucide-react";
+import { CircleAlert, Info, LoaderCircle, TriangleAlert } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { createElement, useState } from "react";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import {
+  CodeBlock,
+  CodeBlockActions,
+  CodeBlockContent,
+  CodeBlockCopyButton,
+  CodeBlockLine,
+} from "@/components/ui/code-block";
+import {
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceDescription,
+  TraceIcon,
+  TraceLine,
+  TraceTitle,
+} from "@/components/ui/trace";
+import { useHighlightedCode } from "@/hooks/use-highlighted-code";
 import { approvalOf } from "@/lib/approval";
 import { useApproval } from "@/lib/approval-context";
-import { toolResultOf } from "@/lib/conversation-state";
+import { toolResultEntryOf, toolResultOf } from "@/lib/conversation-state";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
+import type { ToolDiagnostic } from "@/lib/diagnostics";
+import { diagnosticsOf, visibleResultContent } from "@/lib/diagnostics";
 import { toolSummary } from "@/lib/tool-summary";
 import { cn } from "@/lib/utils";
 
@@ -35,18 +47,41 @@ type ResultContent = Extract<
   { role: "toolResult" }
 >["content"][number];
 
-const OutputPre = ({ text }: { text: string }) => (
-  <pre className="bg-muted text-code max-h-80 overflow-auto rounded-md p-3 font-mono break-words whitespace-pre-wrap">
-    {text}
-  </pre>
-);
+const OutputBlock = ({
+  text,
+  language = "ansi",
+  failed = false,
+}: {
+  text: string;
+  /** Shiki language; "ansi" colors terminal output, an unknown one stays plain. */
+  language?: string;
+  failed?: boolean;
+}) => {
+  const lines = useHighlightedCode(text, language);
+  return (
+    <CodeBlock size="sm" variant={failed ? "destructive" : "default"}>
+      <CodeBlockActions>
+        <CodeBlockCopyButton value={text} />
+      </CodeBlockActions>
+      <CodeBlockContent wrap className="max-h-80">
+        {lines.map((line, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- lines have no id; output only grows or is replaced
+          <CodeBlockLine key={index}>{line}</CodeBlockLine>
+        ))}
+      </CodeBlockContent>
+    </CodeBlock>
+  );
+};
 
-const LiveOutput = ({ output }: { output: string }) =>
-  output === "" ? null : <OutputPre text={output} />;
-
-const ResultBlock = ({ block }: { block: ResultContent }) =>
+const ResultBlock = ({
+  block,
+  failed,
+}: {
+  block: ResultContent;
+  failed: boolean;
+}) =>
   block.type === "text" ? (
-    <OutputPre text={block.text} />
+    <OutputBlock text={block.text} failed={failed} />
   ) : (
     // oxlint-disable-next-line next/no-img-element -- inline data URL, nothing for next/image to optimize
     <img
@@ -56,73 +91,18 @@ const ResultBlock = ({ block }: { block: ResultContent }) =>
     />
   );
 
-const Status = ({
-  status,
-  isError,
-  needsApproval,
-  denied,
-  stopped,
-}: {
-  status: "pending" | "running" | "done";
-  isError: boolean;
-  needsApproval: boolean;
-  denied: boolean;
-  stopped: boolean;
-}) => {
-  if (denied) {
-    return (
-      <span className="text-muted-foreground flex items-center gap-1 text-xs">
-        <Ban className="size-3.5" />
-        Denied
-      </span>
-    );
-  }
-  if (stopped) {
-    return (
-      <span className="text-muted-foreground flex items-center gap-1 text-xs">
-        <CircleStop className="size-3.5" />
-        Stopped
-      </span>
-    );
-  }
-  if (needsApproval) {
-    return (
-      <span className="text-warning flex items-center gap-1 text-xs">
-        <ShieldAlert className="size-3.5" />
-        Needs approval
-      </span>
-    );
-  }
-  if (isError) {
-    return (
-      <span className="text-destructive flex items-center gap-1 text-xs">
-        <CircleX className="size-3.5" />
-        Failed
-      </span>
-    );
-  }
-  if (status === "done") {
-    return (
-      <span className="text-muted-foreground flex items-center">
-        <Check className="size-3.5" />
-        <span className="sr-only">Done</span>
-      </span>
-    );
-  }
-  return (
-    <span className="text-muted-foreground flex items-center">
-      <LoaderCircle aria-hidden className="size-3.5 motion-safe:animate-spin" />
-      <span className="sr-only">Running</span>
-    </span>
-  );
-};
-
 const Arguments = ({ call }: { call: ToolCallBlock }) => {
   const args = call.arguments as Record<string, unknown> | undefined;
-  if (call.name === "bash" && typeof args?.command === "string") {
-    return <OutputPre text={args.command} />;
-  }
-  return <OutputPre text={JSON.stringify(call.arguments ?? {}, null, 2)} />;
+  const command =
+    call.name === "bash" && typeof args?.command === "string"
+      ? args.command
+      : undefined;
+  return (
+    <OutputBlock
+      text={command ?? JSON.stringify(call.arguments ?? {}, null, 2)}
+      language={command === undefined ? "text" : "bash"}
+    />
+  );
 };
 
 const ApprovalActions = ({ approvalKey }: { approvalKey: string }) => {
@@ -165,7 +145,7 @@ const ApprovalActions = ({ approvalKey }: { approvalKey: string }) => {
 };
 
 /**
- * Controlled open state: the card never opens or closes on its own after mount (base-ui warns about a
+ * Controlled open state: the line never opens or closes on its own after mount (base-ui warns about a
  * changing defaultOpen otherwise), except the one transition into awaiting approval.
  */
 const useToolCallOpen = (initial: boolean, pending: boolean) => {
@@ -195,6 +175,126 @@ const approvalFor = (
   };
 };
 
+/** What the call is doing now, decided once — drives the line's status, label and icon. */
+type CallState =
+  | "denied"
+  | "stopped"
+  | "awaiting"
+  | "failed"
+  | "running"
+  | "interrupted"
+  | "done";
+
+const callState = (
+  approval: ReturnType<typeof approvalFor>,
+  isError: boolean,
+  finished: boolean,
+  running: boolean
+): CallState => {
+  if (approval.denied) {
+    return "denied";
+  }
+  if (approval.stopped) {
+    return "stopped";
+  }
+  if (approval.awaiting) {
+    return "awaiting";
+  }
+  if (isError) {
+    return "failed";
+  }
+  if (!finished) {
+    return running ? "running" : "interrupted";
+  }
+  return "done";
+};
+
+const stateIcon = (step: CallState, icon: LucideIcon): ReactNode => {
+  if (step === "running") {
+    return <LoaderCircle className="motion-safe:animate-spin" />;
+  }
+  if (step === "failed") {
+    return <CircleAlert />;
+  }
+  return createElement(icon);
+};
+
+const LABELS: Record<CallState, string | undefined> = {
+  denied: "Denied",
+  stopped: "Stopped",
+  awaiting: "Needs approval",
+  failed: "Failed",
+  running: "Running",
+  interrupted: "Stopped",
+  done: undefined,
+};
+
+const LINE_STATUS: Record<
+  CallState,
+  "running" | "error" | "pending" | undefined
+> = {
+  denied: undefined,
+  stopped: undefined,
+  awaiting: "pending",
+  failed: "error",
+  running: "running",
+  interrupted: undefined,
+  done: undefined,
+};
+
+const Section = ({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) => (
+  <div className="flex flex-col gap-1">
+    <span className="text-muted-foreground text-xs font-medium">{label}</span>
+    {children}
+  </div>
+);
+
+/** The harness's `<harness>` diagnostics, rendered as notes in place of the model-facing markup. */
+const DIAGNOSTIC_META: Record<
+  ToolDiagnostic["severity"],
+  { readonly Icon: LucideIcon; readonly className: string }
+> = {
+  error: { Icon: CircleAlert, className: "text-destructive" },
+  warn: { Icon: TriangleAlert, className: "text-warning" },
+  info: { Icon: Info, className: "text-muted-foreground" },
+};
+
+const Diagnostics = ({
+  items,
+}: {
+  readonly items: readonly ToolDiagnostic[];
+}) => (
+  <div className="flex flex-col gap-1">
+    {items.map((item, index) => {
+      const { Icon, className } = DIAGNOSTIC_META[item.severity];
+      return (
+        // oxlint-disable-next-line react/no-array-index-key -- a result's diagnostics are fixed
+        <p
+          key={index}
+          className={cn("flex items-start gap-1.5 text-xs", className)}
+        >
+          <Icon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+          <span>{item.message}</span>
+        </p>
+      );
+    })}
+  </div>
+);
+
+/** Whether the call carries arguments worth showing; `{}` (a tool with no input) hides the section. */
+const hasInput = (call: ToolCallBlock): boolean => {
+  const args: unknown = call.arguments;
+  return typeof args === "object" && args !== null
+    ? Object.keys(args).length > 0
+    : args !== undefined && args !== null;
+};
+
 export const ToolCall = ({
   call,
   state,
@@ -203,82 +303,79 @@ export const ToolCall = ({
   state: ConversationState;
 }) => {
   const tool = state.tools[call.id];
-  const result = toolResultOf(state, call.id);
-  const toolResult = result?.role === "toolResult" ? result : undefined;
-  const status =
-    toolResult === undefined ? (tool?.status ?? "pending") : "done";
+  const resultEntry = toolResultEntryOf(state, call.id);
+  const toolResult = toolResultOf(state, call.id);
+  const diagnostics = diagnosticsOf(resultEntry?.data);
+  const finished = toolResult !== undefined;
   const isError = toolResult?.isError ?? false;
   const summary = toolSummary(call.name, call.arguments);
   const Icon = toolIcon(call.name);
   const approval = approvalFor(toolResult, tool);
-  const awaitingApproval = approval.awaiting;
+  const step = callState(approval, isError, finished, state.running);
+  const label = LABELS[step];
+  const labelNode =
+    step === "awaiting" ? <span className="text-warning">{label}</span> : label;
+
+  const visibleContent = finished
+    ? visibleResultContent(toolResult.content, diagnostics)
+    : [];
+  const showOutput = finished
+    ? visibleContent.length > 0 || diagnostics.length > 0
+    : (tool?.output ?? "") !== "";
+
   const [open, setOpen] = useToolCallOpen(
-    isError || status !== "done",
-    awaitingApproval
+    isError || !finished,
+    approval.awaiting
   );
 
   return (
-    <Collapsible.Root open={open} onOpenChange={setOpen}>
-      <div
-        className={cn(
-          "bg-card rounded-lg border",
-          isError &&
-            !approval.denied &&
-            !approval.stopped &&
-            "border-destructive/50"
-        )}
-      >
-        <Collapsible.Trigger className="group focus-visible:ring-ring/50 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left outline-none focus-visible:ring-2">
-          {createElement(Icon, {
-            className: "text-muted-foreground size-3.5 shrink-0",
-            "aria-hidden": true,
-          })}
-          <span className="text-ui shrink-0 font-mono font-medium">
-            {call.name}
-          </span>
-          <span
-            className="text-muted-foreground text-ui min-w-0 flex-1 truncate font-mono"
-            title={summary}
-          >
-            {summary}
-          </span>
-          <Status
-            status={status}
-            isError={isError}
-            needsApproval={awaitingApproval}
-            denied={approval.denied}
-            stopped={approval.stopped}
-          />
-          <ChevronRight className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90" />
-        </Collapsible.Trigger>
-        <Collapsible.Panel>
-          <div className="flex flex-col gap-3 border-t px-3 py-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-muted-foreground text-xs font-medium">
-                Input
-              </span>
-              <Arguments call={call} />
-            </div>
-            {awaitingApproval && approval.key !== undefined ? (
-              <ApprovalActions approvalKey={approval.key} />
-            ) : null}
-            {toolResult === undefined && tool?.output === "" ? null : (
-              <div className="flex flex-col gap-1">
-                <span className="text-muted-foreground text-xs font-medium">
-                  Output
-                </span>
-                {toolResult === undefined ? (
-                  <LiveOutput output={tool?.output ?? ""} />
-                ) : (
-                  toolResult.content.map((c, index) => (
-                    <ResultBlock key={`${call.id}:${index}`} block={c} />
-                  ))
-                )}
-              </div>
+    <TraceCollapsible open={open} onOpenChange={setOpen}>
+      <TraceCollapsibleTrigger>
+        <TraceLine status={LINE_STATUS[step]}>
+          <TraceIcon>{stateIcon(step, Icon)}</TraceIcon>
+          <TraceTitle>
+            <span className="text-foreground/80 font-mono font-medium">
+              {call.name}
+            </span>
+            {summary === "" ? null : (
+              <span className="font-mono"> {summary}</span>
             )}
-          </div>
-        </Collapsible.Panel>
-      </div>
-    </Collapsible.Root>
+          </TraceTitle>
+          {labelNode === undefined ? null : (
+            <TraceDescription>{labelNode}</TraceDescription>
+          )}
+        </TraceLine>
+      </TraceCollapsibleTrigger>
+      <TraceCollapsibleContent>
+        <div className="flex flex-col gap-3">
+          {hasInput(call) ? (
+            <Section label="Input">
+              <Arguments call={call} />
+            </Section>
+          ) : null}
+          {approval.awaiting && approval.key !== undefined ? (
+            <ApprovalActions approvalKey={approval.key} />
+          ) : null}
+          {showOutput ? (
+            <Section label="Output">
+              {finished ? (
+                <>
+                  {visibleContent.map((c, index) => (
+                    <ResultBlock
+                      key={`${call.id}:${index}`}
+                      block={c}
+                      failed={isError}
+                    />
+                  ))}
+                  <Diagnostics items={diagnostics} />
+                </>
+              ) : (
+                <OutputBlock text={tool?.output ?? ""} />
+              )}
+            </Section>
+          ) : null}
+        </div>
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
   );
 };

@@ -1,7 +1,8 @@
 // The shell panel's text: the agent's bash commands and their output, in order, as the terminal expects (CRLF newlines).
 import { approvalOf } from "./approval";
-import { toolResultOf } from "./conversation-state";
+import { toolResultEntryOf, toolResultOf } from "./conversation-state";
 import type { ConversationState } from "./conversation-state";
+import { diagnosticsOf, visibleResultContent } from "./diagnostics";
 
 const crlf = (text: string) => text.replaceAll(/\r?\n/gu, "\r\n");
 
@@ -27,8 +28,8 @@ const callOutput = (
   state: ConversationState,
   callId: string
 ): string | undefined => {
-  const result = toolResultOf(state, callId);
-  const toolResult = result?.role === "toolResult" ? result : undefined;
+  const resultEntry = toolResultEntryOf(state, callId);
+  const toolResult = toolResultOf(state, callId);
   const approval =
     approvalOf(toolResult?.details) ?? approvalOf(state.tools[callId]?.details);
   if (
@@ -38,12 +39,16 @@ const callOutput = (
   ) {
     return undefined;
   }
+  // The `<harness>` diagnostics block is model-facing; a terminal would never print it.
   return (
     ansiOf(toolResult?.details) ??
     ansiOf(state.tools[callId]?.details) ??
     (toolResult === undefined
       ? (state.tools[callId]?.output ?? "")
-      : toolResult.content
+      : visibleResultContent(
+          toolResult.content,
+          diagnosticsOf(resultEntry?.data)
+        )
           .flatMap((c) => (c.type === "text" ? [c.text] : []))
           .join("\n"))
   );

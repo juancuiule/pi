@@ -1,0 +1,282 @@
+import type { AssistantMessage, EntryRecord, Message } from "effect-pi/api";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import { Markdown } from "../components/console/markdown";
+import { ToolCall } from "../components/console/tool-call";
+import type { ToolCallBlock } from "../components/console/tool-call";
+import { Transcript } from "../components/console/transcript";
+import { initialState } from "./conversation-state";
+import type { ConversationState, ToolRun } from "./conversation-state";
+
+const call = {
+  type: "toolCall",
+  id: "c1",
+  name: "bash",
+  arguments: { command: "pwd" },
+} as unknown as ToolCallBlock;
+
+const tool: ToolRun = {
+  callId: call.id,
+  name: call.name,
+  output: "",
+  details: undefined,
+  status: "running",
+};
+
+const entry = (message: Message, data?: unknown): EntryRecord =>
+  ({
+    id: 1,
+    conversationId: 1,
+    kind: "message",
+    model: [message],
+    ...(data === undefined ? {} : { data }),
+  }) as unknown as EntryRecord;
+
+const assistant = (thinking: string): AssistantMessage =>
+  ({
+    role: "assistant",
+    content: [{ type: "thinking", thinking }],
+  }) as unknown as AssistantMessage;
+
+const transcript = (state: ConversationState, resuming = false) =>
+  renderToStaticMarkup(createElement(Transcript, { state, resuming }));
+const toolCall = (state: ConversationState) =>
+  renderToStaticMarkup(createElement(ToolCall, { call, state }));
+
+describe("chat traces", () => {
+  it("opens live thinking and renders it as a running trace", () => {
+    const html = transcript({
+      ...initialState,
+      running: true,
+      streaming: assistant("Considering the request"),
+    });
+    expect(html).toContain('data-slot="trace-line"');
+    expect(html).toContain('data-status="running"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("Considering the request");
+  });
+
+  it("does not offer an empty reasoning disclosure", () => {
+    const html = transcript({
+      ...initialState,
+      running: true,
+      streaming: assistant(""),
+    });
+    expect(html).toContain("Thinking");
+    expect(html).not.toContain('data-slot="trace-collapsible-trigger"');
+  });
+
+  it("collapses completed thinking and labels it Thought", () => {
+    const html = transcript({
+      ...initialState,
+      entries: [entry(assistant("Done thinking"))],
+    });
+    expect(html).toContain(">Thought<");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('data-status="running"');
+  });
+
+  it("uses a running trace for the trailing Working line", () => {
+    const html = transcript({ ...initialState, running: true });
+    expect(html).toContain('data-status="running"');
+    expect(html).toContain("Working…");
+    expect(transcript(initialState)).not.toContain("Working…");
+  });
+
+  it("reads Resuming… instead of Working… while a resume is in flight", () => {
+    const html = transcript({ ...initialState, running: true }, true);
+    expect(html).toContain("Resuming…");
+    expect(html).not.toContain("Working…");
+  });
+
+  it("shows a running tool as a trace line with its input in a code block", () => {
+    const html = toolCall({
+      ...initialState,
+      running: true,
+      tools: { c1: tool },
+    });
+    expect(html).toContain('data-slot="trace-line"');
+    expect(html).toContain('data-status="running"');
+    expect(html).toContain("Running");
+    expect(html).toContain('data-slot="code-block"');
+    expect(html).toContain("pwd");
+  });
+
+  it("shows the Input section when the call has arguments", () => {
+    const html = toolCall({
+      ...initialState,
+      running: true,
+      tools: { c1: tool },
+    });
+    expect(html).toContain(">Input<");
+  });
+
+  it.each([{}, undefined])(
+    "hides the Input section when arguments are %s",
+    (args) => {
+      const bare = {
+        type: "toolCall",
+        id: "c1",
+        name: "bash",
+        arguments: args,
+      } as unknown as ToolCallBlock;
+      const html = renderToStaticMarkup(
+        createElement(ToolCall, {
+          call: bare,
+          state: { ...initialState, running: true, tools: { c1: tool } },
+        })
+      );
+      expect(html).not.toContain(">Input<");
+    }
+  );
+
+  it("renders <harness> diagnostics as notes, dropping the model-facing markup", () => {
+    const result = {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "bash",
+      content: [
+        { type: "text", text: "ls: missing: No such file" },
+        {
+          type: "text",
+          text: "<harness>\n[error] Command exited with code 2\n</harness>",
+        },
+      ],
+      isError: true,
+    } as unknown as Message;
+    const html = toolCall({
+      ...initialState,
+      entries: [
+        entry(result, {
+          diagnostics: [
+            { severity: "error", message: "Command exited with code 2" },
+          ],
+        }),
+      ],
+    });
+    expect(html).toContain("ls: missing: No such file");
+    expect(html).toContain("Command exited with code 2");
+    expect(html).not.toContain("<harness>");
+    expect(html).not.toContain("&lt;harness&gt;");
+  });
+
+  it("keeps the Output section when diagnostics are the result's only content", () => {
+    const result = {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "bash",
+      content: [
+        {
+          type: "text",
+          text: "<harness>\n[error] Command exited with code 2\n</harness>",
+        },
+      ],
+      isError: true,
+    } as unknown as Message;
+    const html = toolCall({
+      ...initialState,
+      entries: [
+        entry(result, {
+          diagnostics: [
+            { severity: "error", message: "Command exited with code 2" },
+          ],
+        }),
+      ],
+    });
+    expect(html).toContain(">Output<");
+    expect(html).toContain("Command exited with code 2");
+    expect(html).not.toContain("&lt;harness&gt;");
+  });
+
+  it("renders live output in a code block and hides an empty Output section", () => {
+    const state = {
+      ...initialState,
+      running: true,
+      tools: { c1: { ...tool, output: "/workspace" } },
+    };
+    const html = toolCall(state);
+    expect(html).toContain("Output");
+    expect(html).toContain("/workspace");
+    expect(
+      toolCall({ ...initialState, running: true, tools: { c1: tool } })
+    ).not.toContain(">Output<");
+  });
+
+  it("keeps approval actions visible and marks the call pending, not running", () => {
+    const state = {
+      ...initialState,
+      running: true,
+      tools: {
+        c1: {
+          ...tool,
+          details: { approval: "pending", approvalKey: "1:c1" },
+        },
+      },
+    };
+    const html = toolCall(state);
+    expect(html).toContain('data-status="pending"');
+    expect(html).toContain("Needs approval");
+    expect(html).toContain("Always allow");
+    expect(html).toContain(">Deny<");
+    expect(transcript(state)).not.toContain("Working…");
+  });
+
+  it.each([
+    [undefined, "Failed", true],
+    ["denied", "Denied", false],
+    ["stopped", "Stopped", false],
+  ] as const)(
+    "renders a failed result with approval %s as %s",
+    (approval, label, destructive) => {
+      const result = {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "bash",
+        content: [{ type: "text", text: "Unable to run" }],
+        isError: true,
+        details: { approval },
+      } as unknown as Message;
+      const html = toolCall({ ...initialState, entries: [entry(result)] });
+      expect(html).toContain(label);
+      expect(html.includes('data-status="error"')).toBe(destructive);
+      expect(html).not.toContain('data-status="running"');
+      expect(html).toContain("Unable to run");
+    }
+  );
+
+  it("does not leave an interrupted tool shimmering", () => {
+    const html = toolCall({ ...initialState, tools: { c1: tool } });
+    expect(html).toContain("Stopped");
+    expect(html).not.toContain('data-status="running"');
+  });
+});
+
+describe("Markdown code blocks", () => {
+  it.each(["```ts\nconst x = 1;\n```", "```\nplain output\n```"])(
+    "renders fenced code with a copy action: %s",
+    (children) => {
+      const html = renderToStaticMarkup(
+        createElement(Markdown, null, children)
+      );
+      expect(html).toContain('data-slot="code-block"');
+      expect(html).toContain('data-slot="code-block-copy-button"');
+      expect(html).toContain('dir="ltr"');
+      expect(html).not.toContain("<code><code");
+    }
+  );
+
+  it("keeps inline code inline and escapes HTML", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        Markdown,
+        null,
+        "Use `pwd`.\n\n```html\n<script>alert(1)</script>\n```"
+      )
+    );
+    expect(html).toContain(">pwd</code>");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+});

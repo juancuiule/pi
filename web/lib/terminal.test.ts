@@ -111,6 +111,42 @@ describe(terminalText, () => {
     );
   });
 
+  it("omits the <harness> diagnostics block the harness appended", () => {
+    const resultEntry = {
+      id: 2,
+      conversationId: 1,
+      kind: "pi.tool-result",
+      model: [
+        {
+          role: "toolResult",
+          toolCallId: "a",
+          content: [
+            { type: "text", text: "ls: missing: No such file" },
+            {
+              type: "text",
+              text: "<harness>\n[error] Command exited with code 2\n</harness>",
+            },
+          ],
+        },
+      ],
+      data: {
+        diagnostics: [
+          { severity: "error", message: "Command exited with code 2" },
+        ],
+      },
+    } as unknown as EntryRecord;
+    let state = run([
+      { role: "assistant", content: [call("a", { command: "ls missing" })] },
+    ]);
+    state = applyEvent(state, {
+      type: "entry_appended",
+      entry: resultEntry,
+    } as AgentEvent);
+    expect(terminalText(state)).toBe(
+      "$ ls missing\r\nls: missing: No such file"
+    );
+  });
+
   it("starts the next command on its own line after output without a newline", () => {
     const state = run([
       {

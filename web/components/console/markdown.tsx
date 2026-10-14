@@ -1,8 +1,56 @@
+"use client";
+
+import { isValidElement } from "react";
+import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import {
+  CodeBlock,
+  CodeBlockActions,
+  CodeBlockContent,
+  CodeBlockCopyButton,
+  CodeBlockLine,
+} from "@/components/ui/code-block";
+import { useHighlightedCode } from "@/hooks/use-highlighted-code";
 import { cn } from "@/lib/utils";
+
+/** A fenced code block: `pre` receives its inner `code` element, carrying `language-*` and the text. */
+const CodeFence = ({ children }: { children?: ReactNode }) => {
+  const inner = isValidElement<{
+    className?: string;
+    children?: ReactNode;
+  }>(children)
+    ? children
+    : null;
+  const className =
+    typeof inner?.props.className === "string" ? inner.props.className : "";
+  const language =
+    className
+      .split(" ")
+      .find((name) => name.startsWith("language-"))
+      ?.slice("language-".length) ?? "";
+  const raw = inner?.props.children ?? children;
+  const text = (Array.isArray(raw) ? raw.join("") : String(raw ?? "")).replace(
+    /\n$/u,
+    ""
+  );
+  const lines = useHighlightedCode(text, language);
+  return (
+    <CodeBlock className="my-2">
+      <CodeBlockActions>
+        <CodeBlockCopyButton value={text} />
+      </CodeBlockActions>
+      <CodeBlockContent>
+        {lines.map((line, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- lines have no id; the list only grows
+          <CodeBlockLine key={index}>{line}</CodeBlockLine>
+        ))}
+      </CodeBlockContent>
+    </CodeBlock>
+  );
+};
 
 // Element overrides only — no typography plugin, no raw HTML (react-markdown's default).
 const components: Components = {
@@ -66,11 +114,7 @@ const components: Components = {
       </code>
     );
   },
-  pre: ({ children }) => (
-    <pre className="bg-muted text-code my-2 overflow-x-auto rounded-lg p-3 font-mono leading-relaxed">
-      {children}
-    </pre>
-  ),
+  pre: ({ children }) => <CodeFence>{children}</CodeFence>,
   hr: () => <hr className="border-border my-4" />,
   table: ({ children }) => (
     <div className="my-2 overflow-x-auto">
