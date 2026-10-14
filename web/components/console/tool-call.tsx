@@ -6,6 +6,7 @@ import {
   Ban,
   Check,
   ChevronRight,
+  CircleStop,
   CircleX,
   LoaderCircle,
   ShieldAlert,
@@ -60,17 +61,27 @@ const Status = ({
   isError,
   needsApproval,
   denied,
+  stopped,
 }: {
   status: "pending" | "running" | "done";
   isError: boolean;
   needsApproval: boolean;
   denied: boolean;
+  stopped: boolean;
 }) => {
   if (denied) {
     return (
       <span className="text-muted-foreground flex items-center gap-1 text-xs">
         <Ban className="size-3.5" />
         Denied
+      </span>
+    );
+  }
+  if (stopped) {
+    return (
+      <span className="text-muted-foreground flex items-center gap-1 text-xs">
+        <CircleStop className="size-3.5" />
+        Stopped
       </span>
     );
   }
@@ -180,6 +191,7 @@ const approvalFor = (
     key: approval?.state === "pending" ? approval.key : undefined,
     awaiting: approval?.state === "pending" && toolResult === undefined,
     denied: approval?.state === "denied",
+    stopped: approval?.state === "stopped",
   };
 };
 
@@ -210,7 +222,10 @@ export const ToolCall = ({
       <div
         className={cn(
           "bg-card rounded-lg border",
-          isError && !approval.denied && "border-destructive/50"
+          isError &&
+            !approval.denied &&
+            !approval.stopped &&
+            "border-destructive/50"
         )}
       >
         <Collapsible.Trigger className="group focus-visible:ring-ring/50 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left outline-none focus-visible:ring-2">
@@ -232,6 +247,7 @@ export const ToolCall = ({
             isError={isError}
             needsApproval={awaitingApproval}
             denied={approval.denied}
+            stopped={approval.stopped}
           />
           <ChevronRight className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90" />
         </Collapsible.Trigger>

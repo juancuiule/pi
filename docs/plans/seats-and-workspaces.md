@@ -27,10 +27,10 @@ Replaces ended and sandbox-removed conversations with pausable ones, and splits 
 Each step leaves `pnpm check` green.
 
 1. Build the desktop image `FROM` the shell image.
-2. New docs and names (`archivedAt`, `WorkspaceDoc`, `LiveDoc` status); "Stopped by the user before approval".
-3. `Capacity` and `Workspaces` with the Docker-volume storage adapter.
-4. `Agents.open` and the Seat handle; `ask` moves to the test helpers.
-5. `Conversations` with Pause and Resume instead of end and close.
+2. "Stopped by the user before approval": the `stop` decision and `stopWaitingCalls` (`src/approvals.ts`), and a Stopped state in the console.
+3. `Capacity` and `Workspaces` with the Docker-volume storage adapter, and `WorkspaceDoc`.
+4. `Agents.open` and the Seat handle (`send`, `stop`, `decide`, skill expansion); `MetaDoc.archivedAt`; `ask` moves to the test helpers.
+5. `Conversations` with Pause and Resume instead of end and close; run status from `LiveDoc`.
 6. API and console: Pause, Resume, Stop, Archive, the limit dialog.
 7. Upgrade (person and agent) and the wait list.
 

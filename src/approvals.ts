@@ -1,9 +1,11 @@
+import type { Context } from "@earendil-works/chord";
 // Per-conversation approval policy for gated tools. Each conversation's doc holds its policy, pending
 // entries and decisions. Keys are `${conversationId}:${callId}`.
 import { defineDoc } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
   DocumentWatch,
+  Harness,
   ToolRegistration,
 } from "@earendil-works/pi-durable";
 
@@ -22,7 +24,8 @@ export type PendingApproval = {
 export type ApprovalState = {
   policy: ApprovalPolicy;
   pending: Record<string, PendingApproval>;
-  decisions: Record<string, "approve" | "deny">;
+  /** `stop` is written by `stopWaitingCalls` just before the conversation is aborted. */
+  decisions: Record<string, "approve" | "deny" | "stop">;
 };
 
 export const ApprovalDoc = defineDoc<ApprovalState>({
@@ -40,6 +43,14 @@ export const approvalKey = (
 ): string => `${String(conversationId)}:${callId}`;
 
 const DENIED = "The user denied this tool call.";
+export const STOPPED = "Stopped by the user before approval.";
+
+// How long a stopped call waits for its abort before failing on its own, so a Stop whose abort never
+// comes still ends the call instead of leaving it waiting.
+const STOPPED_ABORT_TIMEOUT_MS = 10_000;
+
+const withoutKey = <V>(record: Record<string, V>, key: string) =>
+  Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
 
 /**
  * Wrap a gated tool: under `policy: "ask"` its execute waits for a decision committed to its
@@ -71,12 +82,18 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
     const signal = context.abortSignal;
     // Declared before the try so the finally can always detach the listener and stop the watch.
     let watch: DocumentWatch<ApprovalState> | undefined;
-    const waiting = Promise.withResolvers<"approve" | "deny">();
+    const waiting = Promise.withResolvers<"approve" | "deny" | "stop">();
     const onAbort = () => {
       waiting.reject(
         signal?.reason instanceof Error ? signal.reason : new Error("aborted")
       );
     };
+    const removeEntry = () =>
+      api.commit(async (tx) => {
+        const doc = await tx.doc(ApprovalDoc, api.conversationId);
+        doc.pending = withoutKey(doc.pending, key);
+        doc.decisions = withoutKey(doc.decisions, key);
+      }, context);
     try {
       await api.details({ approval: "pending", approvalKey: key }, context);
       const opened = await api.watchDoc(
@@ -110,6 +127,29 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
       }
       signal?.removeEventListener("abort", onAbort);
       await opened.stop();
+      if (decision === "stop") {
+        // The abort that follows builds this call's result from what it reported, so the reason is
+        // reported first; `details` commits the output with it. Removing the entry tells
+        // `stopWaitingCalls` the reason is saved and the abort can go ahead.
+        api.output(STOPPED);
+        await api.details({ approval: "stopped" }, context);
+        await removeEntry();
+        const aborted = Promise.withResolvers<boolean>();
+        const timer = setTimeout(
+          () => aborted.resolve(true),
+          STOPPED_ABORT_TIMEOUT_MS
+        );
+        if (signal === undefined || signal.aborted) {
+          aborted.resolve(true);
+        } else {
+          signal.addEventListener("abort", () => aborted.resolve(true), {
+            once: true,
+          });
+        }
+        await aborted.promise;
+        clearTimeout(timer);
+        throw new Error(STOPPED);
+      }
       if (decision === "deny") {
         await api.details({ approval: "denied" }, context);
         throw new Error(DENIED);
@@ -123,17 +163,72 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => ({
       signal?.removeEventListener("abort", onAbort);
       await watch?.stop().catch((): void => undefined);
       // Best-effort cleanup: the call may have been aborted, which makes the commit fail.
-      await api
-        .commit(async (tx) => {
-          const doc = await tx.doc(ApprovalDoc, api.conversationId);
-          doc.pending = Object.fromEntries(
-            Object.entries(doc.pending).filter(([k]) => k !== key)
-          );
-          doc.decisions = Object.fromEntries(
-            Object.entries(doc.decisions).filter(([k]) => k !== key)
-          );
-        }, context)
-        .catch((): void => undefined);
+      await removeEntry().catch((): void => undefined);
     }
   },
 });
+
+/** The subset of a pi-durable Harness that `stopWaitingCalls` uses. */
+type ApprovalHost = Pick<Harness, "commit" | "watchDoc">;
+
+// How long a Stop waits for its waiting calls to save their reason before aborting anyway.
+const STOP_ACK_TIMEOUT_MS = 2000;
+
+/**
+ * The first half of a Stop: decide `stop` for every call of `conversationId` waiting for approval, and
+ * wait until each has reported "Stopped by the user before approval." (or `STOP_ACK_TIMEOUT_MS` passes).
+ * The caller then aborts the conversation, and each call's aborted result carries that reason.
+ */
+export const stopWaitingCalls = async (
+  host: ApprovalHost,
+  conversationId: ConversationId,
+  context: Context
+): Promise<void> => {
+  const keys = await host.commit(async (tx) => {
+    const doc = await tx.doc(ApprovalDoc, conversationId);
+    const waiting = Object.keys(doc.pending);
+    for (const key of waiting) {
+      doc.decisions[key] = "stop";
+    }
+    return waiting;
+  }, context);
+  if (keys.length === 0) {
+    return;
+  }
+  const watch = await host.watchDoc(ApprovalDoc, conversationId, context);
+  if (watch === undefined) {
+    return;
+  }
+  const acknowledged = (value: Readonly<ApprovalState> | null) =>
+    keys.every((key) => value?.pending[key] === undefined);
+  try {
+    if (acknowledged(watch.value)) {
+      return;
+    }
+    const done = Promise.withResolvers<boolean>();
+    const timer = setTimeout(() => done.resolve(true), STOP_ACK_TIMEOUT_MS);
+    watch.start((value) => {
+      if (acknowledged(value)) {
+        done.resolve(true);
+      }
+      return Promise.resolve();
+    });
+    await done.promise;
+    clearTimeout(timer);
+  } finally {
+    await watch.stop();
+  }
+};
+
+/** Forget every waiting call and decision; for after an abort, when none of those calls is still waiting. */
+export const clearApprovals = async (
+  host: Pick<Harness, "commit">,
+  conversationId: ConversationId,
+  context: Context
+): Promise<void> => {
+  await host.commit(async (tx) => {
+    const doc = await tx.doc(ApprovalDoc, conversationId);
+    doc.pending = {};
+    doc.decisions = {};
+  }, context);
+};

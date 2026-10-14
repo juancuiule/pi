@@ -13,7 +13,7 @@ import { Effect, Exit, Layer, Ref, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { Agents } from "./agents/agents.ts";
-import { approvalKey, withApproval } from "./approvals.ts";
+import { approvalKey, STOPPED, withApproval } from "./approvals.ts";
 import type { SandboxChoice } from "./sandbox/sandbox.ts";
 import { Conversations } from "./server/conversations.ts";
 import { callTool, echoToolResult, fauxAgents } from "./testing/faux.ts";
@@ -318,6 +318,45 @@ describe("tool approvals", () => {
     expect(ran).toBeFalsy();
     // The failed call is not left listed as awaiting approval.
     expect(doc.pending).toStrictEqual({});
+  });
+
+  it("reports a stopped call's reason before its abort, without running it", async () => {
+    const doc = {
+      policy: "ask",
+      pending: {},
+      decisions: { "1:c1": "stop" },
+    };
+    let ran = false;
+    const output: string[] = [];
+    const details: unknown[] = [];
+    const api = {
+      ...fakeApi(doc),
+      output: (chunk: string) => output.push(chunk),
+      details: (value: unknown) => {
+        details.push(value);
+        return Promise.resolve();
+      },
+    };
+    const tool = withApproval(fakeTool(() => (ran = true)));
+    const controller = new AbortController();
+    const execution = tool.execute(
+      {},
+      api as never,
+      { abortSignal: controller.signal } as never
+    );
+    // The reason is reported, and the entry removed, while the call waits for its abort.
+    await Effect.runPromise(
+      waitUntil(
+        Effect.sync(() => details.length === 2),
+        2000
+      )
+    );
+    expect(output).toStrictEqual([STOPPED]);
+    expect(details.at(-1)).toStrictEqual({ approval: "stopped" });
+    expect(doc.pending).toStrictEqual({});
+    controller.abort();
+    await expect(execution).rejects.toThrow(STOPPED);
+    expect(ran).toBeFalsy();
   });
 
   it("runs without waiting when the committed policy is auto", async () => {
