@@ -17,13 +17,15 @@ import {
 
 import { Agents } from "../agents/agents.ts";
 import type { AgentConversation, AgentError } from "../agents/agents.ts";
+import { Capacity } from "../capacity.ts";
+import type { Resource } from "../capacity.ts";
 import type { ConversationMeta } from "../conversation-meta.ts";
-import {
-  ConversationEnded,
-  ConversationNotFound,
-  SandboxLimitReached,
+import { ConversationEnded, ConversationNotFound } from "../errors.ts";
+import type {
+  ApprovalNotFound,
+  CapacityExhausted,
+  SkillNotFound,
 } from "../errors.ts";
-import type { ApprovalNotFound, SkillNotFound } from "../errors.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 
 export type ConversationStatus = "running" | "idle" | "ended";
@@ -125,6 +127,10 @@ const statusAfter = (
   }
 };
 
+// A Seat takes a `seat`, and a sandbox Level's resource too.
+const resourcesFor = (sandbox: SandboxChoice): readonly Resource[] =>
+  sandbox === "none" ? ["seat"] : ["seat", sandbox];
+
 export class Conversations extends Context.Service<
   Conversations,
   {
@@ -135,7 +141,7 @@ export class Conversations extends Context.Service<
       readonly approvals?: "ask" | "auto";
     }): Effect.Effect<
       ConversationSummary,
-      AgentError | SandboxError | SandboxLimitReached | SkillNotFound
+      AgentError | SandboxError | CapacityExhausted | SkillNotFound
     >;
     readonly list: Effect.Effect<readonly ConversationSummary[], AgentError>;
     /** Send to a live conversation, resume a dormant chat one, or reject an ended one. */
@@ -144,7 +150,11 @@ export class Conversations extends Context.Service<
       prompt: string
     ): Effect.Effect<
       void,
-      AgentError | ConversationNotFound | ConversationEnded | SkillNotFound
+      | AgentError
+      | CapacityExhausted
+      | ConversationNotFound
+      | ConversationEnded
+      | SkillNotFound
     >;
     /** Events of any conversation the harness knows, including a stored one's. */
     events(
@@ -167,7 +177,6 @@ export class Conversations extends Context.Service<
   }
 >()("effect-pi/Conversations") {
   static readonly layer = (options: {
-    readonly maxSandboxes: number;
     readonly idleTimeoutMs: number;
     readonly sweepEveryMs: number;
   }) =>
@@ -175,10 +184,9 @@ export class Conversations extends Context.Service<
       Conversations,
       Effect.gen(function* () {
         const agents = yield* Agents;
+        const capacity = yield* Capacity;
         const live = new Map<number, Live>();
         const stored = new Map<number, Stored>();
-        // Sandboxes being created count against the cap, so concurrent creates cannot overshoot it.
-        let creating = 0;
 
         // Every persisted conversation that is not live right now.
         for (const record of yield* agents.stored) {
@@ -244,23 +252,6 @@ export class Conversations extends Context.Service<
           );
         });
 
-        const reserveSandbox = (sandbox: SandboxChoice) =>
-          Effect.suspend(() => {
-            if (sandbox === "none") {
-              return Effect.succeed(false);
-            }
-            const used = [...live.values()].filter(
-              (entry) => entry.meta.sandbox !== "none"
-            ).length;
-            if (used + creating >= options.maxSandboxes) {
-              return Effect.fail(
-                new SandboxLimitReached({ limit: options.maxSandboxes })
-              );
-            }
-            creating += 1;
-            return Effect.succeed(true);
-          });
-
         const create = Effect.fn("Conversations.create")(function* (input: {
           readonly sandbox: SandboxChoice;
           readonly prompt: string;
@@ -268,20 +259,24 @@ export class Conversations extends Context.Service<
         }) {
           // Expanded first, so an unknown skill reserves and creates nothing. The title is the prompt as typed.
           const prompt = yield* agents.expandSkill(input.prompt);
-          // Reserve, start and register cannot be interrupted between steps, or a sandbox would leak; only
-          // `start` itself may be interrupted, and then its scope and reservation are released here.
+          // Claim, start and register cannot be interrupted between steps, or a sandbox would leak; only
+          // `start` itself may be interrupted, and then its scope, with the claim, is closed here.
           return yield* Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
-              const reserved = yield* reserveSandbox(input.sandbox);
-              const release = Effect.sync(() => {
-                if (reserved) {
-                  creating -= 1;
-                }
-              });
               const now = yield* Clock.currentTimeMillis;
               const title = titleOf(input.prompt);
               // Forked from the layer's scope, so tearing the layer down closes it even mid-create.
               const scope = yield* Scope.fork(layerScope);
+              // Claimed first, so a create at a limit creates nothing.
+              const claimed = yield* Effect.exit(
+                capacity
+                  .claim(resourcesFor(input.sandbox))
+                  .pipe(Scope.provide(scope))
+              );
+              if (Exit.isFailure(claimed)) {
+                yield* Scope.close(scope, Exit.void);
+                return yield* Effect.failCause(claimed.cause);
+              }
               const started = yield* Effect.exit(
                 restore(
                   agents
@@ -298,7 +293,6 @@ export class Conversations extends Context.Service<
               );
               if (Exit.isFailure(started)) {
                 yield* Scope.close(scope, Exit.void);
-                yield* release;
                 return yield* Effect.failCause(started.cause);
               }
               const conversation = started.value;
@@ -316,9 +310,9 @@ export class Conversations extends Context.Service<
                 lock: yield* Semaphore.make(1),
               };
               const id = Number(conversation.id);
+              yield* claimed.value.assign(id);
               live.set(id, created);
               stored.delete(id);
-              yield* release;
               // A failure from here on must not leave the conversation, and its sandbox, registered. The
               // conversation is already persisted and cannot be deleted, so it is marked ended: it stays
               // listed as ended instead of as a resumable chat that never got its first prompt.
@@ -362,7 +356,13 @@ export class Conversations extends Context.Service<
               const scope = yield* Scope.fork(layerScope);
               const attached = yield* Effect.exit(
                 restore(
-                  agents.attach(id as ConversationId).pipe(Scope.provide(scope))
+                  Effect.gen(function* () {
+                    const claim = yield* capacity.claim(
+                      resourcesFor(entry.meta.sandbox)
+                    );
+                    yield* claim.assign(id);
+                    return yield* agents.attach(id as ConversationId);
+                  }).pipe(Scope.provide(scope))
                 )
               );
               if (Exit.isFailure(attached)) {

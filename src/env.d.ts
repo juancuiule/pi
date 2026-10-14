@@ -71,11 +71,26 @@ export type CoercedEnvSchema = {
   SERVER_PORT: number;
   
   /**
-   * **MAX_SANDBOXES**  
-   * Live shell/desktop sandboxes at once.  
+   * **MAX_SEATS**  
+   * Seats at once: Conversations live in the server, chats included. A shell or desktop Seat also takes one of  
+   * MAX_SHELLS or MAX_DESKTOPS.  
    * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
    */
-  MAX_SANDBOXES: number;
+  MAX_SEATS: number;
+  
+  /**
+   * **MAX_SHELLS**  
+   * Shell sandboxes at once.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  MAX_SHELLS: number;
+  
+  /**
+   * **MAX_DESKTOPS**  
+   * Desktop sandboxes at once.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  MAX_DESKTOPS: number;
   
   /**
    * **CONVERSATION_IDLE_TIMEOUT**  
@@ -138,11 +153,11 @@ export type CoercedEnvSchema = {
   
 };
 
-type _CoercedEnvSchema_883b1710 = CoercedEnvSchema;
+type _CoercedEnvSchema_2cd09e60 = CoercedEnvSchema;
 
 declare module 'varlock/env' {
-  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_883b1710> {}
-  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_883b1710, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'MAX_SANDBOXES' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SKILLS_DIR' | 'SCREENSHOTS_DIR' | 'MCP_CONNECT_TIMEOUT' | 'WEB_PORT' | 'API_URL'>> {}
+  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_2cd09e60> {}
+  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_2cd09e60, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SKILLS_DIR' | 'SCREENSHOTS_DIR' | 'MCP_CONNECT_TIMEOUT' | 'WEB_PORT' | 'API_URL'>> {}
 }
 
 
@@ -152,11 +167,11 @@ export type EnvSchemaAsStrings = {
       : (NonNullable<CoercedEnvSchema[Property]> extends boolean ? ('true' | 'false') : string)
 };
 
-type _EnvSchemaAsStrings_883b1710 = EnvSchemaAsStrings;
+type _EnvSchemaAsStrings_2cd09e60 = EnvSchemaAsStrings;
 declare global {
 
   // add types for global import.meta.env
-  interface ImportMetaEnv extends _EnvSchemaAsStrings_883b1710 {}
+  interface ImportMetaEnv extends _EnvSchemaAsStrings_2cd09e60 {}
   interface ImportMeta {
     readonly env: ImportMetaEnv;
   }

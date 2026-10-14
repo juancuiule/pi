@@ -31,7 +31,7 @@ import { ApprovalNotFound, ConversationNotFound } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
 import type { SandboxChoice, SandboxInfo } from "../sandbox/sandbox.ts";
-import { SandboxDoc, SandboxError, Sandboxes } from "../sandbox/sandbox.ts";
+import { SandboxDoc, SandboxError } from "../sandbox/sandbox.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
 import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
@@ -39,6 +39,8 @@ import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
 import type { AgentTracing } from "../tracing.ts";
 import { makeAgentTracing } from "../tracing.ts";
+import type { StorageRef } from "../workspaces/workspaces.ts";
+import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -259,7 +261,7 @@ export class Agents extends Context.Service<
     Layer.effect(
       Agents,
       Effect.gen(function* () {
-        const sandboxes = yield* Sandboxes;
+        const workspaces = yield* Workspaces;
         const registry = createRegistry();
         // Spans for model requests and tool calls use the tracer this layer is built with.
         const tracing = makeAgentTracing(yield* Effect.context<never>());
@@ -317,7 +319,7 @@ export class Agents extends Context.Service<
                     );
                     return doc?.sandbox === undefined
                       ? undefined
-                      : sandboxes.env(doc.sandbox);
+                      : workspaces.env(doc.sandbox);
                   },
                 },
                 context
@@ -377,19 +379,15 @@ export class Agents extends Context.Service<
           const choice = startOptions.sandbox;
           // This conversation's skills: the source as it is now, kept for its whole life.
           const conversationSkills = (yield* catalog).skills;
-          const sandbox =
+          const machine =
             choice === "none"
               ? undefined
-              : yield* Effect.acquireRelease(
-                  sandboxes.create(
-                    choice,
-                    `effect-pi-${choice}-${crypto.randomUUID().slice(0, 8)}`
-                  ),
-                  (created) => Effect.ignore(sandboxes.remove(created))
-                );
+              : yield* workspaces.sandbox({ level: choice });
+          const sandbox = machine?.sandbox;
+          const storage: StorageRef | undefined = machine?.storage;
           if (sandbox !== undefined && conversationSkills.length > 0) {
             yield* skills
-              .install(sandboxes.env(sandbox), conversationSkills, context)
+              .install(workspaces.env(sandbox), conversationSkills, context)
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -422,6 +420,11 @@ export class Agents extends Context.Service<
                       if (sandbox !== undefined) {
                         const doc = await tx.doc(SandboxDoc, id);
                         doc.sandbox = sandbox;
+                      }
+                      const workspace = await tx.doc(WorkspaceDoc, id);
+                      workspace.level = choice;
+                      if (storage !== undefined) {
+                        workspace.storage = storage;
                       }
                       const skillsDoc = await tx.doc(SkillsDoc, id);
                       skillsDoc.skills = [...conversationSkills];

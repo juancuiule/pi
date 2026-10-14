@@ -6,24 +6,26 @@ import {
 import { Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { Capacity } from "../capacity.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { Conversations, titleOf } from "./conversations.ts";
 
 const defaults = {
-  maxSandboxes: 3,
   idleTimeoutMs: 60_000,
   sweepEveryMs: 60_000,
 };
 
 const setup = (
   responses: FauxResponseStep[],
-  options: Partial<typeof defaults> = {}
+  options: Partial<typeof defaults> & { readonly shells?: number } = {}
 ) => {
   const agents = fauxAgents(responses);
+  const { shells = 3, ...rest } = options;
   return {
     ...agents,
-    layer: Conversations.layer({ ...defaults, ...options }).pipe(
-      Layer.provide(agents.layer)
+    layer: Conversations.layer({ ...defaults, ...rest }).pipe(
+      Layer.provide(agents.layer),
+      Layer.provide(Capacity.layer({ seats: 10, shells, desktops: 1 }))
     ),
   };
 };
@@ -143,7 +145,7 @@ describe(Conversations, () => {
 
   it("refuses sandboxes past the cap, even when created concurrently", async () => {
     const { layer } = setup([answer("a"), answer("b"), answer("c")], {
-      maxSandboxes: 1,
+      shells: 1,
     });
 
     const exits = await Effect.runPromise(
@@ -170,7 +172,7 @@ describe(Conversations, () => {
 
     const failures = exits.filter(Exit.isFailure);
     expect(failures).toHaveLength(1);
-    expect(JSON.stringify(failures[0])).toContain("SandboxLimitReached");
+    expect(JSON.stringify(failures[0])).toContain("CapacityExhausted");
     expect(exits.at(2)?._tag).toBe("Success");
   });
 
@@ -247,7 +249,7 @@ describe(Conversations, () => {
   });
 
   it("leaks neither a sandbox nor a cap slot when a create is interrupted", async () => {
-    const { layer, sandboxes } = setup([answer("a")], { maxSandboxes: 1 });
+    const { layer, sandboxes } = setup([answer("a")], { shells: 1 });
 
     await Effect.runPromise(
       Effect.gen(function* () {

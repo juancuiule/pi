@@ -7,9 +7,14 @@ export class ConversationNotFound extends Schema.TaggedError<ConversationNotFoun
   { id: Schema.Number }
 ) {}
 
-export class SandboxLimitReached extends Schema.TaggedError<SandboxLimitReached>()(
-  "SandboxLimitReached",
-  { limit: Schema.Number }
+/** A Capacity limit is reached; `holders` are the Conversations holding `resource`, for the person to pick one to Pause. */
+export class CapacityExhausted extends Schema.TaggedError<CapacityExhausted>()(
+  "CapacityExhausted",
+  {
+    resource: Schema.Literals(["seat", "shell", "desktop"]),
+    limit: Schema.Number,
+    holders: Schema.Array(Schema.Number),
+  }
 ) {}
 
 export class ConversationEnded extends Schema.TaggedError<ConversationEnded>()(

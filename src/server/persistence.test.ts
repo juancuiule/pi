@@ -14,12 +14,12 @@ import { Context, Effect, Exit, Layer, Ref, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import type { AgentError } from "../agents/agents.ts";
+import { Capacity } from "../capacity.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { Conversations } from "./conversations.ts";
 import type { ConversationSummary } from "./conversations.ts";
 
 const defaults = {
-  maxSandboxes: 3,
   idleTimeoutMs: 60_000,
   sweepEveryMs: 60_000,
 };
@@ -43,7 +43,8 @@ const withStack = <A, E>(
       );
       const agents = fauxAgents(responses, { storage });
       const layer = Conversations.layer({ ...defaults, ...options }).pipe(
-        Layer.provide(agents.layer)
+        Layer.provide(agents.layer),
+        Layer.provide(Capacity.layer({ seats: 10, shells: 3, desktops: 1 }))
       );
       const context = yield* Layer.build(layer);
       const conversations = Context.get(context, Conversations);
@@ -311,7 +312,8 @@ describe("persistent conversations", () => {
           { storage }
         );
         const layer = Conversations.layer(defaults).pipe(
-          Layer.provide(agents.layer)
+          Layer.provide(agents.layer),
+          Layer.provide(Capacity.layer({ seats: 10, shells: 3, desktops: 1 }))
         );
         yield* Effect.scoped(
           Effect.gen(function* () {

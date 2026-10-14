@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
@@ -27,7 +27,7 @@ const showResult: FauxResponseStep = (request) => {
 };
 
 describe("conversation sandboxes", () => {
-  it("runs shell tools in the conversation's sandbox and removes it at the end", async () => {
+  it("runs shell tools in the conversation's sandbox, removes it at the end and keeps the Workspace's files", async () => {
     const { layer, sandboxes } = fauxAgents([
       callTool("bash", { command: "echo hi > note.txt && pwd" }),
       echoToolResult,
@@ -37,10 +37,13 @@ describe("conversation sandboxes", () => {
       ask("Leave a note.", "shell").pipe(Effect.provide(layer))
     );
 
-    // The tool ran in a sandbox directory, which is gone once the conversation ended.
-    expect(answer).toContain("effect-pi-shell-");
-    expect(existsSync(answer.trim())).toBeFalsy();
+    // The tool ran in the Workspace's directory: the Sandbox is gone once the conversation ended, its files are not.
+    expect(answer).toContain("effect-pi-workspace-");
     expect(sandboxes.live.size).toBe(0);
+    expect([...sandboxes.stored].map((dir) => realpathSync(dir))).toContain(
+      answer.trim()
+    );
+    expect(existsSync(path.join(answer.trim(), "note.txt"))).toBeTruthy();
   });
 
   it("gives a conversation without a sandbox no environment for shell tools", async () => {

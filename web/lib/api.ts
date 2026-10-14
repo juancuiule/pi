@@ -15,9 +15,13 @@ export type ApiClient = Effect.Success<typeof makeClient>;
 export const apiError = (error: unknown): string => {
   if (typeof error === "object" && error !== null && "_tag" in error) {
     switch (error._tag) {
-      case "SandboxLimitReached": {
+      case "CapacityExhausted": {
         const limit = "limit" in error ? String(error.limit) : "a few";
-        return `At most ${limit} sandboxes can run at once. End one first.`;
+        const resource =
+          "resource" in error && error.resource !== "seat"
+            ? `${String(error.resource)} sandboxes`
+            : "conversations";
+        return `At most ${limit} ${resource} can run at once. End one first.`;
       }
       case "SkillNotFound": {
         const name = "name" in error ? String(error.name) : "";

@@ -274,9 +274,9 @@ describe("skills in a conversation", () => {
       ask("Load the skill.", "shell").pipe(Effect.provide(layer))
     );
 
-    // Local test sandboxes are temporary directories named after the sandbox.
+    // Local test sandboxes run in their Workspace's temporary directory.
     expect(answer).toMatch(
-      /In your sandbox the folder is \/\S*effect-pi-shell-\S*\/\.skills\/convert; run its scripts by full path, such as \S*\/\.skills\/convert\/scripts\/hello\.sh\./u
+      /In your sandbox the folder is \/\S*effect-pi-workspace-\S*\/\.skills\/convert; run its scripts by full path, such as \S*\/\.skills\/convert\/scripts\/hello\.sh\./u
     );
   });
 

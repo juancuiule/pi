@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
+import { Capacity } from "../capacity.ts";
 import { Skills } from "../skills/skills.ts";
 import { fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
@@ -20,27 +21,24 @@ import { Conversations } from "./conversations.ts";
 import { echoModel } from "./faux.ts";
 import { ApiLayer } from "./handlers.ts";
 
-const serverWith = (
-  agents: Layer.Layer<Agents, AgentError>,
-  maxSandboxes = 3
-) =>
+const serverWith = (agents: Layer.Layer<Agents, AgentError>, shells = 3) =>
   HttpRouter.serve(ApiLayer, {
     disableListenLog: true,
     disableLogger: true,
   }).pipe(
     Layer.provide(
       Conversations.layer({
-        maxSandboxes,
         idleTimeoutMs: 60_000,
         sweepEveryMs: 60_000,
       })
     ),
+    Layer.provide(Capacity.layer({ seats: 10, shells, desktops: 1 })),
     Layer.provide(agents),
     Layer.provideMerge(NodeHttpServer.layerTest)
   );
 
-const server = (responses: FauxResponseStep[], maxSandboxes = 3) =>
-  serverWith(fauxAgents(responses).layer, maxSandboxes);
+const server = (responses: FauxResponseStep[], shells = 3) =>
+  serverWith(fauxAgents(responses).layer, shells);
 
 describe("HTTP API", () => {
   it("lists skills and MCP servers", async () => {
@@ -243,7 +241,7 @@ describe("HTTP API", () => {
             payload: { sandbox: "shell", prompt: "2" },
           })
         );
-        expect(JSON.stringify(second)).toContain("SandboxLimitReached");
+        expect(JSON.stringify(second)).toContain("CapacityExhausted");
       }).pipe(
         Effect.provide(server([fauxAssistantMessage([fauxText("a")])], 1))
       )

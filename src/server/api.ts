@@ -12,7 +12,7 @@ import {
   ApprovalNotFound,
   ConversationEnded,
   ConversationNotFound,
-  SandboxLimitReached,
+  CapacityExhausted,
   SkillNotFound,
 } from "../errors.ts";
 
@@ -26,9 +26,9 @@ export type {
 } from "@earendil-works/pi-durable";
 export {
   ApprovalNotFound,
+  CapacityExhausted,
   ConversationEnded,
   ConversationNotFound,
-  SandboxLimitReached,
   SkillNotFound,
 } from "../errors.ts";
 
@@ -87,13 +87,14 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
       approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
     }),
     success: ConversationSummary.pipe(HttpApiSchema.status(201)),
-    error: [SandboxLimitReached.pipe(HttpApiSchema.status(409)), UnknownSkill],
+    error: [CapacityExhausted.pipe(HttpApiSchema.status(409)), UnknownSkill],
   }),
   HttpApiEndpoint.post("send", "/conversations/:id/messages", {
     params: ById,
     payload: Schema.Struct({ prompt: Schema.NonEmptyString }),
     error: [
       NotFound,
+      CapacityExhausted.pipe(HttpApiSchema.status(409)),
       ConversationEnded.pipe(HttpApiSchema.status(409)),
       UnknownSkill,
     ],

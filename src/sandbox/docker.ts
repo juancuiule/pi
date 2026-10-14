@@ -1,7 +1,6 @@
 // Sandboxes as local Docker containers. Each container gets the pi-env daemon, and the harness reaches it through
 // `docker exec -i`, so pi's file and shell tools run inside the container.
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
 import {
@@ -12,7 +11,7 @@ import {
 import { Effect, Layer, Schedule } from "effect";
 
 import { Sandboxes, SandboxError } from "./sandbox.ts";
-import type { SandboxInfo, SandboxKind } from "./sandbox.ts";
+import type { SandboxInfo, SandboxKind, WorkspaceMount } from "./sandbox.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,7 +25,7 @@ export const defaultImages: Record<SandboxKind, string> = {
   desktop: "effect-pi/sandbox-desktop",
 };
 
-const docker = (args: readonly string[]) =>
+export const docker = (args: readonly string[]) =>
   Effect.tryPromise({
     try: async () => {
       const { stdout } = await execFileAsync("docker", args);
@@ -72,9 +71,6 @@ const vncUrl = (name: string) =>
     })
   );
 
-export const makeName = (kind: SandboxKind) =>
-  `effect-pi-${kind}-${randomUUID().slice(0, 8)}`;
-
 export const layer = (
   options: { readonly images?: Partial<Record<SandboxKind, string>> } = {}
 ) =>
@@ -106,10 +102,15 @@ export const layer = (
 
       const create = Effect.fn("DockerSandboxes.create")(function* (
         kind: SandboxKind,
-        name: string
+        name: string,
+        files: WorkspaceMount
       ) {
         const publish =
           kind === "desktop" ? ["-p", `127.0.0.1::${NOVNC_PORT}`] : [];
+        const mount =
+          files.type === "volume"
+            ? `type=volume,src=${files.name},dst=${WORKSPACE}`
+            : `type=bind,src=${files.path},dst=${WORKSPACE}`;
         yield* docker([
           "run",
           "--detach",
@@ -117,6 +118,8 @@ export const layer = (
           name,
           "--label",
           `effect-pi.sandbox=${kind}`,
+          "--mount",
+          mount,
           ...publish,
           images[kind],
         ]);
