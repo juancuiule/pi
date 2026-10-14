@@ -6,7 +6,6 @@ import {
 import { Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { Capacity } from "../capacity.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { Conversations, titleOf } from "./conversations.ts";
 
@@ -19,13 +18,12 @@ const setup = (
   responses: FauxResponseStep[],
   options: Partial<typeof defaults> & { readonly shells?: number } = {}
 ) => {
-  const agents = fauxAgents(responses);
   const { shells = 3, ...rest } = options;
+  const agents = fauxAgents(responses, { limits: { shells } });
   return {
     ...agents,
     layer: Conversations.layer({ ...defaults, ...rest }).pipe(
-      Layer.provide(agents.layer),
-      Layer.provide(Capacity.layer({ seats: 10, shells, desktops: 1 }))
+      Layer.provide(agents.layer)
     ),
   };
 };
@@ -414,4 +412,196 @@ describe(Conversations, () => {
       }).pipe(Effect.provide(layer))
     );
   });
+});
+
+describe("Upgrade", () => {
+  it("raises a chat to a shell, then a desktop, keeping its files and swapping its claims", async () => {
+    const { layer, sandboxes } = setup([
+      answer("hi"),
+      callTool("bash", { command: "echo kept > note.txt" }),
+      echoToolResult,
+      callTool("bash", { command: "cat note.txt" }),
+      echoToolResult,
+    ]);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "hello",
+        });
+        const idle = conversations.list.pipe(
+          Effect.map((all) => all[0]?.status === "idle")
+        );
+        yield* waitUntil(idle);
+        const shell = yield* conversations.upgrade(created.id, "shell");
+        yield* conversations.send(created.id, "leave a note");
+        yield* waitUntil(idle, 10_000);
+        const desktop = yield* conversations.upgrade(created.id, "desktop");
+        const usage = yield* conversations.capacity;
+        const stream = yield* conversations.events(created.id);
+        yield* conversations.send(created.id, "read it");
+        const reply = yield* stream.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "message_end" &&
+              JSON.stringify(event.entry.model).includes("kept")
+          ),
+          Stream.runHead
+        );
+        const lower = yield* Effect.exit(
+          conversations.upgrade(created.id, "shell")
+        );
+        return { shell, desktop, usage, reply, lower };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect([result.shell.sandbox, result.desktop.sandbox]).toStrictEqual([
+      "shell",
+      "desktop",
+    ]);
+    expect(result.desktop.sandboxId).toBe(result.shell.sandboxId);
+    // The shell went back when the desktop came.
+    expect(
+      result.usage.map((u) => [u.resource, u.holders.length])
+    ).toStrictEqual([
+      ["seat", 1],
+      ["shell", 0],
+      ["desktop", 1],
+    ]);
+    expect([
+      result.reply._tag,
+      JSON.stringify(result.lower).includes("InvalidUpgrade"),
+    ]).toStrictEqual(["Some", true]);
+    expect(sandboxes.live.size).toBe(0);
+  }, 30_000);
+
+  it("refuses a person's Upgrade at a limit, and records a paused one for its next Seat", async () => {
+    const { layer } = setup([answer("a"), answer("b")], { shells: 1 });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        yield* conversations.create({ sandbox: "shell", prompt: "holder" });
+        const chat = yield* conversations.create({
+          sandbox: "none",
+          prompt: "chat",
+        });
+        const refused = yield* Effect.exit(
+          conversations.upgrade(chat.id, "shell")
+        );
+        yield* conversations.stop(chat.id);
+        yield* conversations.pause(chat.id);
+        const recorded = yield* conversations.upgrade(chat.id, "shell");
+        return { refused, recorded };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(JSON.stringify(result.refused)).toContain("CapacityExhausted");
+    expect([result.recorded.status, result.recorded.sandbox]).toStrictEqual([
+      "paused",
+      "shell",
+    ]);
+  });
+
+  it("lets the agent upgrade, waiting for room until the person pauses a holder", async () => {
+    const { layer } = setup(
+      [
+        answer("holding"),
+        callTool("upgrade_workspace", {
+          level: "shell",
+          reason: "to run code",
+        }),
+        echoToolResult,
+      ],
+      { shells: 1 }
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const holder = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "holder",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all.every((c) => c.status === "idle"))
+          )
+        );
+        const chat = yield* conversations.create({
+          sandbox: "none",
+          prompt: "run some code",
+        });
+        const shellUsage = conversations.capacity.pipe(
+          Effect.map((usage) => usage.find((u) => u.resource === "shell"))
+        );
+        yield* waitUntil(
+          shellUsage.pipe(
+            Effect.map((u) => u?.waiting.includes(chat.id) ?? false)
+          )
+        );
+        yield* conversations.pause(holder.id);
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map(
+              (all) =>
+                all.find((c) => c.id === chat.id)?.status === "idle" &&
+                all.find((c) => c.id === chat.id)?.sandbox === "shell"
+            )
+          ),
+          10_000
+        );
+        return yield* shellUsage;
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(result?.holders).toHaveLength(1);
+    expect(result?.waiting).toStrictEqual([]);
+  }, 30_000);
+
+  it("ends the agent's waiting Upgrade with an error when the person cancels it", async () => {
+    const { layer } = setup(
+      [
+        answer("holding"),
+        callTool("upgrade_workspace", {
+          level: "shell",
+          reason: "to run code",
+        }),
+        echoToolResult,
+      ],
+      { shells: 1 }
+    );
+
+    const reply = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        yield* conversations.create({ sandbox: "shell", prompt: "holder" });
+        const chat = yield* conversations.create({
+          sandbox: "none",
+          prompt: "run some code",
+        });
+        yield* waitUntil(
+          conversations.capacity.pipe(
+            Effect.map((usage) =>
+              usage.some((u) => u.waiting.includes(chat.id))
+            )
+          )
+        );
+        const stream = yield* conversations.events(chat.id);
+        expect(yield* conversations.cancelWait(chat.id)).toBeTruthy();
+        return yield* stream.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "message_end" &&
+              JSON.stringify(event.entry.model).includes("cancelled")
+          ),
+          Stream.runHead
+        );
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(reply._tag).toBe("Some");
+  }, 30_000);
 });

@@ -1,6 +1,6 @@
 // Pure helpers for the Capacity dialog: which Conversations hold the resource a request is short of, and how to
 // describe the shortage.
-import type { ConversationSummary } from "effect-pi/api";
+import type { CapacityUsage, ConversationSummary } from "effect-pi/api";
 
 import type { CapacityShortage } from "./api";
 
@@ -44,3 +44,26 @@ export const shortageText = (shortage: CapacityShortage): string => {
     ? `The only ${one} is in use.`
     : `All ${shortage.limit} ${many} are in use.`;
 };
+
+/** The shortage `id` waits on (the agent's Upgrade waits for room), as a dialog shows it. */
+export const waitingShortage = (
+  usage: readonly CapacityUsage[],
+  id: number
+): CapacityShortage | undefined => {
+  const waited = usage.find((each) => each.waiting.includes(id));
+  return waited === undefined
+    ? undefined
+    : {
+        resource: waited.resource,
+        limit: waited.limit,
+        holders: waited.holders,
+      };
+};
+
+const RANK = { none: 0, shell: 1, desktop: 2 } as const;
+
+/** The Levels above `level`, for an Upgrade menu. */
+export const upgradesFrom = (
+  level: ConversationSummary["sandbox"]
+): ("shell" | "desktop")[] =>
+  (["shell", "desktop"] as const).filter((each) => RANK[each] > RANK[level]);

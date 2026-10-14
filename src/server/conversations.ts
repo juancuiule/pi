@@ -18,15 +18,20 @@ import {
 import { Agents } from "../agents/agents.ts";
 import type { AgentError, Seat } from "../agents/agents.ts";
 import { Capacity } from "../capacity.ts";
-import type { Resource, Usage } from "../capacity.ts";
+import type { Claim, Usage } from "../capacity.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
 import { ApprovalNotFound, ConversationArchived } from "../errors.ts";
 import type {
   CapacityExhausted,
   ConversationNotFound,
+  InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
-import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
+import type {
+  SandboxChoice,
+  SandboxError,
+  SandboxKind,
+} from "../sandbox/sandbox.ts";
 
 export type ConversationStatus = "running" | "idle" | "paused" | "archived";
 
@@ -69,10 +74,6 @@ interface Live {
 }
 
 const asId = (id: number) => id as ConversationId;
-
-// A Seat takes a `seat`, and a sandbox Level's resource too.
-const resourcesFor = (level: SandboxChoice): readonly Resource[] =>
-  level === "none" ? ["seat"] : ["seat", level];
 
 const summaryOf = (
   stored: StoredConversation,
@@ -125,6 +126,16 @@ export class Conversations extends Context.Service<
     pause(id: number): Effect.Effect<void, AgentError | ConversationNotFound>;
     /** Abort the current Run; the Seat stays, unless a Pause was waiting for the Run to end. */
     stop(id: number): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /**
+     * Raise a Conversation's Level. With a Seat its Sandbox is replaced now, if there is room; without one its next
+     * Seat gets it.
+     */
+    upgrade(
+      id: number,
+      level: SandboxKind
+    ): Effect.Effect<ConversationSummary, SeatError | InvalidUpgrade>;
+    /** Withdraw an Upgrade waiting for room (the agent's); true when one was waiting. */
+    cancelWait(id: number): Effect.Effect<boolean>;
     /** Stop and pause a Conversation, then archive it, deleting its Workspace's files. */
     archive(
       id: number
@@ -231,13 +242,15 @@ export class Conversations extends Context.Service<
           );
         });
 
-        // Claim, open and register cannot be interrupted between steps, or a Sandbox would leak; only the claim
-        // and `open` may be interrupted, and then the scope, with the claim and the Sandbox, is closed here.
+        // Claim, open and register cannot be interrupted between steps, or a Sandbox would leak; only the claims
+        // and `open` may be interrupted, and then the scope, with the claims and the Sandbox, is closed here.
+        // A Seat claims its `seat` here; `preclaim` also claims a Level's resource, for `open` to use.
         const seatIn = <E>(
-          level: SandboxChoice,
-          acquire: (
-            claimed: (id: number) => Effect.Effect<void>
-          ) => Effect.Effect<
+          preclaim: SandboxChoice,
+          acquire: (claimed: {
+            readonly assign: (id: number) => Effect.Effect<void>;
+            readonly levelClaim: Claim | undefined;
+          }) => Effect.Effect<
             { readonly id: number; readonly seat: Seat },
             E,
             Scope.Scope
@@ -250,9 +263,27 @@ export class Conversations extends Context.Service<
               const opened = yield* Effect.exit(
                 restore(
                   Effect.gen(function* () {
-                    const claim = yield* capacity.claim(resourcesFor(level));
-                    return yield* acquire(claim.assign);
-                  }).pipe(Scope.provide(scope))
+                    const seatClaim = yield* capacity.claim(["seat"]);
+                    const levelClaim =
+                      preclaim === "none"
+                        ? undefined
+                        : yield* capacity.claim([preclaim]);
+                    return yield* acquire({
+                      assign: (id) =>
+                        seatClaim
+                          .assign(id)
+                          .pipe(
+                            Effect.andThen(
+                              levelClaim?.assign(id) ?? Effect.void
+                            )
+                          ),
+                      levelClaim,
+                    });
+                  }).pipe(
+                    // Only a waiting claim can be cancelled, and none of these waits.
+                    Effect.catchTag("ClaimCancelled", Effect.die),
+                    Scope.provide(scope)
+                  )
                 )
               );
               if (Exit.isFailure(opened)) {
@@ -289,10 +320,15 @@ export class Conversations extends Context.Service<
                 createdAt: yield* Clock.currentTimeMillis,
                 approvals: input.approvals,
               });
-              yield* claimed(Number(created));
+              yield* claimed.assign(Number(created));
               return {
                 id: Number(created),
-                seat: yield* agents.open(created),
+                seat: yield* agents.open(
+                  created,
+                  claimed.levelClaim === undefined
+                    ? {}
+                    : { levelClaim: claimed.levelClaim }
+                ),
               };
             })
           );
@@ -320,9 +356,10 @@ export class Conversations extends Context.Service<
               if (stored.meta.archivedAt !== undefined) {
                 return yield* new ConversationArchived({ id });
               }
-              const { entry } = yield* seatIn(stored.level, (claimed) =>
+              // `open` claims the Level's resource itself.
+              const { entry } = yield* seatIn("none", (claimed) =>
                 Effect.gen(function* () {
-                  yield* claimed(id);
+                  yield* claimed.assign(id);
                   return { id, seat: yield* agents.open(asId(id)) };
                 })
               );
@@ -383,6 +420,30 @@ export class Conversations extends Context.Service<
           }
         });
 
+        const upgrade = Effect.fn("Conversations.upgrade")(function* (
+          id: number,
+          level: SandboxKind
+        ) {
+          const entry = live.get(id);
+          if (entry === undefined) {
+            const stored = yield* agents.get(asId(id));
+            if (stored.meta.archivedAt !== undefined) {
+              return yield* new ConversationArchived({ id });
+            }
+            yield* agents.upgrade(asId(id), level);
+          } else {
+            yield* entry.seat
+              .upgrade(level)
+              .pipe(Effect.catchTag("ClaimCancelled", Effect.die));
+          }
+          const stored = yield* agents.get(asId(id));
+          return summaryOf(
+            stored,
+            live.get(id),
+            entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+          );
+        });
+
         const archive = Effect.fn("Conversations.archive")(function* (
           id: number
         ) {
@@ -440,6 +501,8 @@ export class Conversations extends Context.Service<
           resume,
           pause,
           stop,
+          upgrade,
+          cancelWait: (id) => capacity.cancel(id),
           archive,
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),

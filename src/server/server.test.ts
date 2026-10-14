@@ -21,7 +21,7 @@ import { Conversations } from "./conversations.ts";
 import { echoModel } from "./faux.ts";
 import { ApiLayer } from "./handlers.ts";
 
-const serverWith = (agents: Layer.Layer<Agents, AgentError>, shells = 3) =>
+const serverWith = (agents: Layer.Layer<Agents | Capacity, AgentError>) =>
   HttpRouter.serve(ApiLayer, {
     disableListenLog: true,
     disableLogger: true,
@@ -32,13 +32,12 @@ const serverWith = (agents: Layer.Layer<Agents, AgentError>, shells = 3) =>
         sweepEveryMs: 60_000,
       })
     ),
-    Layer.provide(Capacity.layer({ seats: 10, shells, desktops: 1 })),
     Layer.provide(agents),
     Layer.provideMerge(NodeHttpServer.layerTest)
   );
 
 const server = (responses: FauxResponseStep[], shells = 3) =>
-  serverWith(fauxAgents(responses).layer, shells);
+  serverWith(fauxAgents(responses, { limits: { shells } }).layer);
 
 describe("HTTP API", () => {
   it("lists skills and MCP servers", async () => {
@@ -278,7 +277,8 @@ describe("HTTP API", () => {
     const sandboxes = localSandboxes();
     const agents = Agents.layer({ models, model }).pipe(
       Layer.provide(sandboxes.layer),
-      Layer.provide(Skills.none)
+      Layer.provide(Skills.none),
+      Layer.provideMerge(Capacity.layer({ seats: 1, shells: 1, desktops: 1 }))
     );
 
     const text = await Effect.runPromise(

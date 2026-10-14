@@ -58,6 +58,17 @@ const ConversationsHandlers = HttpApiBuilder.group(
           .stop(params.id)
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
+      .handle("upgrade", ({ params, payload }) =>
+        conversations.upgrade(params.id, payload.level).pipe(
+          Effect.catchTags({
+            AgentError: Effect.die,
+            SandboxError: Effect.die,
+          })
+        )
+      )
+      .handle("cancelWait", ({ params }) =>
+        conversations.cancelWait(params.id).pipe(Effect.asVoid)
+      )
       .handle("archive", ({ params }) =>
         conversations.archive(params.id).pipe(
           Effect.catchTags({

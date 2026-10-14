@@ -17,6 +17,7 @@ import { Effect, Layer } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
+import { Capacity } from "../capacity.ts";
 import { saveScreenshotsTo } from "../screenshots.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
 import { Skills } from "../skills/skills.ts";
@@ -63,7 +64,11 @@ const dockerAgents = (
     models,
     model: { provider: "faux", modelId: "faux-1" },
     ...(saveScreenshot === undefined ? {} : { saveScreenshot }),
-  }).pipe(Layer.provide(testWorkspaces()), Layer.provide(Skills.none));
+  }).pipe(
+    Layer.provide(testWorkspaces()),
+    Layer.provide(Skills.none),
+    Layer.provide(Capacity.layer({ seats: 2, shells: 1, desktops: 1 }))
+  );
 };
 
 describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(

@@ -35,6 +35,9 @@ if (configured === undefined) {
 // creates the directory.
 const storage = await openNodeSqliteStorage(config.paths.db);
 
+// One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
+const CapacityLive = Capacity.layer(config.capacity);
+
 const AgentsLive = Agents.layer({
   ...setup,
   storage,
@@ -43,12 +46,12 @@ const AgentsLive = Agents.layer({
   mcpConnectTimeoutMs: config.mcpConnectTimeoutMs,
 }).pipe(
   Layer.provide(DockerVolumes.workspaces()),
-  Layer.provide(Skills.directory(config.paths.skills))
+  Layer.provide(Skills.directory(config.paths.skills)),
+  Layer.provideMerge(CapacityLive)
 );
 
 const ConversationsLive = Conversations.layer(config.server).pipe(
-  Layer.provide(AgentsLive),
-  Layer.provide(Capacity.layer(config.capacity))
+  Layer.provide(AgentsLive)
 );
 
 const NodeHttpServerLayer = NodeHttpServer.layer(createServer, {

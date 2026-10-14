@@ -1,7 +1,12 @@
 import type { ConversationSummary } from "effect-pi/api";
 import { describe, expect, it } from "vitest";
 
-import { holdersOf, shortageText } from "./capacity";
+import {
+  holdersOf,
+  shortageText,
+  upgradesFrom,
+  waitingShortage,
+} from "./capacity";
 
 const summary = (
   id: number,
@@ -39,5 +44,28 @@ describe(shortageText, () => {
     expect(shortageText({ resource: "seat", limit: 10, holders: [] })).toBe(
       "All 10 active conversations are in use."
     );
+  });
+});
+
+describe(waitingShortage, () => {
+  it("finds the resource a Conversation waits for", () => {
+    const usage = [
+      { resource: "seat", limit: 10, holders: [1, 2], waiting: [] },
+      { resource: "desktop", limit: 1, holders: [1], waiting: [2] },
+    ] as const;
+    expect(waitingShortage(usage, 2)).toStrictEqual({
+      resource: "desktop",
+      limit: 1,
+      holders: [1],
+    });
+    expect(waitingShortage(usage, 1)).toBeUndefined();
+  });
+});
+
+describe(upgradesFrom, () => {
+  it("offers only higher Levels", () => {
+    expect(upgradesFrom("none")).toStrictEqual(["shell", "desktop"]);
+    expect(upgradesFrom("shell")).toStrictEqual(["desktop"]);
+    expect(upgradesFrom("desktop")).toStrictEqual([]);
   });
 });

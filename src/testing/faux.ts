@@ -12,6 +12,8 @@ import { Effect, Layer } from "effect";
 
 import { Agents } from "../agents/agents.ts";
 import type { ApprovalPolicy } from "../approvals.ts";
+import { Capacity } from "../capacity.ts";
+import type { Limits } from "../capacity.ts";
 import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { Skills } from "../skills/skills.ts";
@@ -28,6 +30,8 @@ export const fauxAgents = (
     readonly mcp?: readonly McpServerConfig[];
     /** How long to wait for each MCP server; `Agents.layer`'s default otherwise. */
     readonly mcpConnectTimeoutMs?: number;
+    /** Capacity limits; the layer provides that Capacity too, for a Conversations layer to share. */
+    readonly limits?: Partial<Limits>;
   } = {}
 ) => {
   const models = createModels();
@@ -48,7 +52,10 @@ export const fauxAgents = (
         : { mcpConnectTimeoutMs: options.mcpConnectTimeoutMs }),
     }).pipe(
       Layer.provide(sandboxes.layer),
-      Layer.provide(options.skills ?? Skills.none)
+      Layer.provide(options.skills ?? Skills.none),
+      Layer.provideMerge(
+        Capacity.layer({ seats: 10, shells: 3, desktops: 1, ...options.limits })
+      )
     ),
   };
 };

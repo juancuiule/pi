@@ -79,6 +79,39 @@ export const useDecideApproval = (id: number) => {
   });
 };
 
+/** Each Capacity resource's limit, holders and waiters; polled for the agent's waiting Upgrade. */
+export const useCapacity = () =>
+  useQuery({
+    queryKey: ["capacity"],
+    queryFn: () => runApi((c) => c.info.capacity()),
+    refetchInterval: 2000,
+  });
+
+/** Raise a Conversation's Level; with a Seat, this takes Capacity. */
+export const useUpgrade = () => {
+  const queryClient = useQueryClient();
+  const guard = useCapacityGuard();
+  return useMutation({
+    mutationFn: ({ id, level }: { id: number; level: "shell" | "desktop" }) =>
+      guard(() =>
+        runApi((c) =>
+          c.conversations.upgrade({ params: { id }, payload: { level } })
+        )
+      ),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: LIST }),
+  });
+};
+
+/** Withdraw the agent's Upgrade that waits for room. */
+export const useCancelWait = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      runApi((c) => c.conversations.cancelWait({ params: { id } })),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["capacity"] }),
+  });
+};
+
 export type ConversationAction =
   | "resume"
   | "pause"

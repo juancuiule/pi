@@ -32,6 +32,7 @@ import type { ConversationAction } from "@/lib/queries";
 
 import { ConversationActions } from "./conversation-actions";
 import { SandboxBadge } from "./sandbox-badge";
+import { WaitingNotice } from "./waiting-notice";
 
 export const ConversationHeader = ({
   conversation,
@@ -82,109 +83,115 @@ export const ConversationHeader = ({
   };
 
   return (
-    <header className="flex items-center gap-3 border-b px-3 py-2 md:px-4">
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Conversations"
-        className="md:hidden"
-        onClick={onMenu}
-      >
-        <Menu />
-      </Button>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <h1 className="truncate text-sm font-medium" title={conversation.title}>
-          {conversation.title}
-        </h1>
-        <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-          <SandboxBadge sandbox={conversation.sandbox} />
-          {conversation.sandboxId === undefined ? null : (
-            <span
-              className="max-w-32 truncate font-mono"
-              title={conversation.sandboxId}
-            >
-              {conversation.sandboxId}
-            </span>
-          )}
-          <span className="tabular-nums">{formatTokens(tokens)} tokens</span>
-          {cost === 0 ? null : (
-            <span className="tabular-nums">{formatCost(cost)}</span>
-          )}
-          {state.running && !hasPendingApproval(state) ? (
-            <span className="inline-flex items-center gap-1">
-              <LoaderCircle
-                aria-hidden
-                className="size-3 motion-safe:animate-spin"
-              />
-              Working
-            </span>
-          ) : null}
-          {state.queued > 0 ? (
-            <span className="tabular-nums">{state.queued} queued</span>
-          ) : null}
-          {status === "paused" ? <span>Paused</span> : null}
-          {status === "archived" ? <span>Archived</span> : null}
-          {conversation.pausing ? (
-            <span className="inline-flex items-center gap-1">
-              Pausing after this run
-              <Button
-                variant="link"
-                size="xs"
-                disabled={act.isPending}
-                onClick={() => run("resume")}
-              >
-                Keep running
-              </Button>
-            </span>
-          ) : null}
-          {conversation.pendingApprovals > 0 ? (
-            <span className="text-warning inline-flex items-center gap-1">
-              <ShieldAlert className="size-3" aria-hidden />
-              Waiting for approval
-            </span>
-          ) : null}
-        </div>
-      </div>
-      {hasSandbox && sidePanel !== undefined ? (
+    <>
+      <header className="flex items-center gap-3 border-b px-3 py-2 md:px-4">
         <Button
-          variant={sidePanel.collapsed ? "ghost" : "secondary"}
+          variant="ghost"
           size="icon-sm"
-          aria-label={`${sidePanel.collapsed ? "Show" : "Hide"} ${sidePanel.label}`}
-          aria-pressed={!sidePanel.collapsed}
-          onClick={handleTogglePanel}
+          aria-label="Conversations"
+          className="md:hidden"
+          onClick={onMenu}
         >
-          <PanelRight />
+          <Menu />
         </Button>
-      ) : null}
-      <DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Export conversation"
-                  >
-                    <Download />
-                  </Button>
-                }
-              />
-            }
-          />
-          <TooltipContent>Export conversation</TooltipContent>
-        </Tooltip>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => download("md")}>
-            Markdown
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => download("jsonl")}>
-            JSON Lines
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <ConversationActions conversation={conversation} />
-    </header>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <h1
+            className="truncate text-sm font-medium"
+            title={conversation.title}
+          >
+            {conversation.title}
+          </h1>
+          <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <SandboxBadge sandbox={conversation.sandbox} />
+            {conversation.sandboxId === undefined ? null : (
+              <span
+                className="max-w-32 truncate font-mono"
+                title={conversation.sandboxId}
+              >
+                {conversation.sandboxId}
+              </span>
+            )}
+            <span className="tabular-nums">{formatTokens(tokens)} tokens</span>
+            {cost === 0 ? null : (
+              <span className="tabular-nums">{formatCost(cost)}</span>
+            )}
+            {state.running && !hasPendingApproval(state) ? (
+              <span className="inline-flex items-center gap-1">
+                <LoaderCircle
+                  aria-hidden
+                  className="size-3 motion-safe:animate-spin"
+                />
+                Working
+              </span>
+            ) : null}
+            {state.queued > 0 ? (
+              <span className="tabular-nums">{state.queued} queued</span>
+            ) : null}
+            {status === "paused" ? <span>Paused</span> : null}
+            {status === "archived" ? <span>Archived</span> : null}
+            {conversation.pausing ? (
+              <span className="inline-flex items-center gap-1">
+                Pausing after this run
+                <Button
+                  variant="link"
+                  size="xs"
+                  disabled={act.isPending}
+                  onClick={() => run("resume")}
+                >
+                  Keep running
+                </Button>
+              </span>
+            ) : null}
+            {conversation.pendingApprovals > 0 ? (
+              <span className="text-warning inline-flex items-center gap-1">
+                <ShieldAlert className="size-3" aria-hidden />
+                Waiting for approval
+              </span>
+            ) : null}
+          </div>
+        </div>
+        {hasSandbox && sidePanel !== undefined ? (
+          <Button
+            variant={sidePanel.collapsed ? "ghost" : "secondary"}
+            size="icon-sm"
+            aria-label={`${sidePanel.collapsed ? "Show" : "Hide"} ${sidePanel.label}`}
+            aria-pressed={!sidePanel.collapsed}
+            onClick={handleTogglePanel}
+          >
+            <PanelRight />
+          </Button>
+        ) : null}
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Export conversation"
+                    >
+                      <Download />
+                    </Button>
+                  }
+                />
+              }
+            />
+            <TooltipContent>Export conversation</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => download("md")}>
+              Markdown
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => download("jsonl")}>
+              JSON Lines
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <ConversationActions conversation={conversation} />
+      </header>
+      <WaitingNotice conversation={conversation} />
+    </>
   );
 };

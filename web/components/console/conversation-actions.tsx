@@ -3,7 +3,14 @@
 // What can be done to a Conversation in its state: Stop and Pause with a Seat, Resume when paused, Archive, and
 // Unarchive when archived.
 import type { ConversationSummary } from "effect-pi/api";
-import { Archive, ArchiveRestore, Pause, Play, Square } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowUpCircle,
+  Pause,
+  Play,
+  Square,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -19,11 +26,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useConversationAction } from "@/lib/queries";
+import { upgradesFrom } from "@/lib/capacity";
+import { useConversationAction, useUpgrade } from "@/lib/queries";
 import type { ConversationAction } from "@/lib/queries";
 
 export const ConversationActions = ({
@@ -33,6 +47,8 @@ export const ConversationActions = ({
 }) => {
   const [confirming, setConfirming] = useState(false);
   const act = useConversationAction();
+  const upgrade = useUpgrade();
+  const higher = upgradesFrom(conversation.sandbox);
   const { status } = conversation;
   const hasSeat = status === "running" || status === "idle";
   const hasSandbox = conversation.sandbox !== "none";
@@ -93,6 +109,33 @@ export const ConversationActions = ({
           Resume
         </Button>
       ) : null}
+      {status === "archived" || higher.length === 0 ? null : (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="outline" size="sm" disabled={upgrade.isPending}>
+                <ArrowUpCircle />
+                Upgrade
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="end">
+            {higher.map((level) => (
+              <DropdownMenuItem
+                key={level}
+                onClick={() =>
+                  upgrade.mutate(
+                    { id: conversation.id, level },
+                    { onError: (error) => toast.error(error.message) }
+                  )
+                }
+              >
+                {level === "shell" ? "Shell" : "Desktop"}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       {status === "archived" ? (
         <Button
           variant="outline"

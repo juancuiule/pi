@@ -23,28 +23,46 @@ import {
   MemoryStorage,
   watchEvents,
 } from "@earendil-works/pi-durable";
-import type { Cause, Scope } from "effect";
-import { Context, Effect, Layer, Queue, Schema, Stream } from "effect";
+import {
+  Cause,
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Queue,
+  Schema,
+  Scope,
+  Semaphore,
+  Stream,
+} from "effect";
 
 import type { ApprovalPolicy } from "../approvals.ts";
 import { ApprovalDoc, clearApprovals, stopWaitingCalls } from "../approvals.ts";
+import { Capacity } from "../capacity.ts";
+import type { Claim, ClaimCancelled } from "../capacity.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
 import { MetaDoc } from "../conversation-meta.ts";
-import type { SkillNotFound } from "../errors.ts";
+import type { CapacityExhausted, SkillNotFound } from "../errors.ts";
 import {
   ApprovalNotFound,
   ConversationArchived,
   ConversationNotFound,
+  InvalidUpgrade,
 } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
-import type { SandboxChoice, SandboxInfo } from "../sandbox/sandbox.ts";
+import type {
+  SandboxChoice,
+  SandboxInfo,
+  SandboxKind,
+} from "../sandbox/sandbox.ts";
 import { SandboxDoc, SandboxError } from "../sandbox/sandbox.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
 import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
 import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
+import { workspaceExtension } from "../tools/workspace.ts";
 import { makeAgentTracing } from "../tracing.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
 
@@ -85,6 +103,9 @@ export interface AgentModel {
   readonly provider: string;
   readonly modelId: string;
 }
+
+/** Levels in the order an Upgrade goes. */
+const rank: Record<SandboxChoice, number> = { none: 0, shell: 1, desktop: 2 };
 
 /** The extensions a conversation runs with, by its Workspace's Level. */
 export const extensionsFor = (
@@ -164,6 +185,23 @@ export interface Seat {
   readonly id: ConversationId;
   /** This Seat's Sandbox; `undefined` at Level `none`. */
   readonly sandbox: SandboxInfo | undefined;
+  /** The Workspace's Level. */
+  readonly level: SandboxChoice;
+  /**
+   * Raise the Level: a Sandbox at `level` over the same files replaces the current one, with its tools added.
+   * At a Capacity limit it fails, or with `wait` waits until there is room (`Capacity.cancel` withdraws it).
+   */
+  upgrade(
+    level: SandboxKind,
+    options?: { readonly wait?: boolean }
+  ): Effect.Effect<
+    void,
+    | AgentError
+    | SandboxError
+    | CapacityExhausted
+    | ClaimCancelled
+    | InvalidUpgrade
+  >;
   /**
    * Send a prompt without waiting for the answer; it is queued as a follow-up while a Run is going. `/skill:` is
    * expanded against the conversation's skills first.
@@ -222,12 +260,26 @@ export class Agents extends Context.Service<
      * files stay. Capacity is the caller's to claim.
      */
     open(
-      id: ConversationId
+      id: ConversationId,
+      options?: {
+        /** The Level's resource, when the caller claimed it already; claimed here, without waiting, otherwise. */
+        readonly levelClaim?: Claim;
+      }
     ): Effect.Effect<
       Seat,
-      AgentError | SandboxError | ConversationNotFound | ConversationArchived,
+      | AgentError
+      | SandboxError
+      | ConversationNotFound
+      | ConversationArchived
+      | CapacityExhausted
+      | ClaimCancelled,
       Scope.Scope
     >;
+    /** Raise the Level of a Conversation without a Seat; its next Seat gets the Sandbox. */
+    upgrade(
+      id: ConversationId,
+      level: SandboxKind
+    ): Effect.Effect<void, AgentError | ConversationNotFound | InvalidUpgrade>;
     /** One stored Conversation. */
     get(
       id: ConversationId
@@ -272,6 +324,7 @@ export class Agents extends Context.Service<
       Agents,
       Effect.gen(function* () {
         const workspaces = yield* Workspaces;
+        const capacity = yield* Capacity;
         const registry = createRegistry();
         // Spans for model requests and tool calls use the tracer this layer is built with.
         const tracing = makeAgentTracing(yield* Effect.context<never>());
@@ -309,6 +362,37 @@ export class Agents extends Context.Service<
         for (const extension of extensionsFor("desktop", desktop)) {
           registry.install(extension);
         }
+        // The upgrade of each conversation with a Seat, for the `upgrade_workspace` tool.
+        const upgrades = new Map<
+          ConversationId,
+          (level: SandboxKind) => Effect.Effect<void, unknown>
+        >();
+        const workspaceExt = workspaceExtension(async (id, level, signal) => {
+          const upgrade = upgrades.get(id);
+          if (upgrade === undefined) {
+            throw new Error("This conversation is not running here.");
+          }
+          const exit = await Effect.runPromiseExit(
+            upgrade(level),
+            signal === undefined ? {} : { signal }
+          );
+          if (Exit.isSuccess(exit)) {
+            return level === "desktop"
+              ? "The workspace is now a desktop, with a shell and your files in /workspace."
+              : "The workspace now has a shell; your files are in /workspace.";
+          }
+          const failure = Cause.squash(exit.cause);
+          const tag =
+            typeof failure === "object" && failure !== null && "_tag" in failure
+              ? failure._tag
+              : undefined;
+          throw new Error(
+            tag === "ClaimCancelled"
+              ? "The person cancelled the upgrade."
+              : `The upgrade failed: ${String(failure)}`
+          );
+        });
+        registry.install(workspaceExt);
 
         // The harness is opened when the layer is built and closed when it is torn down.
         const harness = yield* Effect.acquireRelease(
@@ -432,6 +516,7 @@ export class Agents extends Context.Service<
                   model: { ...options.model },
                   extensions: [
                     ...extensionsFor(createOptions.level, desktop),
+                    workspaceExt,
                     ...(conversationSkills.length === 0 ? [] : [skillsExt]),
                     mcp.extension,
                     tracing.extension,
@@ -457,7 +542,10 @@ export class Agents extends Context.Service<
           return created.id;
         });
 
-        const open = Effect.fn("Agents.open")(function* (id: ConversationId) {
+        const open = Effect.fn("Agents.open")(function* (
+          id: ConversationId,
+          openOptions: { readonly levelClaim?: Claim } = {}
+        ) {
           const handle = yield* handleOf(id);
           const meta = yield* attempt(() =>
             harness.snapshot(MetaDoc, id, context)
@@ -468,54 +556,133 @@ export class Agents extends Context.Service<
           const workspace = yield* attempt(() =>
             harness.snapshot(WorkspaceDoc, id, context)
           );
-          const level = workspace?.level ?? "none";
-          let sandbox: SandboxInfo | undefined;
-          if (level !== "none") {
-            const machine = yield* workspaces.sandbox({
-              level,
-              storage: workspace?.storage,
-            });
-            ({ sandbox } = machine);
-            const conversationSkills = yield* skillsOf(id);
-            if (conversationSkills.length > 0) {
-              yield* skills
-                .install(workspaces.env(sandbox), conversationSkills, context)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new SandboxError({
-                        message: `Could not copy skills into ${machine.sandbox.id}`,
-                        cause,
-                      })
-                  )
-                );
+          // The Sandbox and its Level's claim, in a scope of their own so an Upgrade can replace them.
+          let level: SandboxChoice = workspace?.level ?? "none";
+          let machine:
+            | { readonly scope: Scope.Closeable; readonly sandbox: SandboxInfo }
+            | undefined;
+
+          // One finalizer, in this order: the conversation stops, no tool call can find the Sandbox any more,
+          // then the Sandbox goes and its claim is released.
+          yield* Effect.addFinalizer(() =>
+            Effect.gen(function* () {
+              upgrades.delete(id);
+              yield* Effect.ignore(attempt(() => handle.abort(context)));
+              yield* Effect.ignore(
+                attempt(() =>
+                  harness.commit(async (tx) => {
+                    const doc = await tx.doc(SandboxDoc, id);
+                    delete doc.sandbox;
+                  }, context)
+                )
+              );
+              if (machine !== undefined) {
+                yield* Scope.close(machine.scope, Exit.void);
+              }
+            })
+          );
+
+          // A Sandbox at `to` over the Workspace's files, its skills copied in and recorded before it is used.
+          const attach = (
+            to: SandboxKind,
+            claimOptions: {
+              readonly claim?: Claim | undefined;
+              readonly wait?: boolean;
             }
-            // Recorded before the Seat is returned, so no tool call of this Seat runs without its Sandbox. Cleared
-            // when the Seat ends, before the Sandbox is removed.
-            yield* Effect.acquireRelease(
-              attempt(() =>
-                harness.commit(async (tx) => {
-                  const doc = await tx.doc(SandboxDoc, id);
-                  doc.sandbox = machine.sandbox;
-                  const files = await tx.doc(WorkspaceDoc, id);
-                  files.storage = machine.storage;
-                }, context)
-              ),
-              () =>
-                Effect.ignore(
-                  attempt(() =>
+          ) =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.make();
+              const attached = yield* Effect.exit(
+                Effect.gen(function* () {
+                  const claim =
+                    claimOptions.claim ??
+                    (yield* capacity.claim([to], {
+                      holder: Number(id),
+                      wait: claimOptions.wait ?? false,
+                    }));
+                  yield* Effect.addFinalizer(() => claim.release);
+                  const current = yield* attempt(() =>
+                    harness.snapshot(WorkspaceDoc, id, context)
+                  );
+                  const made = yield* workspaces.sandbox({
+                    level: to,
+                    storage: current?.storage,
+                  });
+                  const conversationSkills = yield* skillsOf(id);
+                  if (conversationSkills.length > 0) {
+                    yield* skills
+                      .install(
+                        workspaces.env(made.sandbox),
+                        conversationSkills,
+                        context
+                      )
+                      .pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new SandboxError({
+                              message: `Could not copy skills into ${made.sandbox.id}`,
+                              cause,
+                            })
+                        )
+                      );
+                  }
+                  // Recorded before anyone uses it, so no tool call of this Seat runs without its Sandbox.
+                  yield* attempt(() =>
                     harness.commit(async (tx) => {
                       const doc = await tx.doc(SandboxDoc, id);
-                      delete doc.sandbox;
+                      doc.sandbox = made.sandbox;
+                      const files = await tx.doc(WorkspaceDoc, id);
+                      files.level = to;
+                      files.storage = made.storage;
                     }, context)
-                  )
-                )
-            );
+                  );
+                  return made.sandbox;
+                }).pipe(Scope.provide(scope))
+              );
+              if (Exit.isFailure(attached)) {
+                yield* Scope.close(scope, Exit.void);
+                return yield* Effect.failCause(attached.cause);
+              }
+              return { scope, sandbox: attached.value };
+            });
+
+          if (level !== "none") {
+            machine = yield* attach(level, { claim: openOptions.levelClaim });
           }
-          // Registered last, so it runs first: the conversation stops before its Sandbox goes.
-          yield* Effect.addFinalizer(() =>
-            Effect.ignore(attempt(() => handle.abort(context)))
+
+          const upgrading = yield* Semaphore.make(1);
+          const upgrade = Effect.fn("Seat.upgrade")(
+            function* (
+              to: SandboxKind,
+              upgradeOptions: { readonly wait?: boolean } = {}
+            ) {
+              if (rank[to] <= rank[level]) {
+                return yield* new InvalidUpgrade({
+                  id: Number(id),
+                  from: level,
+                  to,
+                });
+              }
+              const previous = machine;
+              const added = extensionsFor(to, desktop).filter(
+                (extension) =>
+                  !extensionsFor(level, desktop).includes(extension)
+              );
+              machine = yield* attach(to, {
+                wait: upgradeOptions.wait ?? false,
+              });
+              level = to;
+              yield* attempt(() =>
+                handle.configure({ extensions: { add: added } }, context)
+              );
+              // The new Sandbox is recorded; the old one, and its claim, can go.
+              if (previous !== undefined) {
+                yield* Scope.close(previous.scope, Exit.void);
+              }
+            },
+            (effect) => upgrading.withPermit(effect)
           );
+          upgrades.set(id, (to) => upgrade(to, { wait: true }));
 
           const annotate = (prompt: string) =>
             Effect.annotateCurrentSpan({
@@ -615,7 +782,13 @@ export class Agents extends Context.Service<
 
           return {
             id,
-            sandbox,
+            get sandbox() {
+              return machine?.sandbox;
+            },
+            get level() {
+              return level;
+            },
+            upgrade,
             send,
             ask,
             stop,
@@ -710,6 +883,32 @@ export class Agents extends Context.Service<
           );
         });
 
+        const upgradeStored = Effect.fn("Agents.upgrade")(function* (
+          id: ConversationId,
+          to: SandboxKind
+        ) {
+          const handle = yield* handleOf(id);
+          const from = yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const doc = await tx.doc(WorkspaceDoc, id);
+              const current = doc.level;
+              if (rank[to] > rank[current]) {
+                doc.level = to;
+              }
+              return current;
+            }, context)
+          );
+          if (rank[to] <= rank[from]) {
+            return yield* new InvalidUpgrade({ id: Number(id), from, to });
+          }
+          const added = extensionsFor(to, desktop).filter(
+            (extension) => !extensionsFor(from, desktop).includes(extension)
+          );
+          yield* attempt(() =>
+            handle.configure({ extensions: { add: added } }, context)
+          );
+        });
+
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
         ) {
@@ -758,6 +957,7 @@ export class Agents extends Context.Service<
           capabilities,
           create,
           open,
+          upgrade: upgradeStored,
           get,
           list,
           archive,

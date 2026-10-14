@@ -17,14 +17,14 @@ Replaces ended and sandbox-removed conversations with pausable ones, and splits 
 
 ## Modules
 
-- **`Capacity`**: limits, holders and the wait list for `seat`, `shell` and `desktop`.
-- **`Workspaces`**: Workspace storage (create, archive) and Sandboxes for a Workspace at a Level, through `Capacity` and the `Sandboxes` backend.
+- **`Capacity`**: limits, holders and the wait list for `seat`, `shell` and `desktop`. `Conversations` claims Seats (and, for a create, the Level's resource before anything is recorded); `Agents` claims a Seat's Sandbox resource, and waits for one on the agent's Upgrade.
+- **`Workspaces`**: Workspace storage (create, archive) and Sandboxes for a Workspace at a Level, through the `Sandboxes` backend.
 - **`Agents`**: the harness, boot recovery, stored Conversations (list, archive), and `open(id)`, which assembles a Seat: Sandbox, `SandboxDoc`, skills, conversation; on close it aborts the conversation before the Sandbox goes. A Seat offers `send`, `stop`, `decide`, `upgrade` and `events`.
 - **`Conversations`**: which Conversations have Seats and when that changes: Pause, Resume, the sweep, run status from `LiveDoc`, and the API's view of Capacity.
 
 ## Steps
 
-Each step leaves `pnpm check` green.
+All done on `feature/seats-and-workspaces`; each step left `pnpm check` green.
 
 1. Build the desktop image `FROM` the shell image.
 2. "Stopped by the user before approval": the `stop` decision and `stopWaitingCalls` (`src/approvals.ts`), and a Stopped state in the console.

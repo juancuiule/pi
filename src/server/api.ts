@@ -13,6 +13,7 @@ import {
   CapacityExhausted,
   ConversationArchived,
   ConversationNotFound,
+  InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
 
@@ -29,6 +30,7 @@ export {
   CapacityExhausted,
   ConversationArchived,
   ConversationNotFound,
+  InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
 
@@ -76,6 +78,8 @@ export const CapacityUsage = Schema.Struct({
   resource: Schema.Literals(["seat", "shell", "desktop"]),
   limit: Schema.Number,
   holders: Schema.Array(Schema.Number),
+  /** Conversations waiting for one: an agent's Upgrade waits until there is room. */
+  waiting: Schema.Array(Schema.Number),
 });
 export type CapacityUsage = typeof CapacityUsage.Type;
 
@@ -126,6 +130,23 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     params: ById,
     success: HttpApiSchema.NoContent,
     error: NotFound,
+  }),
+  // Raise the Level; with a Seat, now, if there is room.
+  HttpApiEndpoint.post("upgrade", "/conversations/:id/upgrade", {
+    params: ById,
+    payload: Schema.Struct({ level: Schema.Literals(["shell", "desktop"]) }),
+    success: ConversationSummary,
+    error: [
+      NotFound,
+      Full,
+      Archived,
+      InvalidUpgrade.pipe(HttpApiSchema.status(400)),
+    ],
+  }),
+  // Withdraw the agent's Upgrade waiting for room; it ends with an error the agent sees.
+  HttpApiEndpoint.post("cancelWait", "/conversations/:id/upgrade/cancel", {
+    params: ById,
+    success: HttpApiSchema.NoContent,
   }),
   HttpApiEndpoint.post("archive", "/conversations/:id/archive", {
     params: ById,

@@ -3,7 +3,7 @@
 // The Capacity dialog: when a create, send or resume hits a Capacity limit, the person picks a Conversation to pause
 // (now, or after its current Run), and the call runs again once that one is paused. Nothing is paused without a pick.
 import type { ReactNode } from "react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -21,7 +21,7 @@ import { capacityShortageOf, runApi } from "@/lib/api";
 import { holdersOf, shortageText } from "@/lib/capacity";
 import type { Holder } from "@/lib/capacity";
 import { CapacityContext } from "@/lib/capacity-context";
-import type { CapacityGuard } from "@/lib/capacity-context";
+import type { CapacityDialog, CapacityGuard } from "@/lib/capacity-context";
 import { fetchConversations, useConversations } from "@/lib/queries";
 
 const POLL_MS = 500;
@@ -55,8 +55,8 @@ const waitUntilPaused = async (
 
 interface Request {
   readonly shortage: CapacityShortage;
-  /** True to run the call again, false to give up. */
-  readonly settle: (retry: boolean) => void;
+  /** True to run the call again, false to give up; absent when nothing here waits to retry. */
+  readonly settle?: (retry: boolean) => void;
 }
 
 const HolderRow = ({
@@ -141,9 +141,20 @@ export const CapacityGuardProvider = ({
     return attempt();
   }, []);
 
+  const makeRoom = useCallback((shortage: CapacityShortage) => {
+    cancelledRef.current = false;
+    // Whatever waits for the room is not this dialog's to retry.
+    setRequest({ shortage });
+  }, []);
+
+  const value = useMemo<CapacityDialog>(
+    () => ({ guard, makeRoom }),
+    [guard, makeRoom]
+  );
+
   const close = (retry: boolean) => {
     cancelledRef.current = !retry;
-    request?.settle(retry);
+    request?.settle?.(retry);
     setRequest(undefined);
     setWaitingFor(undefined);
   };
@@ -171,7 +182,7 @@ export const CapacityGuardProvider = ({
       : holdersOf(request.shortage, conversations ?? []);
 
   return (
-    <CapacityContext.Provider value={guard}>
+    <CapacityContext.Provider value={value}>
       {children}
       <AlertDialog
         open={request !== undefined}
