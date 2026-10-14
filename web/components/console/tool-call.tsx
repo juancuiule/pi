@@ -3,7 +3,7 @@
 import type { ApprovalChoice, Message } from "effect-pi/api";
 import { CircleAlert, Info, LoaderCircle, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { createElement, useEffect, useState } from "react";
+import { createElement, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -25,7 +25,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace";
 import { useHighlightedCode } from "@/hooks/use-highlighted-code";
-import { approvalOf } from "@/lib/approval";
+import { approvalOf, approvalWaitMsOf } from "@/lib/approval";
 import { useApproval } from "@/lib/approval-context";
 import { toolResultEntryOf, toolResultOf } from "@/lib/conversation-state";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
@@ -274,34 +274,6 @@ const LINE_STATUS: Record<
   done: undefined,
 };
 
-/**
- * The call's measured clock: ticks while a measured call is live, freezes at `endedAt` once done, and stays
- * undefined for snapshot-restored slots, which carry no timing.
- */
-const useElapsed = (
-  step: CallState,
-  tool: ToolRun | undefined
-): string | undefined => {
-  const startedAt = tool?.startedAt;
-  const endedAt = tool?.endedAt;
-  const live =
-    startedAt !== undefined &&
-    endedAt === undefined &&
-    (step === "running" || step === "awaiting");
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!live) {
-      return;
-    }
-    const interval = setInterval(() => setNow(Date.now()), 100);
-    return () => clearInterval(interval);
-  }, [live]);
-  if (startedAt === undefined) {
-    return undefined;
-  }
-  return formatDuration(Math.max(0, (endedAt ?? now) - startedAt));
-};
-
 const Section = ({
   label,
   children,
@@ -435,7 +407,15 @@ export const ToolCall = ({
     approval.awaiting
   );
 
-  const elapsed = useElapsed(step, tool);
+  // Execution time from the committed result: pi's durationMs less the approval wait. Nothing while the call
+  // runs — the wire carries no live timer — and nothing for denied or stopped calls, which never executed.
+  const durationMs = toolResult?.durationMs;
+  const elapsed =
+    durationMs === undefined || step === "denied" || step === "stopped"
+      ? undefined
+      : formatDuration(
+          Math.max(0, durationMs - (approvalWaitMsOf(toolResult?.details) ?? 0))
+        );
 
   return (
     <TraceCollapsible open={open} onOpenChange={setOpen}>

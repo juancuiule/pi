@@ -17,12 +17,6 @@ export interface ToolRun {
   readonly output: string;
   readonly details: unknown;
   readonly status: "pending" | "running" | "done";
-  /**
-   * When the client saw the call start and end (epoch ms), for its duration on the line. The events carry no
-   * timestamps, so a slot restored from a snapshot — including one still running — has neither, and shows none.
-   */
-  readonly startedAt?: number;
-  readonly endedAt?: number;
 }
 
 export interface ConversationState {
@@ -152,36 +146,9 @@ const withSettled = (
       }
     : state;
 
-const startTool = (
-  state: ConversationState,
-  event: Extract<AgentEvent, { type: "tool_execution_start" }>,
-  now: number
-): ConversationState =>
-  withTool(state, event.toolCallId, event.toolName, (tool) => ({
-    ...tool,
-    status: "running",
-    startedAt: tool.startedAt ?? now,
-  }));
-
-const endTool = (
-  state: ConversationState,
-  event: Extract<AgentEvent, { type: "tool_execution_end" }>,
-  now: number
-): ConversationState => {
-  const ended = withTool(state, event.toolCallId, event.toolName, (tool) => ({
-    ...tool,
-    status: "done",
-    endedAt: tool.endedAt ?? now,
-  }));
-  return event.entry === undefined
-    ? ended
-    : { ...ended, entries: withEntry(ended.entries, event.entry) };
-};
-
 export const applyEvent = (
   state: ConversationState,
-  event: ConversationEvent,
-  now = Date.now()
+  event: ConversationEvent
 ): ConversationState => {
   switch (event.type) {
     case "snapshot": {
@@ -241,7 +208,10 @@ export const applyEvent = (
       return { ...state, entries: withEntry(state.entries, event.entry) };
     }
     case "tool_execution_start": {
-      return startTool(state, event, now);
+      return withTool(state, event.toolCallId, event.toolName, (tool) => ({
+        ...tool,
+        status: "running",
+      }));
     }
     case "tool_execution_update": {
       return withTool(state, event.toolCallId, event.toolName, (tool) => ({
@@ -251,7 +221,18 @@ export const applyEvent = (
       }));
     }
     case "tool_execution_end": {
-      return endTool(state, event, now);
+      const ended = withTool(
+        state,
+        event.toolCallId,
+        event.toolName,
+        (tool) => ({
+          ...tool,
+          status: "done",
+        })
+      );
+      return event.entry === undefined
+        ? ended
+        : { ...ended, entries: withEntry(ended.entries, event.entry) };
     }
     case "inbox_update": {
       return { ...state, queued: event.items.length };

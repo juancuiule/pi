@@ -75,16 +75,18 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => {
       const key = approvalKey(api.conversationId, api.callId);
       // Reading the policy and registering happen in one commit, so an "always" decision cannot land
       // between them and leave this call waiting under a policy that is already `auto`.
+      let requestedAt: number | undefined;
       const gated = await api.commit(async (tx) => {
         const doc = await tx.doc(ApprovalDoc, api.conversationId);
         if (doc.policy !== "ask") {
           return false;
         }
+        requestedAt = Date.now();
         doc.pending[key] = {
           conversationId: String(api.conversationId),
           callId: api.callId,
           tool: tool.name,
-          requestedAt: Date.now(),
+          requestedAt,
         };
         return true;
       }, context);
@@ -170,8 +172,22 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => {
         if (decision !== "approve") {
           throw new Error("No approval decision.");
         }
+        // The wait above ran inside this execute, so pi's durationMs counts it; the console subtracts
+        // approvalWaitMs to show the tool's execution time only. Stamp it before executing, or it would
+        // include the run itself.
+        const approvalWaitMs = Date.now() - (requestedAt ?? Date.now());
         await api.details({ approval: "approved" }, context);
-        return await tool.execute(args, api, context);
+        const result = await tool.execute(args, api, context);
+        const details =
+          result.details !== null &&
+          typeof result.details === "object" &&
+          !Array.isArray(result.details)
+            ? result.details
+            : {};
+        return {
+          ...result,
+          details: { ...details, approvalWaitMs },
+        };
       } finally {
         signal?.removeEventListener("abort", onAbort);
         await watch?.stop().catch((): void => undefined);

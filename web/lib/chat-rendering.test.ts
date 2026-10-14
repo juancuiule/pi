@@ -365,38 +365,57 @@ describe("chat traces", () => {
     }
   );
 
-  it("shows the elapsed time ticking on a running call's line", () => {
-    const html = toolCall({
-      ...initialState,
-      running: true,
-      tools: { c1: { ...tool, startedAt: Date.now() - 2400 } },
-    });
-    expect(html).toContain("Running · 2.4s");
-  });
-
-  it("shows a finished call's duration, and none for a snapshot-restored one", () => {
+  it("shows a finished call's duration from the result's durationMs", () => {
     const result = {
       role: "toolResult",
       toolCallId: "c1",
       toolName: "bash",
       content: [{ type: "text", text: "ok" }],
+      durationMs: 2400,
+      timestamp: 0,
     } as unknown as Message;
-    const timed = toolCall({
-      ...initialState,
-      entries: [entry(result)],
-      tools: {
-        c1: { ...tool, status: "done", startedAt: 1000, endedAt: 3400 },
-      },
-    });
-    expect(timed).toContain("2.4s");
-    expect(timed).not.toContain("Running");
-
-    const restored = toolCall({
+    const html = toolCall({
       ...initialState,
       entries: [entry(result)],
       tools: { c1: { ...tool, status: "done" } },
     });
-    expect(restored).not.toContain("trace-description");
+    expect(html).toContain("2.4s");
+    expect(html).not.toContain("Running");
+  });
+
+  it("subtracts the approval wait from a gated call's duration", () => {
+    const result = {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "bash",
+      content: [{ type: "text", text: "ok" }],
+      durationMs: 2400,
+      details: { approval: "approved", approvalWaitMs: 2000 },
+      timestamp: 0,
+    } as unknown as Message;
+    const html = toolCall({
+      ...initialState,
+      entries: [entry(result)],
+      tools: { c1: { ...tool, status: "done" } },
+    });
+    expect(html).toContain("0.4s");
+    expect(html).not.toContain("2.4s");
+  });
+
+  it("shows no duration for a denied call, which never ran", () => {
+    const result = {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "bash",
+      content: [{ type: "text", text: "The user denied this tool call." }],
+      isError: true,
+      durationMs: 30_000,
+      details: { approval: "denied" },
+      timestamp: 0,
+    } as unknown as Message;
+    const html = toolCall({ ...initialState, entries: [entry(result)] });
+    expect(html).toContain("Denied");
+    expect(html).not.toContain("30s");
   });
 
   it("does not leave an interrupted tool shimmering", () => {

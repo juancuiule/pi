@@ -30,6 +30,18 @@ export const approvalOf = (details: unknown): Approval | undefined => {
   return undefined;
 };
 
+/**
+ * Milliseconds an approved call waited for its decision, stamped into the result's details by `withApproval` so a
+ * duration can subtract it: pi's `durationMs` covers the whole execute, wait included.
+ */
+export const approvalWaitMsOf = (details: unknown): number | undefined => {
+  if (typeof details !== "object" || details === null) {
+    return undefined;
+  }
+  const { approvalWaitMs } = details as Record<string, unknown>;
+  return typeof approvalWaitMs === "number" ? approvalWaitMs : undefined;
+};
+
 /** True while any tool call in the conversation waits for a decision. */
 export const hasPendingApproval = (state: ConversationState): boolean =>
   Object.values(state.tools).some(

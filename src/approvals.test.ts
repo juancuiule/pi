@@ -2,6 +2,7 @@
 // conversation's ApprovalDoc.
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import {
   fauxAssistantMessage,
@@ -160,6 +161,10 @@ describe("tool approvals", () => {
           yield* waitUntil(hasRunEnd(ref));
           const results = yield* toolResults(ref);
           expect(results[0]?.isError).not.toBeTruthy();
+          expect(
+            (results[0]?.details as { approvalWaitMs?: number } | undefined)
+              ?.approvalWaitMs
+          ).toBeTypeOf("number");
           return cwd;
         })
       ).pipe(Effect.provide(layer))
@@ -358,6 +363,31 @@ describe("tool approvals", () => {
     controller.abort();
     await expect(execution).rejects.toThrow(STOPPED);
     expect(ran).toBeFalsy();
+  });
+
+  it("stamps the approval wait into the approved result's details, keeping the tool's own", async () => {
+    const doc = {
+      policy: "ask",
+      pending: {},
+      decisions: { "1:c1": "approve" },
+    };
+    const tool = withApproval({
+      name: "fake",
+      execute: async () => {
+        // Slow on purpose: approvalWaitMs is stamped before execute runs, so a stamp that leaked past
+        // this point would show up here as at least the sleep.
+        await sleep(30);
+        return { content: [], details: { patch: "x" } };
+      },
+    } as never);
+    const result = (await tool.execute(
+      {},
+      fakeApi(doc) as never,
+      { abortSignal: undefined } as never
+    )) as { details: Record<string, unknown> };
+    expect(result.details.patch).toBe("x");
+    expect(result.details.approvalWaitMs).toBeGreaterThanOrEqual(0);
+    expect(result.details.approvalWaitMs).toBeLessThan(30);
   });
 
   it("runs without waiting when the committed policy is auto", async () => {
