@@ -139,6 +139,10 @@ const Console = () => {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const state = useConversationEvents(selectedId);
+  const thinkingHidden = useConversationStore(
+    (store) =>
+      selectedId !== undefined && store.hiddenThinking[selectedId] === true
+  );
   const decideApproval = useDecideApproval(selectedId ?? 0);
   const gone = useConversationStore(
     (store) => selectedId !== undefined && (store.ended[selectedId] ?? false)
@@ -200,7 +204,11 @@ const Console = () => {
               }
             />
           )}
-          <Transcript state={state} resuming={resuming} />
+          <Transcript
+            state={state}
+            resuming={resuming}
+            showThinking={!thinkingHidden}
+          />
           <Composer
             id={selectedId}
             running={state.running}

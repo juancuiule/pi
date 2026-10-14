@@ -2,6 +2,7 @@
 
 import type { ConversationSummary } from "effect-pi/api";
 import {
+  Brain,
   Download,
   LoaderCircle,
   Menu,
@@ -29,7 +30,11 @@ import { exportSlug, toJsonl, toMarkdown } from "@/lib/export";
 import { formatCost, formatTokens } from "@/lib/format";
 import { useConversationAction } from "@/lib/queries";
 import type { ConversationAction } from "@/lib/queries";
-import { useResuming } from "@/lib/store";
+import {
+  useConversationStore,
+  useResuming,
+  useThinkingHidden,
+} from "@/lib/store";
 
 import { ConversationActions } from "./conversation-actions";
 import { ResumingNotice } from "./resuming-notice";
@@ -55,6 +60,8 @@ export const ConversationHeader = ({
 }) => {
   const act = useConversationAction();
   const resuming = useResuming(conversation);
+  const thinkingHidden = useThinkingHidden(conversation.id);
+  const toggleThinking = useConversationStore((store) => store.toggleThinking);
   const { tokens, cost } = totalUsage(state.usage);
   const { status } = conversation;
 
@@ -162,6 +169,26 @@ export const ConversationHeader = ({
             ) : null}
           </div>
         </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant={thinkingHidden ? "ghost" : "secondary"}
+                size="icon-sm"
+                aria-label={
+                  thinkingHidden ? "Show thinking steps" : "Hide thinking steps"
+                }
+                aria-pressed={!thinkingHidden}
+                onClick={() => toggleThinking(conversation.id)}
+              >
+                <Brain />
+              </Button>
+            }
+          />
+          <TooltipContent>
+            {thinkingHidden ? "Show thinking steps" : "Hide thinking steps"}
+          </TooltipContent>
+        </Tooltip>
         {hasSandbox && sidePanel !== undefined ? (
           <Button
             variant={sidePanel.collapsed ? "ghost" : "secondary"}

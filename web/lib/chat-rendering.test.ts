@@ -40,8 +40,14 @@ const assistant = (thinking: string): AssistantMessage =>
     content: [{ type: "thinking", thinking }],
   }) as unknown as AssistantMessage;
 
-const transcript = (state: ConversationState, resuming = false) =>
-  renderToStaticMarkup(createElement(Transcript, { state, resuming }));
+const transcript = (
+  state: ConversationState,
+  resuming = false,
+  showThinking = true
+) =>
+  renderToStaticMarkup(
+    createElement(Transcript, { state, resuming, showThinking })
+  );
 const toolCall = (state: ConversationState) =>
   renderToStaticMarkup(createElement(ToolCall, { call, state }));
 
@@ -76,6 +82,34 @@ describe("chat traces", () => {
     expect(html).toContain(">Thought<");
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('data-status="running"');
+  });
+
+  it("hides thinking when showThinking is false, keeping text and tool calls", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "hmm" },
+        { type: "text", text: "the answer" },
+        { type: "thinking", thinking: "more" },
+        call,
+      ],
+    } as unknown as AssistantMessage;
+    const state = { ...initialState, entries: [entry(message)] };
+    expect(transcript(state)).toContain(">Thought<");
+    const html = transcript(state, false, false);
+    expect(html).not.toContain(">Thought<");
+    expect(html).toContain("the answer");
+    expect(html).toContain(">bash<");
+  });
+
+  it("keeps the Working… line when thinking is hidden and only thinking is streaming", () => {
+    const html = transcript(
+      { ...initialState, running: true, streaming: assistant("hmm") },
+      false,
+      false
+    );
+    expect(html).toContain("Working…");
+    expect(html).not.toContain("Thinking");
   });
 
   it("uses a running trace for the trailing Working line", () => {

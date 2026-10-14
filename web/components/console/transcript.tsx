@@ -125,14 +125,20 @@ type Segment =
       readonly items: { index: number; block: ContentBlock }[];
     };
 
-const segmentsOf = (blocks: readonly ContentBlock[]): Segment[] => {
+const segmentsOf = (
+  blocks: readonly ContentBlock[],
+  showThinking: boolean
+): Segment[] => {
   const segments: Segment[] = [];
   for (const [index, block] of blocks.entries()) {
     if (block.type === "text") {
       segments.push({ kind: "text", index, text: block.text });
       continue;
     }
-    if (block.type !== "thinking" && block.type !== "toolCall") {
+    if (
+      (block.type !== "thinking" && block.type !== "toolCall") ||
+      (!showThinking && block.type === "thinking")
+    ) {
       continue;
     }
     const last = segments.at(-1);
@@ -168,10 +174,12 @@ const AssistantBlocks = ({
   message,
   state,
   caret,
+  showThinking,
 }: {
   message: AssistantMessage;
   state: ConversationState;
   caret?: boolean;
+  showThinking: boolean;
 }) => {
   let lastTextIndex = -1;
   for (const [index, block] of message.content.entries()) {
@@ -180,9 +188,13 @@ const AssistantBlocks = ({
     }
   }
   const lastIndex = message.content.length - 1;
+  const segments = segmentsOf(message.content, showThinking);
+  if (segments.length === 0) {
+    return null;
+  }
   return (
     <div className="flex flex-col gap-3">
-      {segmentsOf(message.content).map((segment) =>
+      {segments.map((segment) =>
         segment.kind === "text" ? (
           <div key={`t${segment.index}`}>
             <Markdown>{segment.text}</Markdown>
@@ -209,9 +221,11 @@ const AssistantBlocks = ({
 const Entry = ({
   entry,
   state,
+  showThinking,
 }: {
   entry: EntryRecord;
   state: ConversationState;
+  showThinking: boolean;
 }) => {
   const message = entry.model?.[0];
   const note =
@@ -287,7 +301,13 @@ const Entry = ({
       );
     }
     case "assistant": {
-      return <AssistantBlocks message={message} state={state} />;
+      return (
+        <AssistantBlocks
+          message={message}
+          state={state}
+          showThinking={showThinking}
+        />
+      );
     }
     default: {
       return null;
@@ -299,13 +319,20 @@ const Entry = ({
 const StatusLine = ({
   state,
   resuming,
+  showThinking,
 }: {
   state: ConversationState;
   resuming: boolean;
+  showThinking: boolean;
 }) => {
+  // A streaming message that renders nothing (every block is hidden thinking) still needs the activity line.
+  const streamingHidden =
+    !showThinking &&
+    state.streaming !== undefined &&
+    state.streaming.content.every((block) => block.type === "thinking");
   const working =
     state.running &&
-    state.streaming === undefined &&
+    (state.streaming === undefined || streamingHidden) &&
     !hasPendingApproval(state);
   if (!resuming && !working) {
     return null;
@@ -337,9 +364,11 @@ const Failure = ({ children }: { children: string }) => (
 const Body = ({
   state,
   resuming,
+  showThinking,
 }: {
   state: ConversationState;
   resuming: boolean;
+  showThinking: boolean;
 }) => (
   <>
     {state.entries.map((entry) => {
@@ -348,28 +377,36 @@ const Body = ({
         unanswered === undefined ? undefined : unansweredNote(unanswered);
       return (
         <Fragment key={entry.id}>
-          <Entry entry={entry} state={state} />
+          <Entry entry={entry} state={state} showThinking={showThinking} />
           {note === undefined ? null : <Failure>{note}</Failure>}
         </Fragment>
       );
     })}
     {state.streaming === undefined ? null : (
-      <AssistantBlocks message={state.streaming} state={state} caret />
+      <AssistantBlocks
+        message={state.streaming}
+        state={state}
+        caret
+        showThinking={showThinking}
+      />
     )}
     {state.failures.map((failure) => (
       <Failure key={failure}>{failure}</Failure>
     ))}
-    <StatusLine state={state} resuming={resuming} />
+    <StatusLine state={state} resuming={resuming} showThinking={showThinking} />
   </>
 );
 
 export const Transcript = ({
   state,
   resuming = false,
+  showThinking = true,
 }: {
   state: ConversationState;
   /** A resume is in flight; the run's "Working…" line reads "Resuming…" instead. */
   resuming?: boolean;
+  /** The header's per-conversation switch: false drops thinking blocks, keeping text and tool calls. */
+  showThinking?: boolean;
 }) => {
   const viewport = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
@@ -420,7 +457,7 @@ export const Transcript = ({
     <div className="relative min-h-0 flex-1">
       <ScrollArea ref={root} className="h-full">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6">
-          <Body state={state} resuming={resuming} />
+          <Body state={state} resuming={resuming} showThinking={showThinking} />
         </div>
       </ScrollArea>
       {showJump ? (

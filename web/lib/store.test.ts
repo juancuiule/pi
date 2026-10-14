@@ -44,4 +44,18 @@ describe(useConversationStore, () => {
     expect(useConversationStore.getState().resuming[5]).toBeUndefined();
     expect(useConversationStore.getState().resuming[6]).toBe(1);
   });
+
+  it("toggles a conversation's thinking visibility, per conversation", () => {
+    const store = useConversationStore.getState();
+    store.toggleThinking(7);
+    store.toggleThinking(8);
+    expect(useConversationStore.getState().hiddenThinking[7]).toBeTruthy();
+
+    store.toggleThinking(7);
+    expect(useConversationStore.getState().hiddenThinking[7]).toBeUndefined();
+    expect(useConversationStore.getState().hiddenThinking[8]).toBeTruthy();
+
+    store.toggleThinking(8);
+    expect(useConversationStore.getState().hiddenThinking[8]).toBeUndefined();
+  });
 });
