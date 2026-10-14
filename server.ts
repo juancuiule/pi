@@ -47,11 +47,12 @@ const AgentsLive = Agents.layer({
 }).pipe(
   Layer.provide(DockerVolumes.workspaces()),
   Layer.provide(Skills.directory(config.paths.skills)),
-  Layer.provideMerge(CapacityLive)
+  Layer.provide(CapacityLive)
 );
 
 const ConversationsLive = Conversations.layer(config.server).pipe(
-  Layer.provide(AgentsLive)
+  Layer.provide(AgentsLive),
+  Layer.provide(CapacityLive)
 );
 
 const NodeHttpServerLayer = NodeHttpServer.layer(createServer, {
