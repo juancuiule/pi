@@ -104,6 +104,27 @@ export interface AgentModel {
   readonly modelId: string;
 }
 
+/**
+ * Add extensions to a conversation's own selection. pi-durable reads `{ add }` as an edit of the host's default
+ * selection (every installed extension), so the conversation's current list is passed whole, with the new ones.
+ */
+const withExtensions = async (
+  conversation: Pick<Conversation, "agent" | "configure">,
+  added: readonly Extension[]
+) => {
+  const { extensions } = await conversation.agent(context);
+  const names = new Set(extensions.map((extension) => extension.name));
+  await conversation.configure(
+    {
+      extensions: [
+        ...extensions,
+        ...added.filter((extension) => !names.has(extension.name)),
+      ],
+    },
+    context
+  );
+};
+
 /** Levels in the order an Upgrade goes. */
 const rank: Record<SandboxChoice, number> = { none: 0, shell: 1, desktop: 2 };
 
@@ -672,9 +693,7 @@ export class Agents extends Context.Service<
                 wait: upgradeOptions.wait ?? false,
               });
               level = to;
-              yield* attempt(() =>
-                handle.configure({ extensions: { add: added } }, context)
-              );
+              yield* attempt(() => withExtensions(handle, added));
               // The new Sandbox is recorded; the old one, and its claim, can go.
               if (previous !== undefined) {
                 yield* Scope.close(previous.scope, Exit.void);
@@ -904,9 +923,7 @@ export class Agents extends Context.Service<
           const added = extensionsFor(to, desktop).filter(
             (extension) => !extensionsFor(from, desktop).includes(extension)
           );
-          yield* attempt(() =>
-            handle.configure({ extensions: { add: added } }, context)
-          );
+          yield* attempt(() => withExtensions(handle, added));
         });
 
         const events = Effect.fn("Agents.events")(function* (

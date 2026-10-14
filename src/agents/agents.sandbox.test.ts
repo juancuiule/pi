@@ -103,3 +103,55 @@ describe("conversation sandboxes", () => {
     });
   });
 });
+
+const nameOf = (tool: unknown) =>
+  typeof tool === "string" ? tool : (tool as { name: string }).name;
+
+/** A model turn that answers with the tools it was offered and every system message, as JSON. */
+const offered: FauxResponseStep = (request) => {
+  const system = request.messages.filter((m) => m.role === "system");
+  // pi-durable sends tool changes on positional system messages; the offered tools are their sum.
+  const tools = new Set<string>();
+  for (const message of system) {
+    for (const tool of message.toolsRemoved ?? []) {
+      tools.delete(nameOf(tool));
+    }
+    for (const tool of message.toolsAdded ?? []) {
+      tools.add(nameOf(tool));
+    }
+  }
+  return fauxAssistantMessage([
+    fauxText(JSON.stringify({ tools: [...tools], system })),
+  ]);
+};
+
+describe("Upgrade", () => {
+  it("adds the Level's tools to the conversation's own, and tells the agent what machine it has", async () => {
+    const { layer } = fauxAgents([offered, offered]);
+
+    const [before, after] = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat({ sandbox: "none" });
+          const first = yield* seat.ask("What can you do?");
+          yield* seat.upgrade("shell");
+          const second = yield* seat.ask("And now?");
+          return [first, second].map(
+            (text) => JSON.parse(text) as { tools: string[]; system: unknown[] }
+          );
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(before?.tools).toContain("upgrade_workspace");
+    expect(before?.tools).not.toContain("bash");
+    expect(JSON.stringify(before?.system)).toContain("You have no machine");
+    // The chat's own tools stay, the shell's come, and nothing else installed does (no desktop tools).
+    expect(after?.tools.toSorted()).toStrictEqual(
+      [...new Set([...(before?.tools ?? []), "bash", "edit", "read", "write"])]
+        .filter((name) => name !== "desktop_screenshot")
+        .toSorted()
+    );
+    expect(JSON.stringify(after?.system)).toContain("You have a Linux shell");
+  });
+});
