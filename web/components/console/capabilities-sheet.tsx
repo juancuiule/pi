@@ -1,8 +1,10 @@
 "use client";
 
 import { Collapsible } from "@base-ui/react/collapsible";
-import { BookOpen, ChevronRight, Plug } from "lucide-react";
+import type { SettingsChange, ToolInfo } from "effect-pi/api";
+import { BookOpen, ChevronRight, Plug, ShieldAlert } from "lucide-react";
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,13 +16,63 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { focusAfterSheet, useDraft } from "@/lib/draft";
-import { useCapabilities } from "@/lib/queries";
+import {
+  useCapabilities,
+  useConfigure,
+  useConversationAgent,
+  useResetSettings,
+} from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
-/** The sidebar button and the sheet listing the skills and MCP servers every conversation can use. */
-export const CapabilitiesSheet = () => {
+import { SettingsPanel } from "./settings-panel";
+
+const LEVEL_LABEL = {
+  none: "chat",
+  shell: "shell",
+  desktop: "desktop",
+} as const;
+
+const ToolList = ({ tools }: { tools: readonly ToolInfo[] }) => (
+  <ul className="flex flex-col gap-1.5 py-1">
+    {tools.map((tool) => (
+      <li key={tool.name} className="flex flex-col gap-0.5">
+        <span className="flex items-center gap-1.5 font-mono text-xs">
+          {tool.name}
+          {tool.approval ? (
+            <span className="text-warning inline-flex items-center gap-0.5 font-sans">
+              <ShieldAlert aria-hidden className="size-3" />
+              needs approval
+            </span>
+          ) : null}
+        </span>
+        {tool.description === "" ? null : (
+          <span className="text-muted-foreground line-clamp-3 text-xs">
+            {tool.description}
+          </span>
+        )}
+      </li>
+    ))}
+  </ul>
+);
+
+/**
+ * The sidebar button and the sheet listing everything the agent can use: what the open conversation runs with,
+ * every installed extension, the skills and the MCP servers.
+ */
+export const CapabilitiesSheet = ({
+  conversationId,
+}: {
+  conversationId: number | undefined;
+}) => {
   const [open, setOpen] = useState(false);
   const { data } = useCapabilities();
+  const { data: agent } = useConversationAgent(conversationId, open);
+  const configure = useConfigure(conversationId);
+  const reset = useResetSettings(conversationId);
+  const save = (change: SettingsChange) =>
+    configure.mutate(change, {
+      onError: (error) => toast.error(error.message),
+    });
   const offer = useDraft((store) => store.offer);
   // Set when the sheet closes because a skill was picked, so focus goes to the composer instead of the trigger.
   const picked = useRef(false);
@@ -50,11 +102,113 @@ export const CapabilitiesSheet = () => {
           <SheetHeader>
             <SheetTitle>Capabilities</SheetTitle>
             <SheetDescription>
-              Skills and MCP servers every conversation can use.
+              Everything the agent can use: tools, prompt sections, skills and
+              MCP servers.
             </SheetDescription>
           </SheetHeader>
           <ScrollArea className="min-h-0 flex-1">
             <div className="flex flex-col gap-6 px-4 pb-6">
+              {agent === undefined ? null : (
+                <section
+                  aria-labelledby="agent-heading"
+                  className="flex flex-col gap-2"
+                >
+                  <h3
+                    id="agent-heading"
+                    className="font-heading text-sm font-semibold"
+                  >
+                    This conversation
+                  </h3>
+                  <p className="text-muted-foreground text-xs">
+                    {agent.model}
+                    {agent.sections.length === 0
+                      ? ""
+                      : ` · prompt sections: ${agent.sections.join(", ")}`}
+                    . Changes apply from the agent&rsquo;s next model request.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    className="self-start"
+                    disabled={reset.isPending}
+                    onClick={() =>
+                      reset.mutate(undefined, {
+                        onError: (error) => toast.error(error.message),
+                      })
+                    }
+                  >
+                    Reset to defaults
+                  </Button>
+                  <SettingsPanel
+                    settings={agent}
+                    approvals={{
+                      ask: agent.approvals === "ask",
+                      handleChange: (ask) =>
+                        save({ approvals: ask ? "ask" : "auto" }),
+                    }}
+                    onExtension={(name, on) =>
+                      save({ extensions: { [name]: on } })
+                    }
+                    onTool={(name, on) => save({ tools: { [name]: on } })}
+                    onSkill={(name, on) => save({ skills: { [name]: on } })}
+                    disabled={configure.isPending}
+                  />
+                </section>
+              )}
+              <section
+                aria-labelledby="extensions-heading"
+                className="flex flex-col gap-2"
+              >
+                <h3
+                  id="extensions-heading"
+                  className="font-heading text-sm font-semibold"
+                >
+                  Extensions
+                </h3>
+                <ul className="flex flex-col gap-1">
+                  {data?.extensions.map((extension) => (
+                    <li key={extension.name}>
+                      <Collapsible.Root>
+                        <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
+                          <ChevronRight
+                            aria-hidden
+                            className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90"
+                          />
+                          <span className="flex min-w-0 flex-col">
+                            <span className="text-sm font-medium">
+                              {extension.name}
+                            </span>
+                            <span className="text-muted-foreground text-xs">
+                              {extension.levels
+                                .map((level) => LEVEL_LABEL[level])
+                                .join(", ")}
+                              {" · "}
+                              {extension.tools.length} tools
+                              {extension.sections.length === 0
+                                ? ""
+                                : ` · prompt: ${extension.sections.join(", ")}`}
+                              {extension.hooks === 0
+                                ? ""
+                                : ` · ${extension.hooks} hooks`}
+                            </span>
+                          </span>
+                        </Collapsible.Trigger>
+                        <Collapsible.Panel>
+                          <div className="pl-9">
+                            {extension.tools.length === 0 ? (
+                              <p className="text-muted-foreground py-1 text-xs">
+                                No tools.
+                              </p>
+                            ) : (
+                              <ToolList tools={extension.tools} />
+                            )}
+                          </div>
+                        </Collapsible.Panel>
+                      </Collapsible.Root>
+                    </li>
+                  ))}
+                </ul>
+              </section>
               <section
                 aria-labelledby="skills-heading"
                 className="flex flex-col gap-2"

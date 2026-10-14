@@ -6,16 +6,18 @@ import {
   ArrowDown,
   BookOpen,
   Brain,
-  CircleAlert,
   ChevronRight,
+  CircleAlert,
   Info,
   LoaderCircle,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { hasPendingApproval } from "@/lib/approval";
 import type { ConversationState } from "@/lib/conversation-state";
+import { settingsNote } from "@/lib/settings-note";
 import {
   parseSkillMessage,
   skillMentionParts,
@@ -157,6 +159,16 @@ const Entry = ({
   state: ConversationState;
 }) => {
   const message = entry.model?.[0];
+  const note =
+    entry.kind === "app.settings" ? settingsNote(entry.data) : undefined;
+  if (note !== undefined) {
+    return (
+      <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+        <SlidersHorizontal aria-hidden className="size-3.5" />
+        {note}
+      </p>
+    );
+  }
   if (message === undefined) {
     return (
       <details className="text-muted-foreground text-xs">

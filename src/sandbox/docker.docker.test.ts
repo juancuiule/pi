@@ -12,21 +12,45 @@ import {
   fauxProvider,
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
+import { Capacity } from "../capacity.ts";
 import { saveScreenshotsTo } from "../screenshots.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
 import { Skills } from "../skills/skills.ts";
 import { ask, callTool, echoToolResult } from "../testing/faux.ts";
+import * as DockerVolumes from "../workspaces/docker-volume.ts";
+import { Workspaces } from "../workspaces/workspaces.ts";
 import * as DockerSandboxes from "./docker.ts";
-import { Sandboxes } from "./sandbox.ts";
 
 const containerExists = (name: string) =>
   execFileSync("docker", ["ps", "-a", "--filter", `name=^${name}$`, "-q"], {
     encoding: "utf-8",
   }).trim() !== "";
+
+// Volumes these tests create carry this label, so they are removed afterwards without touching anyone else's.
+const TEST_LABEL = "effect-pi.test";
+const testWorkspaces = () => DockerVolumes.workspaces({ labels: [TEST_LABEL] });
+
+const volumeExists = (name: string) =>
+  execFileSync("docker", ["volume", "ls", "--filter", `name=^${name}$`, "-q"], {
+    encoding: "utf-8",
+  }).trim() !== "";
+
+/** Run `command` in a Sandbox, collecting its output. */
+const run = (env: ExecutionEnv, command: string) =>
+  Effect.promise(async () => {
+    let text = "";
+    const result = await env.exec(
+      command,
+      { onOutput: (chunk) => (text += chunk) },
+      BACKGROUND_CONTEXT
+    );
+    return { ok: result.ok, text };
+  });
 
 const dockerAgents = (
   responses: FauxResponseStep[],
@@ -40,37 +64,112 @@ const dockerAgents = (
     models,
     model: { provider: "faux", modelId: "faux-1" },
     ...(saveScreenshot === undefined ? {} : { saveScreenshot }),
-  }).pipe(Layer.provide(DockerSandboxes.layer()), Layer.provide(Skills.none));
+  }).pipe(
+    Layer.provide(testWorkspaces()),
+    Layer.provide(Skills.none),
+    Layer.provide(Capacity.layer({ seats: 2, shells: 1, desktops: 1 }))
+  );
 };
 
 describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
   "Docker sandboxes",
   { timeout: 120_000 },
   () => {
-    it("runs commands in a shell container and removes it", async () => {
-      const name = DockerSandboxes.makeName("shell");
+    afterAll(() => {
+      const volumes = execFileSync(
+        "docker",
+        ["volume", "ls", "--filter", `label=${TEST_LABEL}`, "-q"],
+        { encoding: "utf-8" }
+      )
+        .split("\n")
+        .filter((name) => name !== "");
+      if (volumes.length > 0) {
+        execFileSync("docker", ["volume", "rm", "--force", ...volumes]);
+      }
+    });
 
-      const output = await Effect.runPromise(
+    it("keeps a Workspace's files across its Sandboxes, of any Level, until discarded", async () => {
+      const { first, second, storage, names } = await Effect.runPromise(
         Effect.gen(function* () {
-          const sandboxes = yield* Sandboxes;
-          const sandbox = yield* sandboxes.create("shell", name);
-          let text = "";
-          const result = yield* Effect.promise(() =>
-            sandboxes
-              .env(sandbox)
-              .exec(
-                "pwd && git --version | cut -d' ' -f1",
-                { onOutput: (chunk) => (text += chunk) },
-                BACKGROUND_CONTEXT
-              )
+          const workspaces = yield* Workspaces;
+          const shell = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const created = yield* workspaces.sandbox({ level: "shell" });
+              const output = yield* run(
+                workspaces.env(created.sandbox),
+                "pwd && echo kept > notes.txt && git --version | cut -d' ' -f1"
+              );
+              return { ...created, output };
+            })
           );
-          yield* sandboxes.remove(sandbox);
-          return { ok: result.ok, text };
-        }).pipe(Effect.provide(DockerSandboxes.layer()), Effect.scoped)
+          // The shell container is gone; a desktop over the same storage still has the file.
+          const desktop = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const created = yield* workspaces.sandbox({
+                level: "desktop",
+                storage: shell.storage,
+              });
+              const output = yield* run(
+                workspaces.env(created.sandbox),
+                "cat notes.txt"
+              );
+              return { ...created, output };
+            })
+          );
+          yield* workspaces.discard(shell.storage);
+          return {
+            first: shell.output,
+            second: desktop.output,
+            storage: shell.storage,
+            names: [shell.sandbox.id, desktop.sandbox.id],
+          };
+        }).pipe(Effect.provide(testWorkspaces()))
       );
 
-      expect(output).toStrictEqual({ ok: true, text: "/workspace\ngit\n" });
-      expect(containerExists(name)).toBeFalsy();
+      expect(first).toStrictEqual({ ok: true, text: "/workspace\ngit\n" });
+      expect(second).toStrictEqual({ ok: true, text: "kept\n" });
+      for (const name of names) {
+        expect(containerExists(name)).toBeFalsy();
+      }
+      expect(volumeExists(storage.id)).toBeFalsy();
+    });
+
+    it("replaces a skill's folder in a container from staged files", async () => {
+      const listing = await Effect.runPromise(
+        Effect.gen(function* () {
+          const workspaces = yield* Workspaces;
+          const skills = yield* Skills;
+          const { skills: available } = yield* skills.catalog;
+          const skill = available.find(
+            (each) => each.name === "unit-conversion"
+          );
+          if (skill === undefined) {
+            return yield* Effect.die(new Error("no unit-conversion skill"));
+          }
+          return yield* Effect.scoped(
+            Effect.gen(function* () {
+              const { sandbox } = yield* workspaces.sandbox({ level: "shell" });
+              const env = workspaces.env(sandbox);
+              yield* run(
+                env,
+                "mkdir -p .skills/unit-conversion && echo old > .skills/unit-conversion/stale.txt"
+              );
+              yield* skills.replace(env, skill, BACKGROUND_CONTEXT);
+              return yield* run(env, "ls -A .skills .skills/unit-conversion");
+            })
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.merge(testWorkspaces(), Skills.directory("skills"))
+          )
+        )
+      );
+
+      expect(listing.ok).toBeTruthy();
+      // The stale file and the staging folder are gone; the skill's files are there.
+      expect(listing.text).not.toContain("stale.txt");
+      expect(listing.text).not.toContain("staging");
+      expect(listing.text).toContain("SKILL.md");
     });
 
     it("gives the model a PNG screenshot of the desktop and keeps it on the host", async () => {

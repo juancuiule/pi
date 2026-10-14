@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
@@ -9,8 +9,14 @@ import {
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { ask, callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
-import { Agents } from "./agents.ts";
+import {
+  ask,
+  callTool,
+  echoToolResult,
+  fauxAgents,
+  offered,
+  openSeat,
+} from "../testing/faux.ts";
 
 /** A model turn that answers with the last tool result's text and details.ansi, as JSON. */
 const showResult: FauxResponseStep = (request) => {
@@ -27,7 +33,7 @@ const showResult: FauxResponseStep = (request) => {
 };
 
 describe("conversation sandboxes", () => {
-  it("runs shell tools in the conversation's sandbox and removes it at the end", async () => {
+  it("runs shell tools in the conversation's sandbox, removes it at the end and keeps the Workspace's files", async () => {
     const { layer, sandboxes } = fauxAgents([
       callTool("bash", { command: "echo hi > note.txt && pwd" }),
       echoToolResult,
@@ -37,10 +43,13 @@ describe("conversation sandboxes", () => {
       ask("Leave a note.", "shell").pipe(Effect.provide(layer))
     );
 
-    // The tool ran in a sandbox directory, which is gone once the conversation ended.
-    expect(answer).toContain("effect-pi-shell-");
-    expect(existsSync(answer.trim())).toBeFalsy();
+    // The tool ran in the Workspace's directory: the Sandbox is gone once the conversation ended, its files are not.
+    expect(answer).toContain("effect-pi-workspace-");
     expect(sandboxes.live.size).toBe(0);
+    expect([...sandboxes.stored].map((dir) => realpathSync(dir))).toContain(
+      answer.trim()
+    );
+    expect(existsSync(path.join(answer.trim(), "note.txt"))).toBeTruthy();
   });
 
   it("gives a conversation without a sandbox no environment for shell tools", async () => {
@@ -66,8 +75,7 @@ describe("conversation sandboxes", () => {
     const written = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const agents = yield* Agents;
-          const conversation = yield* agents.start({ sandbox: "shell" });
+          const conversation = yield* openSeat({ sandbox: "shell" });
           yield* conversation.ask("Write a file.");
           const dir = conversation.sandbox?.id ?? "";
           return readFileSync(path.join(dir, "out.txt"), "utf-8");
@@ -94,5 +102,36 @@ describe("conversation sandboxes", () => {
       text: "red plain\n",
       ansi: "\u001B[31mred\u001B[0m plain\n",
     });
+  });
+});
+
+describe("Upgrade", () => {
+  it("adds the Level's tools to the conversation's own, and tells the agent what machine it has", async () => {
+    const { layer } = fauxAgents([offered, offered]);
+
+    const [before, after] = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat({ sandbox: "none" });
+          const first = yield* seat.ask("What can you do?");
+          yield* seat.upgrade("shell");
+          const second = yield* seat.ask("And now?");
+          return [first, second].map(
+            (text) => JSON.parse(text) as { tools: string[]; system: unknown[] }
+          );
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(before?.tools).toContain("upgrade_workspace");
+    expect(before?.tools).not.toContain("bash");
+    expect(JSON.stringify(before?.system)).toContain("You have no machine");
+    // The chat's own tools stay, the shell's come, and nothing else installed does (no desktop tools).
+    expect(after?.tools.toSorted()).toStrictEqual(
+      [...new Set([...(before?.tools ?? []), "bash", "edit", "read", "write"])]
+        .filter((name) => name !== "desktop_screenshot")
+        .toSorted()
+    );
+    expect(JSON.stringify(after?.system)).toContain("You have a Linux shell");
   });
 });

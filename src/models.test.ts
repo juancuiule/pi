@@ -7,6 +7,7 @@ import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { Agents } from "./agents/agents.ts";
+import { Capacity } from "./capacity.ts";
 import { DEFAULT_OLLAMA_URL, modelFromConfig, ollamaModel } from "./models.ts";
 import { Skills } from "./skills/skills.ts";
 import { ask } from "./testing/faux.ts";
@@ -184,7 +185,8 @@ describe("an Ollama conversation", () => {
         }
         const layer = Agents.layer(setup).pipe(
           Layer.provide(localSandboxes().layer),
-          Layer.provide(Skills.none)
+          Layer.provide(Skills.none),
+          Layer.provide(Capacity.layer({ seats: 1, shells: 1, desktops: 1 }))
         );
         return yield* ask("What is 40 + 2?").pipe(Effect.provide(layer));
       })

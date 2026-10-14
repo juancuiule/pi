@@ -13,7 +13,13 @@ import { describe, expect, it } from "vitest";
 
 import type { McpServerConfig } from "../mcp.ts";
 import { Skills } from "../skills/skills.ts";
-import { ask, callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
+import {
+  ask,
+  callTool,
+  echoToolResult,
+  fauxAgents,
+  openSeat,
+} from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
 import { Agents } from "./agents.ts";
 
@@ -65,8 +71,7 @@ describe("Agents with MCP servers", () => {
           [echoDown],
           Effect.scoped(
             Effect.gen(function* () {
-              const agents = yield* Agents;
-              const conversation = yield* agents.start({ sandbox: "none" });
+              const conversation = yield* openSeat({ sandbox: "none" });
               yield* conversation.ask("hi");
               return conversation.id;
             })
@@ -79,7 +84,7 @@ describe("Agents with MCP servers", () => {
           Effect.scoped(
             Effect.gen(function* () {
               const agents = yield* Agents;
-              const conversation = yield* agents.attach(id);
+              const conversation = yield* agents.open(id);
               return yield* conversation.ask("echo hola");
             })
           )

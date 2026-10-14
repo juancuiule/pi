@@ -6,7 +6,7 @@ import type { AgentEvent, ConversationId } from "@earendil-works/pi-durable";
 import { Effect, Exit, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { fauxAgents } from "../testing/faux.ts";
+import { fauxAgents, openSeat } from "../testing/faux.ts";
 import { Agents } from "./agents.ts";
 
 const assistantTexts = (events: readonly AgentEvent[]) =>
@@ -32,7 +32,7 @@ describe("Agents.events", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const agents = yield* Agents;
-          const conversation = yield* agents.start({ sandbox: "none" });
+          const conversation = yield* openSeat({ sandbox: "none" });
           const stream = yield* agents.events(conversation.id);
           yield* conversation.send("Capital of France?");
           return yield* stream.pipe(
@@ -60,7 +60,7 @@ describe("Agents.events", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const agents = yield* Agents;
-          const conversation = yield* agents.start({ sandbox: "none" });
+          const conversation = yield* openSeat({ sandbox: "none" });
           const stream = yield* agents.events(conversation.id);
           yield* conversation.send("first");
           yield* conversation.send("second");
@@ -101,7 +101,7 @@ describe("Agents.events", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const agents = yield* Agents;
-          const conversation = yield* agents.start({ sandbox: "none" });
+          const conversation = yield* openSeat({ sandbox: "none" });
           const stream = yield* agents.events(conversation.id);
           // Takes the snapshot, then the stream is interrupted, which stops its watch.
           yield* stream.pipe(Stream.take(1), Stream.runDrain);

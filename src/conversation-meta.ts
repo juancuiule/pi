@@ -1,6 +1,5 @@
-// Per-conversation metadata the console needs after a restart: title, sandbox choice and timestamps.
-// The doc survives the conversation's scope, so the server can list and describe conversations that
-// are no longer live.
+// Per-conversation metadata the console needs after a restart: title and timestamps. The doc survives every Seat,
+// so the server can list and describe Conversations that are paused or archived.
 import { defineDoc } from "@earendil-works/pi-durable";
 import type { ConversationId } from "@earendil-works/pi-durable";
 
@@ -11,15 +10,16 @@ import type { SandboxChoice } from "./sandbox/sandbox.ts";
 // oxlint-disable-next-line typescript/consistent-type-definitions
 export type ConversationMeta = {
   readonly title: string;
-  readonly sandbox: SandboxChoice;
   readonly createdAt: number;
-  /** Set by `end()`; an ended conversation is never resumable. */
-  readonly endedAt?: number;
+  /** Set by Archive, removed by unarchiving. */
+  readonly archivedAt?: number;
 };
 
+/** A stored Conversation: its metadata and its Workspace's Level. */
 export interface StoredConversation {
   readonly id: ConversationId;
   readonly meta: ConversationMeta;
+  readonly level: SandboxChoice;
 }
 
 export const MetaDoc = defineDoc<{ meta?: ConversationMeta }>({

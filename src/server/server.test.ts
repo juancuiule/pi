@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
+import { Capacity } from "../capacity.ts";
 import { Skills } from "../skills/skills.ts";
 import { fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
@@ -20,17 +21,13 @@ import { Conversations } from "./conversations.ts";
 import { echoModel } from "./faux.ts";
 import { ApiLayer } from "./handlers.ts";
 
-const serverWith = (
-  agents: Layer.Layer<Agents, AgentError>,
-  maxSandboxes = 3
-) =>
+const serverWith = (agents: Layer.Layer<Agents | Capacity, AgentError>) =>
   HttpRouter.serve(ApiLayer, {
     disableListenLog: true,
     disableLogger: true,
   }).pipe(
     Layer.provide(
       Conversations.layer({
-        maxSandboxes,
         idleTimeoutMs: 60_000,
         sweepEveryMs: 60_000,
       })
@@ -39,8 +36,8 @@ const serverWith = (
     Layer.provideMerge(NodeHttpServer.layerTest)
   );
 
-const server = (responses: FauxResponseStep[], maxSandboxes = 3) =>
-  serverWith(fauxAgents(responses).layer, maxSandboxes);
+const server = (responses: FauxResponseStep[], shells = 3) =>
+  serverWith(fauxAgents(responses, { limits: { shells } }).layer);
 
 describe("HTTP API", () => {
   it("lists skills and MCP servers", async () => {
@@ -70,6 +67,64 @@ describe("HTTP API", () => {
         status: "connected",
         tools: [{ name: "echo", description: "" }],
       },
+    ]);
+  });
+
+  it("lists every extension, and what one conversation runs with", async () => {
+    const { extensions, agent } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const capabilities = yield* client.info.capabilities();
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hi" },
+        });
+        return {
+          extensions: capabilities.extensions,
+          agent: yield* client.conversations.agent({
+            params: { id: created.id },
+          }),
+        };
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("ok")])])))
+    );
+
+    const byName = new Map(extensions.map((each) => [each.name, each]));
+    expect(
+      ["calculator", "coding-tools", "desktop", "workspace", "tracing"].map(
+        (name) => byName.get(name)?.levels
+      )
+    ).toStrictEqual([
+      ["none", "shell", "desktop"],
+      ["shell", "desktop"],
+      ["desktop"],
+      ["none", "shell", "desktop"],
+      ["none", "shell", "desktop"],
+    ]);
+    // Which tools wait for a decision under `ask`.
+    expect(
+      byName
+        .get("coding-tools")
+        ?.tools.map((tool) => [tool.name, tool.approval])
+    ).toStrictEqual([
+      ["read", false],
+      ["write", true],
+      ["edit", true],
+      ["bash", true],
+    ]);
+    // A chat runs with the calculator, the workspace tool and the locked tracing; nothing that needs a sandbox.
+    expect([
+      agent.extensions.flatMap((each) =>
+        each.enabled
+          ? each.tools.filter((t) => t.enabled).map((t) => t.name)
+          : []
+      ),
+      agent.extensions
+        .filter((each) => !each.available)
+        .map((each) => each.name),
+      agent.sections,
+    ]).toStrictEqual([
+      ["calculate", "upgrade_workspace"],
+      ["coding-tools", "desktop"],
+      ["workspace"],
     ]);
   });
 
@@ -185,7 +240,7 @@ describe("HTTP API", () => {
     expect(JSON.stringify(events)).toContain("Paris.");
   });
 
-  it("lists, sends to and ends conversations", async () => {
+  it("lists, sends to, pauses, resumes and archives conversations", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const client = yield* HttpApiClient.make(Api);
@@ -193,23 +248,37 @@ describe("HTTP API", () => {
           payload: { sandbox: "shell", prompt: "hello" },
         });
         const listed = yield* client.conversations.list();
-        expect(listed.map((c) => c.id)).toStrictEqual([created.id]);
-        expect(listed[0]?.title).toBe("hello");
+        expect(listed.map((c) => [c.id, c.title])).toStrictEqual([
+          [created.id, "hello"],
+        ]);
         yield* client.conversations.send({
           params: { id: created.id },
           payload: { prompt: "again" },
         });
-        yield* client.conversations.end({ params: { id: created.id } });
-        // Ended conversations stay listed.
+        // Stop returns once nothing runs, so the Pause is immediate.
+        yield* client.conversations.stop({ params: { id: created.id } });
+        yield* client.conversations.pause({ params: { id: created.id } });
+        const statusOf = client.conversations
+          .list()
+          .pipe(Effect.map((all) => all.map((c) => [c.id, c.status])));
+        expect(yield* statusOf).toStrictEqual([[created.id, "paused"]]);
+        const capacity = yield* client.info.capacity();
         expect(
-          (yield* client.conversations.list()).map((c) => [
-            c.id,
-            c.status,
-            c.endedReason,
-          ])
-        ).toStrictEqual([[created.id, "ended", "ended"]]);
-        const info = yield* client.info.get();
-        expect(info.model).toBe("faux/faux-1");
+          capacity.every((each) => each.holders.length === 0)
+        ).toBeTruthy();
+        const resumed = yield* client.conversations.resume({
+          params: { id: created.id },
+        });
+        expect([resumed.status, resumed.sandboxId === undefined]).toStrictEqual(
+          ["idle", false]
+        );
+        yield* client.conversations.archive({ params: { id: created.id } });
+        const archived = yield* statusOf;
+        yield* client.conversations.unarchive({ params: { id: created.id } });
+        expect([archived, yield* statusOf]).toStrictEqual([
+          [[created.id, "archived"]],
+          [[created.id, "paused"]],
+        ]);
       }).pipe(
         Effect.provide(
           server([
@@ -221,12 +290,23 @@ describe("HTTP API", () => {
     );
   });
 
-  it("answers 404 for unknown conversations and 409 past the sandbox cap", async () => {
+  it("reports the model", async () => {
+    const info = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        return yield* client.info.get();
+      }).pipe(Effect.provide(server([])))
+    );
+
+    expect(info.model).toBe("faux/faux-1");
+  });
+
+  it("answers 404 for unknown conversations and 409 at a Capacity limit", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const client = yield* HttpApiClient.make(Api);
         const missing = yield* Effect.exit(
-          client.conversations.end({ params: { id: 424_242 } })
+          client.conversations.pause({ params: { id: 424_242 } })
         );
         expect(Exit.isFailure(missing)).toBeTruthy();
         expect(JSON.stringify(missing)).toContain("ConversationNotFound");
@@ -243,7 +323,7 @@ describe("HTTP API", () => {
             payload: { sandbox: "shell", prompt: "2" },
           })
         );
-        expect(JSON.stringify(second)).toContain("SandboxLimitReached");
+        expect(JSON.stringify(second)).toContain("CapacityExhausted");
       }).pipe(
         Effect.provide(server([fauxAssistantMessage([fauxText("a")])], 1))
       )
@@ -255,7 +335,8 @@ describe("HTTP API", () => {
     const sandboxes = localSandboxes();
     const agents = Agents.layer({ models, model }).pipe(
       Layer.provide(sandboxes.layer),
-      Layer.provide(Skills.none)
+      Layer.provide(Skills.none),
+      Layer.provideMerge(Capacity.layer({ seats: 1, shells: 1, desktops: 1 }))
     );
 
     const text = await Effect.runPromise(

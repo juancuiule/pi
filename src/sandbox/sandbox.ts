@@ -35,6 +35,11 @@ export const SandboxDoc = defineDoc<{ sandbox?: SandboxInfo }>({
   initial: () => ({}),
 });
 
+/** Where a Workspace's files live, mounted as the sandbox's working directory. */
+export type WorkspaceMount =
+  | { readonly type: "volume"; readonly name: string }
+  | { readonly type: "directory"; readonly path: string };
+
 export class SandboxError extends Schema.TaggedError<SandboxError>()(
   "SandboxError",
   {
@@ -46,12 +51,13 @@ export class SandboxError extends Schema.TaggedError<SandboxError>()(
 export class Sandboxes extends Context.Service<
   Sandboxes,
   {
-    /** Create and start a sandbox. `name` is unique per conversation. */
+    /** Create and start a sandbox over a Workspace's files. `name` is unique per sandbox. */
     create(
       kind: SandboxKind,
-      name: string
+      name: string,
+      files: WorkspaceMount
     ): Effect.Effect<SandboxInfo, SandboxError>;
-    /** Stop and delete a sandbox, ignoring one that is already gone. */
+    /** Stop and delete a sandbox, ignoring one that is already gone; the Workspace's files stay. */
     remove(sandbox: SandboxInfo): Effect.Effect<void, SandboxError>;
     /** The execution environment of a sandbox, for the harness. Called for every tool call, so it is cheap. */
     env(sandbox: SandboxInfo): ExecutionEnv;

@@ -96,6 +96,33 @@ const envCall = <A extends { readonly ok: boolean }>(
     )
   );
 
+/** Delete skills' `.skills/<name>/` folders from a sandbox, ignoring ones already gone. */
+const uninstall = (
+  env: ExecutionEnv,
+  names: readonly string[],
+  context: ChordContext
+) =>
+  Effect.forEach(
+    names,
+    (name) => {
+      const target = path.posix.join(SANDBOX_SKILLS_DIR, name);
+      return envCall(`Could not remove ${target}`, () =>
+        env.remove(target, { recursive: true, force: true }, context)
+      );
+    },
+    { discard: true }
+  );
+
+/** Whether a sandbox has the skill's `.skills/<name>/` folder. */
+const isInstalled = (env: ExecutionEnv, name: string, context: ChordContext) =>
+  Effect.tryPromise({
+    try: () => env.exists(path.posix.join(SANDBOX_SKILLS_DIR, name), context),
+    catch: (cause) =>
+      new SkillInstallError({
+        message: `Could not check ${name}: ${String(cause)}`,
+      }),
+  }).pipe(Effect.map((result) => result.ok && result.value));
+
 export class Skills extends Context.Service<
   Skills,
   {
@@ -125,6 +152,27 @@ export class Skills extends Context.Service<
       skills: readonly Skill[],
       context: ChordContext
     ) => Effect.Effect<void, SkillSourceError | SkillInstallError>;
+    /**
+     * Replace one skill's `.skills/<name>/` folder with the source's current files. Every file is read first and
+     * written to a staging folder that then takes the old one's place, so on any failure the old copy stays.
+     */
+    readonly replace: (
+      env: ExecutionEnv,
+      skill: Skill,
+      context: ChordContext
+    ) => Effect.Effect<void, SkillSourceError | SkillInstallError>;
+    /** Whether the sandbox has the skill's `.skills/<name>/` folder. */
+    readonly isInstalled: (
+      env: ExecutionEnv,
+      name: string,
+      context: ChordContext
+    ) => Effect.Effect<boolean, SkillInstallError>;
+    /** Delete the skills' `.skills/<name>/` folders from the sandbox, ignoring ones already gone. */
+    readonly uninstall: (
+      env: ExecutionEnv,
+      names: readonly string[],
+      context: ChordContext
+    ) => Effect.Effect<void, SkillInstallError>;
   }
 >()("effect-pi/skills/Skills") {
   static readonly layer = Layer.effect(
@@ -254,7 +302,69 @@ export class Skills extends Context.Service<
         }
       });
 
-      return Skills.of({ catalog, read, expand, install });
+      const replace = Effect.fnUntraced(function* (
+        env: ExecutionEnv,
+        skill: Skill,
+        context: ChordContext
+      ) {
+        // Read before touching the sandbox: a file the source lost leaves the old copy in place.
+        const files = yield* Effect.all(
+          skill.files.map((file) =>
+            source
+              .read(skill.id, file)
+              .pipe(Effect.map((contents) => ({ file, contents })))
+          )
+        );
+        const target = path.posix.join(SANDBOX_SKILLS_DIR, skill.name);
+        const staging = path.posix.join(
+          SANDBOX_SKILLS_DIR,
+          `.${skill.name}.staging`
+        );
+        const removeStaging = envCall(`Could not remove ${staging}`, () =>
+          env.remove(staging, { recursive: true, force: true }, context)
+        );
+        yield* removeStaging;
+        yield* Effect.gen(function* () {
+          for (const { file, contents } of files) {
+            const written = path.posix.join(staging, file);
+            yield* envCall(
+              `Could not create ${path.posix.dirname(written)}`,
+              () =>
+                env.createDir(
+                  path.posix.dirname(written),
+                  { recursive: true },
+                  context
+                )
+            );
+            yield* envCall(`Could not write ${written}`, () =>
+              env.writeFile(written, contents, context)
+            );
+          }
+          yield* envCall("Could not make skill scripts executable", () =>
+            env.exec(
+              `find '${staging}' -path '*/scripts/*' -type f -exec chmod +x {} + 2>/dev/null; true`,
+              {},
+              context
+            )
+          );
+          yield* envCall(`Could not remove ${target}`, () =>
+            env.remove(target, { recursive: true, force: true }, context)
+          );
+          yield* envCall(`Could not move ${staging} to ${target}`, () =>
+            env.renameFile(staging, target, context)
+          );
+        }).pipe(Effect.onError(() => Effect.ignore(removeStaging)));
+      });
+
+      return Skills.of({
+        catalog,
+        read,
+        expand,
+        install,
+        replace,
+        isInstalled,
+        uninstall,
+      });
     })
   );
 
@@ -271,25 +381,19 @@ export class Skills extends Context.Service<
   );
 }
 
-/**
- * The `skill` tool and the section listing the skills, both reading the conversation's `SkillsDoc`. A conversation
- * stored before skills were recorded falls back to the current catalog.
- */
-export const skillsExtension = (skills: Skills["Service"]): Extension => {
-  const conversationSkills = async (
-    reader: DocumentReader,
-    conversationId: ConversationId,
-    context: ChordContext
-  ): Promise<readonly Skill[]> => {
-    const doc = await reader.snapshot(SkillsDoc, conversationId, context);
-    return (
-      doc?.skills ??
-      (await Effect.runPromise(
-        skills.catalog.pipe(Effect.map((c) => c.skills))
-      ))
-    );
-  };
-  return defineExtension({
+/** The skills a conversation recorded; every conversation records them when it is created, so none without. */
+const conversationSkills = async (
+  reader: DocumentReader,
+  conversationId: ConversationId,
+  context: ChordContext
+): Promise<readonly Skill[]> => {
+  const doc = await reader.snapshot(SkillsDoc, conversationId, context);
+  return doc?.skills ?? [];
+};
+
+/** The `skill` tool and the section listing the skills, both reading the conversation's `SkillsDoc`. */
+export const skillsExtension = (skills: Skills["Service"]): Extension =>
+  defineExtension({
     name: "skills",
     sections: [
       section("skills", async (input, context) =>
@@ -341,4 +445,3 @@ export const skillsExtension = (skills: Skills["Service"]): Extension => {
       }),
     ],
   });
-};

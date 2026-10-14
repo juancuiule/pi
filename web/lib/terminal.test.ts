@@ -196,6 +196,22 @@ describe(terminalText, () => {
     ]);
     expect(terminalText(state)).toBe("");
   });
+
+  it("hides a call stopped before its approval", () => {
+    const state = run([
+      { role: "assistant", content: [call("a", { command: "rm -rf" })] },
+      {
+        role: "toolResult",
+        toolCallId: "a",
+        isError: true,
+        content: [
+          { type: "text", text: "Stopped by the user before approval." },
+        ],
+        details: { approval: "stopped" },
+      },
+    ]);
+    expect(terminalText(state)).toBe("");
+  });
 });
 
 describe(terminalWrite, () => {

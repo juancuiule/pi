@@ -11,6 +11,7 @@ describe(approvalOf, () => {
       ],
       [{ approval: "approved" }, { state: "approved" }],
       [{ approval: "denied" }, { state: "denied" }],
+      [{ approval: "stopped" }, { state: "stopped" }],
       [{ approval: "pending" }, undefined],
       [{ ansi: "x" }, undefined],
       ["text", undefined],

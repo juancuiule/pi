@@ -33,10 +33,16 @@ export const model: ModelConfig = {
 /** The HTTP server and its conversations; durations are milliseconds (varlock's `duration` type). */
 export const server = {
   port: ENV.SERVER_PORT,
-  maxSandboxes: ENV.MAX_SANDBOXES,
   idleTimeoutMs: ENV.CONVERSATION_IDLE_TIMEOUT,
   sweepEveryMs: ENV.CONVERSATION_SWEEP_INTERVAL,
   shutdownTimeoutMs: ENV.SHUTDOWN_TIMEOUT,
+};
+
+/** How many Seats, shell Sandboxes and desktop Sandboxes run at once. */
+export const capacity = {
+  seats: ENV.MAX_SEATS,
+  shells: ENV.MAX_SHELLS,
+  desktops: ENV.MAX_DESKTOPS,
 };
 
 /** Where the server keeps conversations, where skills are read from, and where desktop screenshots go. */

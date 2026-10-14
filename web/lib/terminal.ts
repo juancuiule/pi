@@ -22,7 +22,7 @@ export const ansiOf = (details: unknown): string | undefined =>
     ? (details as { ansi: string }).ansi
     : undefined;
 
-/** The display output for one bash call; `undefined` while it awaits approval or after a deny. */
+/** The display output for one bash call; `undefined` while it awaits approval, or after a deny or a Stop before one. */
 const callOutput = (
   state: ConversationState,
   callId: string
@@ -31,7 +31,11 @@ const callOutput = (
   const toolResult = result?.role === "toolResult" ? result : undefined;
   const approval =
     approvalOf(toolResult?.details) ?? approvalOf(state.tools[callId]?.details);
-  if (approval?.state === "pending" || approval?.state === "denied") {
+  if (
+    approval?.state === "pending" ||
+    approval?.state === "denied" ||
+    approval?.state === "stopped"
+  ) {
     return undefined;
   }
   return (
@@ -62,7 +66,7 @@ export const terminalText = (state: ConversationState): string => {
       }
       const command = String(call.arguments?.command ?? "");
       const output = callOutput(state, call.id);
-      // A call that never ran — still waiting for a decision, or denied — shows nothing.
+      // A call that never ran (still waiting for a decision, denied, or stopped first) shows nothing.
       if (output === undefined) {
         return "";
       }

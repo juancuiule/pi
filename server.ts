@@ -14,15 +14,16 @@ import { HttpRouter } from "effect/http";
 
 import { mcpServers } from "./mcp.config.ts";
 import { Agents } from "./src/agents/agents.ts";
+import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromConfig } from "./src/models.ts";
-import * as DockerSandboxes from "./src/sandbox/docker.ts";
 import { saveScreenshotsTo } from "./src/screenshots.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { echoModel } from "./src/server/faux.ts";
 import { ApiLayer } from "./src/server/handlers.ts";
 import { Skills } from "./src/skills/skills.ts";
+import * as DockerVolumes from "./src/workspaces/docker-volume.ts";
 
 const configured = await Effect.runPromise(modelFromConfig(config.model));
 const setup = configured ?? echoModel();
@@ -34,6 +35,9 @@ if (configured === undefined) {
 // creates the directory.
 const storage = await openNodeSqliteStorage(config.paths.db);
 
+// One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
+const CapacityLive = Capacity.layer(config.capacity);
+
 const AgentsLive = Agents.layer({
   ...setup,
   storage,
@@ -41,12 +45,14 @@ const AgentsLive = Agents.layer({
   mcp: mcpServers,
   mcpConnectTimeoutMs: config.mcpConnectTimeoutMs,
 }).pipe(
-  Layer.provide(DockerSandboxes.layer()),
-  Layer.provide(Skills.directory(config.paths.skills))
+  Layer.provide(DockerVolumes.workspaces()),
+  Layer.provide(Skills.directory(config.paths.skills)),
+  Layer.provide(CapacityLive)
 );
 
 const ConversationsLive = Conversations.layer(config.server).pipe(
-  Layer.provide(AgentsLive)
+  Layer.provide(AgentsLive),
+  Layer.provide(CapacityLive)
 );
 
 const NodeHttpServerLayer = NodeHttpServer.layer(createServer, {

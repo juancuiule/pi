@@ -1,5 +1,5 @@
 // Pure read of a tool call's approval details, written by the server's withApproval wrapper
-// (src/approvals.ts): pending with its decision key, or approved.
+// (src/approvals.ts): pending with its decision key, approved, denied, or stopped (by a Stop before a decision).
 import type { ConversationSummary } from "effect-pi/api";
 
 import type { ConversationState } from "./conversation-state";
@@ -7,7 +7,8 @@ import type { ConversationState } from "./conversation-state";
 export type Approval =
   | { readonly state: "pending"; readonly key: string }
   | { readonly state: "approved" }
-  | { readonly state: "denied" };
+  | { readonly state: "denied" }
+  | { readonly state: "stopped" };
 
 export const approvalOf = (details: unknown): Approval | undefined => {
   if (typeof details !== "object" || details === null) {
@@ -22,6 +23,9 @@ export const approvalOf = (details: unknown): Approval | undefined => {
   }
   if (approval === "denied") {
     return { state: "denied" };
+  }
+  if (approval === "stopped") {
+    return { state: "stopped" };
   }
   return undefined;
 };

@@ -16,6 +16,7 @@ const summary: ConversationSummary = {
   sandboxId: "effect-pi-shell-abcd1234",
   title: "List files & count",
   status: "idle",
+  pausing: false,
   pendingApprovals: 0,
   createdAt: 0,
 };

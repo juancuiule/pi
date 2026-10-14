@@ -6,7 +6,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import type { ReactNode } from "react";
 import { usePanelRef } from "react-resizable-panels";
+import { toast } from "sonner";
 
+import { CapacityGuardProvider } from "@/components/console/capacity-dialog";
 import { ConversationHeader } from "@/components/console/conversation-header";
 import { DesktopPanel } from "@/components/console/desktop-panel";
 import { MessageInput } from "@/components/console/message-input";
@@ -21,7 +23,11 @@ import {
 } from "@/components/ui/resizable";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { ApprovalContext } from "@/lib/approval-context";
-import { useConversations, useDecideApproval } from "@/lib/queries";
+import {
+  useConversationAction,
+  useConversations,
+  useDecideApproval,
+} from "@/lib/queries";
 import { useConversationStore } from "@/lib/store";
 import { useConversationEvents } from "@/lib/use-conversation-events";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -40,53 +46,65 @@ const pageTitle = (conversation: ConversationSummary | undefined): string =>
     ? "New conversation · effect-pi"
     : `${conversation.pendingApprovals > 0 ? "(Approval needed) " : ""}${conversation.title} · effect-pi`;
 
-/** Ended when the SSE 404'd (unknown id) or the summary says so; the reason picks the notice copy. */
-const endedOf = (
+/** Without a Seat, so without a Sandbox to show. */
+const seatlessOf = (conversation: ConversationSummary) =>
+  conversation.status === "paused" || conversation.status === "archived";
+
+/** Read-only when the SSE 404'd (unknown id) or the conversation is archived. */
+const readOnlyOf = (
   gone: boolean,
   conversation: ConversationSummary | undefined
-) => gone || conversation?.status === "ended";
+) => gone || conversation?.status === "archived";
 
 const parseId = (value: string | null): number | undefined => {
   const id = value === null ? Number.NaN : Number(value);
   return Number.isInteger(id) ? id : undefined;
 };
 
-const EndedNotice = ({
-  reason,
-  onNew,
-}: {
-  reason?: string;
-  onNew: () => void;
-}) => (
-  <div className="mx-auto flex w-full max-w-3xl items-center justify-center gap-3 px-4 pb-6">
-    <span className="text-muted-foreground text-sm">
-      {reason === "sandbox_removed"
-        ? "Its sandbox was removed, so this conversation can't continue."
-        : "This conversation has ended."}
-    </span>
-    <Button variant="outline" size="sm" onClick={onNew}>
-      New conversation
-    </Button>
-  </div>
-);
+const ArchivedNotice = ({ id, onNew }: { id: number; onNew: () => void }) => {
+  const act = useConversationAction();
+  return (
+    <div className="mx-auto flex w-full max-w-3xl items-center justify-center gap-3 px-4 pb-6">
+      <span className="text-muted-foreground text-sm">
+        This conversation is archived.
+      </span>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={act.isPending}
+        onClick={() =>
+          act.mutate(
+            { id, action: "unarchive" },
+            { onError: (error) => toast.error(error.message) }
+          )
+        }
+      >
+        Unarchive
+      </Button>
+      <Button variant="ghost" size="sm" onClick={onNew}>
+        New conversation
+      </Button>
+    </div>
+  );
+};
 
 const Composer = ({
   id,
   running,
-  ended,
-  reason,
+  paused,
+  readOnly,
   onNew,
 }: {
   id: number;
   running: boolean;
-  ended: boolean;
-  reason?: string;
+  paused: boolean;
+  readOnly: boolean;
   onNew: () => void;
 }) =>
-  ended ? (
-    <EndedNotice reason={reason} onNew={onNew} />
+  readOnly ? (
+    <ArchivedNotice id={id} onNew={onNew} />
   ) : (
-    <MessageInput id={id} running={running} />
+    <MessageInput id={id} running={running} paused={paused} />
   );
 
 const NotFound = ({ onNew }: { onNew: () => void }) => (
@@ -120,7 +138,7 @@ const Console = () => {
   );
   const { data } = useConversations();
   const conversation = data?.find((c) => c.id === selectedId);
-  const ended = endedOf(gone, conversation);
+  const readOnly = readOnlyOf(gone, conversation);
   const showSandbox =
     conversation !== undefined && conversation.sandbox !== "none";
   // Not in the loaded list and either not yet marked ended or nothing arrived to show anyway.
@@ -128,7 +146,7 @@ const Console = () => {
     selectedId !== undefined &&
     data !== undefined &&
     conversation === undefined &&
-    !(ended && state.entries.length > 0);
+    !(readOnly && state.entries.length > 0);
 
   const toggleSidePanel = () => {
     const panel = sidePanel.current;
@@ -159,7 +177,6 @@ const Console = () => {
             <ConversationHeader
               conversation={conversation}
               state={state}
-              onEnded={clear}
               onMenu={() => setMenuOpen(true)}
               sidePanel={
                 showSandbox && isDesktop
@@ -179,8 +196,8 @@ const Console = () => {
           <Composer
             id={selectedId}
             running={state.running}
-            ended={ended}
-            reason={conversation?.endedReason}
+            paused={conversation?.status === "paused"}
+            readOnly={readOnly}
             onNew={clear}
           />
         </div>
@@ -228,7 +245,7 @@ const Console = () => {
                   {conversation.sandbox === "desktop" ? (
                     <DesktopPanel
                       vncUrl={conversation.vncUrl}
-                      ended={conversation.status === "ended"}
+                      paused={seatlessOf(conversation)}
                     />
                   ) : (
                     <TerminalPanel state={state} />
@@ -248,7 +265,9 @@ const Console = () => {
 
 const Home = () => (
   <Suspense>
-    <Console />
+    <CapacityGuardProvider>
+      <Console />
+    </CapacityGuardProvider>
   </Suspense>
 );
 

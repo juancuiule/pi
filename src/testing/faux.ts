@@ -11,6 +11,9 @@ import type { Storage } from "@earendil-works/pi-durable";
 import { Effect, Layer } from "effect";
 
 import { Agents } from "../agents/agents.ts";
+import type { ApprovalPolicy } from "../approvals.ts";
+import { Capacity } from "../capacity.ts";
+import type { Limits } from "../capacity.ts";
 import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { Skills } from "../skills/skills.ts";
@@ -27,6 +30,8 @@ export const fauxAgents = (
     readonly mcp?: readonly McpServerConfig[];
     /** How long to wait for each MCP server; `Agents.layer`'s default otherwise. */
     readonly mcpConnectTimeoutMs?: number;
+    /** Capacity limits; the layer provides that Capacity too, for a Conversations layer to share. */
+    readonly limits?: Partial<Limits>;
   } = {}
 ) => {
   const models = createModels();
@@ -47,19 +52,37 @@ export const fauxAgents = (
         : { mcpConnectTimeoutMs: options.mcpConnectTimeoutMs }),
     }).pipe(
       Layer.provide(sandboxes.layer),
-      Layer.provide(options.skills ?? Skills.none)
+      Layer.provide(options.skills ?? Skills.none),
+      Layer.provideMerge(
+        Capacity.layer({ seats: 10, shells: 3, desktops: 1, ...options.limits })
+      )
     ),
   };
 };
 
-/** Start a conversation with the given sandbox, ask one prompt, and end it. */
+/** Record a Conversation and give it a Seat until the scope closes. */
+export const openSeat = (
+  options: {
+    readonly sandbox?: SandboxChoice;
+    readonly approvals?: ApprovalPolicy;
+  } = {}
+) =>
+  Effect.gen(function* () {
+    const agents = yield* Agents;
+    const id = yield* agents.create({
+      prompt: "",
+      title: "",
+      level: options.sandbox ?? "none",
+      createdAt: Date.now(),
+      approvals: options.approvals,
+    });
+    return yield* agents.open(id);
+  });
+
+/** Open a Seat at the given Level, ask one prompt, and end the Seat. */
 export const ask = (prompt: string, sandbox: SandboxChoice = "none") =>
   Effect.scoped(
-    Effect.gen(function* () {
-      const agents = yield* Agents;
-      const conversation = yield* agents.start({ sandbox });
-      return yield* conversation.ask(prompt);
-    })
+    openSeat({ sandbox }).pipe(Effect.flatMap((seat) => seat.ask(prompt)))
   );
 
 /** A model turn that calls one tool. */
@@ -82,4 +105,46 @@ export const echoToolResult: FauxResponseStep = (request) => {
   return fauxAssistantMessage([
     fauxText(result?.isError ? `error: ${text}` : text),
   ]);
+};
+
+const nameOf = (tool: unknown) =>
+  typeof tool === "string" ? tool : (tool as { name: string }).name;
+
+/** A model turn that answers with the tools it was offered and every system message, as JSON (see `offeredIn`). */
+export const offered: FauxResponseStep = (request) => {
+  const system = request.messages.filter((m) => m.role === "system");
+  // pi-durable sends tool changes on positional system messages; the offered tools are their sum.
+  const tools = new Set<string>();
+  for (const message of system) {
+    for (const tool of message.toolsRemoved ?? []) {
+      tools.delete(nameOf(tool));
+    }
+    for (const tool of message.toolsAdded ?? []) {
+      tools.add(nameOf(tool));
+    }
+  }
+  return fauxAssistantMessage([
+    fauxText(JSON.stringify({ tools: [...tools], system })),
+  ]);
+};
+
+/**
+ * The answer of an `offered` turn: the tool names, and the prompt sections as the model last got them (a later system
+ * message replaces a section), as one string.
+ */
+export const offeredIn = (
+  answer: string
+): { readonly tools: string[]; readonly system: string } => {
+  const parsed = JSON.parse(answer) as {
+    tools: string[];
+    system: { sections?: Record<string, string> }[];
+  };
+  const sections: Record<string, string> = {};
+  for (const message of parsed.system) {
+    Object.assign(sections, message.sections ?? {});
+  }
+  return {
+    tools: parsed.tools.toSorted(),
+    system: JSON.stringify(sections),
+  };
 };
