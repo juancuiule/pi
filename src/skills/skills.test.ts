@@ -10,8 +10,13 @@ import {
 import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { Agents } from "../agents/agents.ts";
-import { ask, callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
+import {
+  ask,
+  callTool,
+  echoToolResult,
+  fauxAgents,
+  openSeat,
+} from "../testing/faux.ts";
 import { Skills, SkillSource } from "./skills.ts";
 
 const skillFile = (name: string, description: string, extra = "") =>
@@ -306,10 +311,9 @@ describe("skills in a conversation", () => {
     const [before, after] = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const agents = yield* Agents;
-          const first = yield* agents.start({ sandbox: "none" });
+          const first = yield* openSeat({ sandbox: "none" });
           files["pdf/SKILL.md"] = skillFile("pdf", "Work with PDFs.");
-          const second = yield* agents.start({ sandbox: "none" });
+          const second = yield* openSeat({ sandbox: "none" });
           return [yield* first.ask("Skills?"), yield* second.ask("Skills?")];
         })
       ).pipe(Effect.provide(layer))

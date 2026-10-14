@@ -9,8 +9,13 @@ import {
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { ask, callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
-import { Agents } from "./agents.ts";
+import {
+  ask,
+  callTool,
+  echoToolResult,
+  fauxAgents,
+  openSeat,
+} from "../testing/faux.ts";
 
 /** A model turn that answers with the last tool result's text and details.ansi, as JSON. */
 const showResult: FauxResponseStep = (request) => {
@@ -69,8 +74,7 @@ describe("conversation sandboxes", () => {
     const written = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const agents = yield* Agents;
-          const conversation = yield* agents.start({ sandbox: "shell" });
+          const conversation = yield* openSeat({ sandbox: "shell" });
           yield* conversation.ask("Write a file.");
           const dir = conversation.sandbox?.id ?? "";
           return readFileSync(path.join(dir, "out.txt"), "utf-8");

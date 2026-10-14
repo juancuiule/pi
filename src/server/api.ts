@@ -10,9 +10,9 @@ import {
 
 import {
   ApprovalNotFound,
-  ConversationEnded,
-  ConversationNotFound,
   CapacityExhausted,
+  ConversationArchived,
+  ConversationNotFound,
   SkillNotFound,
 } from "../errors.ts";
 
@@ -27,7 +27,7 @@ export type {
 export {
   ApprovalNotFound,
   CapacityExhausted,
-  ConversationEnded,
+  ConversationArchived,
   ConversationNotFound,
   SkillNotFound,
 } from "../errors.ts";
@@ -41,10 +41,10 @@ export const ConversationSummary = Schema.Struct({
   sandboxId: Schema.optionalKey(Schema.String),
   vncUrl: Schema.optionalKey(Schema.String),
   title: Schema.String,
-  status: Schema.Literals(["running", "idle", "ended"]),
-  endedReason: Schema.optionalKey(
-    Schema.Literals(["ended", "sandbox_removed"])
-  ),
+  /** `running` and `idle` have a Seat; `paused` and `archived` do not. */
+  status: Schema.Literals(["running", "idle", "paused", "archived"]),
+  /** True while a Pause waits for the current Run to end. */
+  pausing: Schema.Boolean,
   createdAt: Schema.Number,
   pendingApprovals: Schema.Number,
 });
@@ -72,8 +72,17 @@ export const Capabilities = Schema.Struct({
 });
 export type Capabilities = typeof Capabilities.Type;
 
+export const CapacityUsage = Schema.Struct({
+  resource: Schema.Literals(["seat", "shell", "desktop"]),
+  limit: Schema.Number,
+  holders: Schema.Array(Schema.Number),
+});
+export type CapacityUsage = typeof CapacityUsage.Type;
+
 const UnknownSkill = SkillNotFound.pipe(HttpApiSchema.status(400));
 const NotFound = ConversationNotFound.pipe(HttpApiSchema.status(404));
+const Full = CapacityExhausted.pipe(HttpApiSchema.status(409));
+const Archived = ConversationArchived.pipe(HttpApiSchema.status(409));
 const ById = { id: Schema.Int };
 
 const ConversationGroup = HttpApiGroup.make("conversations").add(
@@ -87,17 +96,12 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
       approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
     }),
     success: ConversationSummary.pipe(HttpApiSchema.status(201)),
-    error: [CapacityExhausted.pipe(HttpApiSchema.status(409)), UnknownSkill],
+    error: [Full, UnknownSkill],
   }),
   HttpApiEndpoint.post("send", "/conversations/:id/messages", {
     params: ById,
     payload: Schema.Struct({ prompt: Schema.NonEmptyString }),
-    error: [
-      NotFound,
-      CapacityExhausted.pipe(HttpApiSchema.status(409)),
-      ConversationEnded.pipe(HttpApiSchema.status(409)),
-      UnknownSkill,
-    ],
+    error: [NotFound, Full, Archived, UnknownSkill],
   }),
   // One pi-durable AgentEvent per SSE message: a snapshot first, then each commit's events.
   HttpApiEndpoint.get("events", "/conversations/:id/events", {
@@ -105,8 +109,32 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     success: HttpApiSchema.StreamSse({ data: Schema.Json }),
     error: NotFound,
   }),
-  HttpApiEndpoint.delete("end", "/conversations/:id", {
+  // Give a paused Conversation a Seat, or cancel a Pause waiting for the Run of one that has a Seat.
+  HttpApiEndpoint.post("resume", "/conversations/:id/resume", {
     params: ById,
+    success: ConversationSummary,
+    error: [NotFound, Full, Archived],
+  }),
+  // Free the Seat: at once when idle, otherwise once the current Run ends.
+  HttpApiEndpoint.post("pause", "/conversations/:id/pause", {
+    params: ById,
+    success: HttpApiSchema.NoContent,
+    error: NotFound,
+  }),
+  // Abort the current Run; the Seat stays.
+  HttpApiEndpoint.post("stop", "/conversations/:id/stop", {
+    params: ById,
+    success: HttpApiSchema.NoContent,
+    error: NotFound,
+  }),
+  HttpApiEndpoint.post("archive", "/conversations/:id/archive", {
+    params: ById,
+    success: HttpApiSchema.NoContent,
+    error: NotFound,
+  }),
+  HttpApiEndpoint.post("unarchive", "/conversations/:id/unarchive", {
+    params: ById,
+    success: HttpApiSchema.NoContent,
     error: NotFound,
   }),
   HttpApiEndpoint.post("approvals", "/conversations/:id/approvals", {
@@ -126,6 +154,10 @@ const InfoGroup = HttpApiGroup.make("info").add(
   }),
   HttpApiEndpoint.get("capabilities", "/capabilities", {
     success: Capabilities,
+  }),
+  // Each Capacity resource's limit and holders, for choosing a Conversation to pause.
+  HttpApiEndpoint.get("capacity", "/capacity", {
+    success: Schema.Array(CapacityUsage),
   })
 );
 

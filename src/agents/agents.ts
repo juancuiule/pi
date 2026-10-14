@@ -1,5 +1,6 @@
-// An Effect service over a pi-durable harness. Each conversation is started with the sandbox the user picks
-// (none, shell or desktop).
+// An Effect service over a pi-durable harness: how to run a Conversation. `create` records a new one, and `open`
+// gives a Conversation a Seat (see GLOSSARY.md), with a Sandbox over its Workspace when its Level needs one. Which
+// Conversations have Seats, and when that changes, is the server's concern (src/server/conversations.ts).
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
@@ -10,12 +11,15 @@ import type {
   Cursor,
   EntryId,
   Extension,
+  Harness as HarnessType,
   Storage,
+  WatchHandle,
 } from "@earendil-works/pi-durable";
 import {
   AssistantEntry,
   createRegistry,
   Harness,
+  LiveDoc,
   MemoryStorage,
   watchEvents,
 } from "@earendil-works/pi-durable";
@@ -23,11 +27,15 @@ import type { Cause, Scope } from "effect";
 import { Context, Effect, Layer, Queue, Schema, Stream } from "effect";
 
 import type { ApprovalPolicy } from "../approvals.ts";
-import { ApprovalDoc } from "../approvals.ts";
+import { ApprovalDoc, clearApprovals, stopWaitingCalls } from "../approvals.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
 import { MetaDoc } from "../conversation-meta.ts";
 import type { SkillNotFound } from "../errors.ts";
-import { ApprovalNotFound, ConversationNotFound } from "../errors.ts";
+import {
+  ApprovalNotFound,
+  ConversationArchived,
+  ConversationNotFound,
+} from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
 import type { SandboxChoice, SandboxInfo } from "../sandbox/sandbox.ts";
@@ -37,9 +45,7 @@ import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
 import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
-import type { AgentTracing } from "../tracing.ts";
 import { makeAgentTracing } from "../tracing.ts";
-import type { StorageRef } from "../workspaces/workspaces.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -58,11 +64,12 @@ const answerText = async (
     .join("");
 };
 
-// ─── Effect: the agent harness as a service ─────────────────────────────────
-
 export class AgentError extends Schema.TaggedError<AgentError>()("AgentError", {
   cause: Schema.Defect(),
 }) {}
+
+const attempt = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new AgentError({ cause }) });
 
 export interface Capabilities {
   readonly skills: readonly {
@@ -79,12 +86,12 @@ export interface AgentModel {
   readonly modelId: string;
 }
 
-/** The extensions a conversation runs with, by the sandbox the user picked. */
+/** The extensions a conversation runs with, by its Workspace's Level. */
 export const extensionsFor = (
-  choice: SandboxChoice,
+  level: SandboxChoice,
   desktop: Extension = desktopExtension()
 ): Extension[] => {
-  switch (choice) {
+  switch (level) {
     case "none": {
       return [Calculator];
     }
@@ -95,7 +102,7 @@ export const extensionsFor = (
       return [Calculator, CodingTools, desktop];
     }
     default: {
-      throw new TypeError(`Unknown sandbox choice: ${choice satisfies never}`);
+      throw new TypeError(`Unknown Level: ${level satisfies never}`);
     }
   }
 };
@@ -104,7 +111,7 @@ export const extensionsFor = (
 // needs the previous cursor. Databases from before the subagent tool was removed can still hold its
 // task-owned child conversations; they are skipped.
 const scanTopLevel = async (
-  harness: Harness,
+  harness: HarnessType,
   cursor: Cursor | undefined,
   ids: ConversationId[]
 ): Promise<ConversationId[]> => {
@@ -120,62 +127,73 @@ const scanTopLevel = async (
   return page.next === undefined ? ids : scanTopLevel(harness, page.next, ids);
 };
 
-const askIn = (conversation: Conversation, tracing: AgentTracing) =>
-  Effect.fn("AgentConversation.ask")(function* (prompt: string) {
-    yield* Effect.annotateCurrentSpan({
-      "langfuse.observation.type": "agent",
-      "langfuse.observation.input": prompt,
-      "langfuse.session.id": tracing.sessionOf(conversation.id),
-    });
-    const answer = yield* tracing.traced(
-      conversation.id,
-      Effect.tryPromise({
-        try: async () => {
-          const submission = await conversation.submit(
-            { type: "input", content: prompt },
-            context
-          );
-          const settled = await submission.wait(context);
-          if (settled.status !== "done" || settled.type !== "input") {
-            throw new Error(`Run failed: ${settled.status}`);
-          }
-          return answerText(conversation, settled.answer);
-        },
-        catch: (cause) => new AgentError({ cause }),
-      })
-    );
-    yield* Effect.annotateCurrentSpan("langfuse.observation.output", answer);
-    return answer;
-  });
+/**
+ * A document's committed values as a single-use stream, the current one first. Attached when the effect runs, so no
+ * later commit is missed; finishing or interrupting the stream stops the watch.
+ */
+const watchStream = <V, A>(
+  open: () => Promise<WatchHandle<V> | undefined>,
+  map: (value: V) => A
+) =>
+  Effect.uninterruptible(
+    Effect.gen(function* () {
+      const queue = yield* Queue.unbounded<A, Cause.Done>();
+      const watch = yield* attempt(open);
+      if (watch === undefined) {
+        return yield* new AgentError({
+          cause: new Error("The document cannot be watched."),
+        });
+      }
+      Queue.offerUnsafe(queue, map(watch.value));
+      watch.start((value) => {
+        Queue.offerUnsafe(queue, map(value));
+        return Promise.resolve();
+      });
+      void (async () => {
+        await watch.closed;
+        Queue.endUnsafe(queue);
+      })();
+      return Stream.fromQueue(queue).pipe(
+        Stream.ensuring(Effect.promise(() => watch.stop()))
+      );
+    })
+  );
 
-const sendIn = (conversation: Conversation, tracing: AgentTracing) =>
-  Effect.fn("AgentConversation.send")(function* (prompt: string) {
-    yield* Effect.annotateCurrentSpan({
-      "langfuse.observation.type": "agent",
-      "langfuse.observation.input": prompt,
-      "langfuse.session.id": tracing.sessionOf(conversation.id),
-    });
-    // Admitted without waiting: a busy conversation queues it as a follow-up, and the answer arrives as events.
-    yield* tracing.traced(
-      conversation.id,
-      Effect.tryPromise({
-        try: () =>
-          conversation.submit(
-            { type: "input", content: prompt, whenBusy: "followUp" },
-            context
-          ),
-        catch: (cause) => new AgentError({ cause }),
-      })
-    );
-  });
-
-export interface AgentConversation {
+/** A Conversation live in this process; it ends, and its Sandbox is removed, when the scope `open` ran in closes. */
+export interface Seat {
   readonly id: ConversationId;
-  /** The conversation's sandbox; `undefined` when started with `sandbox: "none"`. */
+  /** This Seat's Sandbox; `undefined` at Level `none`. */
   readonly sandbox: SandboxInfo | undefined;
+  /**
+   * Send a prompt without waiting for the answer; it is queued as a follow-up while a Run is going. `/skill:` is
+   * expanded against the conversation's skills first.
+   */
+  send(prompt: string): Effect.Effect<void, AgentError | SkillNotFound>;
+  /** Send a prompt and wait for the answer's text; the model requests and tool calls are traced under it. */
   ask(prompt: string): Effect.Effect<string, AgentError>;
-  /** Send a prompt without waiting for the answer; it is queued as a follow-up while the agent runs. */
-  send(prompt: string): Effect.Effect<void, AgentError>;
+  /**
+   * Abort the current Run and its queued inputs; a call waiting for approval reports that the user stopped it.
+   * Completes once the conversation is idle.
+   */
+  readonly stop: Effect.Effect<void, AgentError>;
+  /**
+   * Decide a call waiting for approval. `always` also flips the policy to `auto` and approves every other waiting
+   * call. Fails `ApprovalNotFound` when no call is waiting under `key`.
+   */
+  decide(
+    key: string,
+    decision: "approve" | "deny" | "always"
+  ): Effect.Effect<void, AgentError | ApprovalNotFound>;
+  /** Count of calls waiting for approval. */
+  readonly pendingApprovals: Effect.Effect<number, AgentError>;
+  /**
+   * Whether a Run is going: the current value first, then each change (consecutive equal values may repeat).
+   * Single-use, and must be run; finishing or interrupting it stops its watch.
+   */
+  readonly running: Effect.Effect<
+    Stream.Stream<boolean, AgentError>,
+    AgentError
+  >;
 }
 
 export class Agents extends Context.Service<
@@ -183,48 +201,48 @@ export class Agents extends Context.Service<
   {
     /** The model new conversations run on; /api/info reports it. */
     readonly model: AgentModel;
+    /** The skills and MCP servers conversations can use, for the console. */
+    readonly capabilities: Effect.Effect<Capabilities>;
     /**
-     * Start a conversation, creating its sandbox first. The sandbox is removed when the scope closes, so wrap a
-     * conversation's lifetime in `Effect.scoped`.
+     * Record a new Conversation, with the skills the source has now. Fails `SkillNotFound`, creating nothing, when
+     * `prompt` (its first prompt, sent later through its Seat) forces an unknown skill.
      */
-    start(options: {
-      readonly sandbox: SandboxChoice;
-      readonly title?: string;
-      readonly createdAt?: number;
-      readonly approvals?: ApprovalPolicy;
-    }): Effect.Effect<
-      AgentConversation,
-      AgentError | SandboxError,
-      Scope.Scope
-    >;
+    create(options: {
+      readonly prompt: string;
+      readonly title: string;
+      readonly level: SandboxChoice;
+      readonly createdAt: number;
+      readonly approvals?: ApprovalPolicy | undefined;
+    }): Effect.Effect<ConversationId, AgentError | SkillNotFound>;
     /**
-     * Take an existing conversation — one persisted by a previous run — in a new scope. Creates no sandbox;
-     * ended callers must check `meta.endedAt` first. Closing the scope aborts it, exactly like `start`'s.
+     * Give a Conversation a Seat until the scope closes: a Sandbox over its Workspace when its Level needs one, with
+     * its skills copied in. Closing the scope aborts the conversation, then removes the Sandbox; the Workspace's
+     * files stay. Capacity is the caller's to claim.
      */
-    attach(
+    open(
       id: ConversationId
     ): Effect.Effect<
-      AgentConversation,
-      AgentError | ConversationNotFound,
+      Seat,
+      AgentError | SandboxError | ConversationNotFound | ConversationArchived,
       Scope.Scope
     >;
-    /**
-     * Record an approval decision on a conversation's doc. `always` also flips the policy to
-     * `auto` and approves every other waiting call. Fails `ApprovalNotFound` when no call is waiting under `key`.
-     */
-    decide(
+    /** One stored Conversation. */
+    get(
+      id: ConversationId
+    ): Effect.Effect<StoredConversation, AgentError | ConversationNotFound>;
+    /** Every stored top-level Conversation, archived ones included; order irrelevant. */
+    readonly list: Effect.Effect<readonly StoredConversation[], AgentError>;
+    /** Archive a Conversation without a Seat: mark it, and delete its Workspace's files. */
+    archive(
       id: ConversationId,
-      key: string,
-      decision: "approve" | "deny" | "always"
-    ): Effect.Effect<void, AgentError | ApprovalNotFound>;
-    /** Count of calls waiting for approval in a conversation. */
-    pendingApprovals(id: ConversationId): Effect.Effect<number, AgentError>;
-    /** Every stored top-level conversation that has metadata, newest last order irrelevant to callers. */
-    readonly stored: Effect.Effect<readonly StoredConversation[], AgentError>;
-    /** Record `meta.endedAt` for a conversation; unknown ids settle silently like other doc writes. */
-    markEnded(id: ConversationId, at: number): Effect.Effect<void, AgentError>;
+      at: number
+    ): Effect.Effect<void, AgentError | SandboxError | ConversationNotFound>;
+    /** Unarchive a Conversation; its Workspace starts empty. */
+    unarchive(
+      id: ConversationId
+    ): Effect.Effect<void, AgentError | ConversationNotFound>;
     /**
-     * Watch a conversation: a `snapshot` first, then the events of every later commit.
+     * Watch a conversation, with or without a Seat: a `snapshot` first, then the events of every later commit.
      * The watch starts when this effect completes, so the stream is single-use and must be run: finishing or
      * interrupting it stops the watch, and a stream that is never run keeps it until the harness closes.
      */
@@ -234,16 +252,6 @@ export class Agents extends Context.Service<
       Stream.Stream<AgentEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
-    /** The skills and MCP servers conversations can use, for the console. */
-    readonly capabilities: Effect.Effect<Capabilities>;
-    /**
-     * Expand `/skill:` in a prompt (see `Skills.expand`): against conversation `id`'s skills when given, otherwise
-     * against the skills a new conversation would get.
-     */
-    expandSkill(
-      prompt: string,
-      id?: ConversationId
-    ): Effect.Effect<string, AgentError | SkillNotFound>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -302,229 +310,269 @@ export class Agents extends Context.Service<
 
         // The harness is opened when the layer is built and closed when it is torn down.
         const harness = yield* Effect.acquireRelease(
-          Effect.tryPromise({
-            try: () =>
-              Harness.open(
-                options.storage ?? new MemoryStorage(),
-                {
-                  models: options.models,
-                  registry,
-                  // Every tool call runs in the sandbox its conversation recorded; without one there is no
-                  // environment, and the file, shell and desktop tools fail with an error result.
-                  env: async ({ conversationId, read }, envContext) => {
-                    const doc = await read.snapshot(
-                      SandboxDoc,
-                      conversationId,
-                      envContext
-                    );
-                    return doc?.sandbox === undefined
-                      ? undefined
-                      : workspaces.env(doc.sandbox);
-                  },
+          attempt(() =>
+            Harness.open(
+              options.storage ?? new MemoryStorage(),
+              {
+                models: options.models,
+                registry,
+                // Every tool call runs in the Sandbox of its conversation's Seat; without one there is no
+                // environment, and the file, shell and desktop tools fail with an error result.
+                env: async ({ conversationId, read }, envContext) => {
+                  const doc = await read.snapshot(
+                    SandboxDoc,
+                    conversationId,
+                    envContext
+                  );
+                  return doc?.sandbox === undefined
+                    ? undefined
+                    : workspaces.env(doc.sandbox);
                 },
-                context
-              ),
-            catch: (cause) => new AgentError({ cause }),
-          }),
+              },
+              context
+            )
+          ),
           (opened) => Effect.promise(() => opened.close(context))
         );
 
-        // A run interrupted by a crash would resume against a sandbox that no longer exists, so every
-        // conversation with live work is aborted before the service answers. The first `abort` enables
-        // scheduling for the whole harness, so another conversation's pending task may start before its
-        // own abort mark lands — at worst one tool call failing against a missing sandbox, or one model
-        // request. Each abort waits until its conversation is idle.
-        yield* Effect.tryPromise({
-          try: async () => {
-            const inspection = await harness.inspect(context);
-            const ids = new Set<ConversationId>();
-            for (const task of inspection.tasks) {
-              if (task.record.conversationId !== undefined) {
-                ids.add(task.record.conversationId);
-              }
+        // No Seat survives a restart, so a run interrupted by a crash would resume against a Sandbox that no
+        // longer exists: every conversation with live work is aborted before the service answers. The first
+        // `abort` enables scheduling for the whole harness, so another conversation's pending task may start before
+        // its own abort mark lands — at worst one tool call failing for lack of a Sandbox, or one model request.
+        // Each abort waits until its conversation is idle. Then every conversation is left without a Sandbox and
+        // without waiting calls.
+        yield* attempt(async () => {
+          const inspection = await harness.inspect(context);
+          const ids = new Set<ConversationId>();
+          for (const task of inspection.tasks) {
+            if (task.record.conversationId !== undefined) {
+              ids.add(task.record.conversationId);
             }
-            for (const submission of inspection.submissions) {
-              if (submission.conversationId !== undefined) {
-                ids.add(submission.conversationId);
-              }
-            }
-            await Promise.all(
-              [...ids].map(async (id) => {
-                const handle = await harness.conversation(id, context);
-                await handle?.abort(context);
-              })
-            );
-            // Pending approval entries left by a crash would show forever: the calls that created them
-            // are aborted, so clear them (and now-meaningless decisions) on every stored conversation's doc.
-            const records = await scanTopLevel(harness, undefined, []);
-            await Promise.all(
-              records.map((id) =>
-                harness.commit(async (tx) => {
-                  const doc = await tx.doc(ApprovalDoc, id);
-                  doc.pending = {};
-                  doc.decisions = {};
-                }, context)
-              )
-            );
-          },
-          catch: (cause) => new AgentError({ cause }),
-        });
-
-        const start = Effect.fn("Agents.start")(function* (startOptions: {
-          readonly sandbox: SandboxChoice;
-          readonly title?: string;
-          readonly createdAt?: number;
-          readonly approvals?: ApprovalPolicy;
-        }) {
-          const choice = startOptions.sandbox;
-          // This conversation's skills: the source as it is now, kept for its whole life.
-          const conversationSkills = (yield* catalog).skills;
-          const machine =
-            choice === "none"
-              ? undefined
-              : yield* workspaces.sandbox({ level: choice });
-          const sandbox = machine?.sandbox;
-          const storage: StorageRef | undefined = machine?.storage;
-          if (sandbox !== undefined && conversationSkills.length > 0) {
-            yield* skills
-              .install(workspaces.env(sandbox), conversationSkills, context)
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new SandboxError({
-                      message: `Could not copy skills into ${sandbox.id}`,
-                      cause,
-                    })
-                )
-              );
           }
-          // Acquired after the sandbox, so closing the scope stops the run and its queued inputs before the
-          // sandbox is removed.
-          const conversation = yield* Effect.acquireRelease(
-            Effect.tryPromise({
-              try: () =>
-                harness.createConversation(
-                  {
-                    ownership: { kind: "ownerless" },
-                    agent: {
-                      model: { ...options.model },
-                      extensions: [
-                        ...extensionsFor(choice, desktop),
-                        ...(conversationSkills.length === 0 ? [] : [skillsExt]),
-                        mcp.extension,
-                        tracing.extension,
-                      ],
-                    },
-                    // Recorded in the creating commit, so no tool call can run before the sandbox is known.
-                    init: async (tx, id) => {
-                      if (sandbox !== undefined) {
-                        const doc = await tx.doc(SandboxDoc, id);
-                        doc.sandbox = sandbox;
-                      }
-                      const workspace = await tx.doc(WorkspaceDoc, id);
-                      workspace.level = choice;
-                      if (storage !== undefined) {
-                        workspace.storage = storage;
-                      }
-                      const skillsDoc = await tx.doc(SkillsDoc, id);
-                      skillsDoc.skills = [...conversationSkills];
-                      const meta = await tx.doc(MetaDoc, id);
-                      meta.meta = {
-                        title: startOptions.title ?? "",
-                        sandbox: choice,
-                        createdAt: startOptions.createdAt ?? Date.now(),
-                      };
-                      const approvals = await tx.doc(ApprovalDoc, id);
-                      approvals.policy = startOptions.approvals ?? "auto";
-                    },
-                  },
-                  context
-                ),
-              catch: (cause) => new AgentError({ cause }),
-            }),
-            (created) =>
-              Effect.ignore(Effect.tryPromise(() => created.abort(context)))
+          for (const submission of inspection.submissions) {
+            if (submission.conversationId !== undefined) {
+              ids.add(submission.conversationId);
+            }
+          }
+          await Promise.all(
+            [...ids].map(async (id) => {
+              const handle = await harness.conversation(id, context);
+              await handle?.abort(context);
+            })
           );
-          return {
-            id: conversation.id,
-            sandbox,
-            ask: askIn(conversation, tracing),
-            send: sendIn(conversation, tracing),
-          } satisfies AgentConversation;
-        });
-
-        // Same surface as `start`, without creating anything: the recorded conversation keeps its stored
-        // sandbox reference, which is dead after a restart, so `sandbox` is `undefined` here.
-        const attach = Effect.fn("Agents.attach")(function* (
-          id: ConversationId
-        ) {
-          const handle = yield* Effect.tryPromise({
-            try: () => harness.conversation(id, context),
-            catch: (cause) => new AgentError({ cause }),
-          });
-          if (handle === undefined) {
-            return yield* new ConversationNotFound({ id: Number(id) });
-          }
-          yield* Effect.addFinalizer(() =>
-            Effect.ignore(Effect.tryPromise(() => handle.abort(context)))
-          );
-          return {
-            id: handle.id,
-            sandbox: undefined,
-            ask: askIn(handle, tracing),
-            send: sendIn(handle, tracing),
-          } satisfies AgentConversation;
-        });
-
-        const stored = Effect.gen(function* () {
-          const all = yield* Effect.tryPromise({
-            try: () => scanTopLevel(harness, undefined, []),
-            catch: (cause) => new AgentError({ cause }),
-          });
-
-          const conversations: StoredConversation[] = [];
-          for (const id of all) {
-            const doc = yield* Effect.tryPromise({
-              try: () => harness.snapshot(MetaDoc, id, context),
-              catch: (cause) => new AgentError({ cause }),
-            });
-            if (doc?.meta !== undefined) {
-              conversations.push({ id, meta: doc.meta });
-            }
-          }
-          return conversations;
-        }).pipe(Effect.withSpan("Agents.stored"));
-
-        const markEnded = Effect.fn("Agents.markEnded")(function* (
-          id: ConversationId,
-          at: number
-        ) {
-          yield* Effect.tryPromise({
-            try: () =>
+          const records = await scanTopLevel(harness, undefined, []);
+          await Promise.all(
+            records.map((id) =>
               harness.commit(async (tx) => {
-                const doc = await tx.doc(MetaDoc, id);
-                const { meta } = doc;
-                if (meta === undefined) {
-                  return;
-                }
-                doc.meta = { ...meta, endedAt: at };
-                // An ended conversation never needs approval again; the aborted calls' cleanup commits
-                // land too late to clear these themselves.
                 const approvals = await tx.doc(ApprovalDoc, id);
                 approvals.pending = {};
                 approvals.decisions = {};
-              }, context),
-            catch: (cause) => new AgentError({ cause }),
-          });
+                const sandbox = await tx.doc(SandboxDoc, id);
+                delete sandbox.sandbox;
+              }, context)
+            )
+          );
         });
 
-        const decide = Effect.fn("Agents.decide")(function* (
-          id: ConversationId,
-          key: string,
-          decision: "approve" | "deny" | "always"
-        ) {
-          const found = yield* Effect.tryPromise({
-            try: () =>
+        const handleOf = Effect.fnUntraced(function* (id: ConversationId) {
+          const handle = yield* attempt(() =>
+            harness.conversation(id, context)
+          );
+          if (handle === undefined) {
+            return yield* new ConversationNotFound({ id: Number(id) });
+          }
+          return handle;
+        });
+
+        // The skills a conversation recorded, or those a new one would get for one recorded without them.
+        const skillsOf = (id: ConversationId) =>
+          attempt(() => harness.snapshot(SkillsDoc, id, context)).pipe(
+            Effect.flatMap((doc) =>
+              doc?.skills === undefined
+                ? catalog.pipe(Effect.map((current) => current.skills))
+                : Effect.succeed(doc.skills)
+            )
+          );
+
+        const expand = (prompt: string, id: ConversationId) =>
+          prompt.includes("/skill:")
+            ? skillsOf(id).pipe(
+                Effect.flatMap((available) => skills.expand(prompt, available)),
+                Effect.catchTag("SkillSourceError", (cause) =>
+                  Effect.fail(new AgentError({ cause }))
+                )
+              )
+            : Effect.succeed(prompt);
+
+        const create = Effect.fn("Agents.create")(function* (createOptions: {
+          readonly prompt: string;
+          readonly title: string;
+          readonly level: SandboxChoice;
+          readonly createdAt: number;
+          readonly approvals?: ApprovalPolicy | undefined;
+        }) {
+          // This conversation's skills: the source as it is now, kept for its whole life.
+          const conversationSkills = (yield* catalog).skills;
+          if (createOptions.prompt.includes("/skill:")) {
+            yield* skills
+              .expand(createOptions.prompt, conversationSkills)
+              .pipe(
+                Effect.catchTag("SkillSourceError", (cause) =>
+                  Effect.fail(new AgentError({ cause }))
+                )
+              );
+          }
+          const created = yield* attempt(() =>
+            harness.createConversation(
+              {
+                ownership: { kind: "ownerless" },
+                agent: {
+                  model: { ...options.model },
+                  extensions: [
+                    ...extensionsFor(createOptions.level, desktop),
+                    ...(conversationSkills.length === 0 ? [] : [skillsExt]),
+                    mcp.extension,
+                    tracing.extension,
+                  ],
+                },
+                init: async (tx, id) => {
+                  const skillsDoc = await tx.doc(SkillsDoc, id);
+                  skillsDoc.skills = [...conversationSkills];
+                  const meta = await tx.doc(MetaDoc, id);
+                  meta.meta = {
+                    title: createOptions.title,
+                    createdAt: createOptions.createdAt,
+                  };
+                  const workspace = await tx.doc(WorkspaceDoc, id);
+                  workspace.level = createOptions.level;
+                  const approvals = await tx.doc(ApprovalDoc, id);
+                  approvals.policy = createOptions.approvals ?? "auto";
+                },
+              },
+              context
+            )
+          );
+          return created.id;
+        });
+
+        const open = Effect.fn("Agents.open")(function* (id: ConversationId) {
+          const handle = yield* handleOf(id);
+          const meta = yield* attempt(() =>
+            harness.snapshot(MetaDoc, id, context)
+          );
+          if (meta?.meta?.archivedAt !== undefined) {
+            return yield* new ConversationArchived({ id: Number(id) });
+          }
+          const workspace = yield* attempt(() =>
+            harness.snapshot(WorkspaceDoc, id, context)
+          );
+          const level = workspace?.level ?? "none";
+          let sandbox: SandboxInfo | undefined;
+          if (level !== "none") {
+            const machine = yield* workspaces.sandbox({
+              level,
+              storage: workspace?.storage,
+            });
+            ({ sandbox } = machine);
+            const conversationSkills = yield* skillsOf(id);
+            if (conversationSkills.length > 0) {
+              yield* skills
+                .install(workspaces.env(sandbox), conversationSkills, context)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new SandboxError({
+                        message: `Could not copy skills into ${machine.sandbox.id}`,
+                        cause,
+                      })
+                  )
+                );
+            }
+            // Recorded before the Seat is returned, so no tool call of this Seat runs without its Sandbox. Cleared
+            // when the Seat ends, before the Sandbox is removed.
+            yield* Effect.acquireRelease(
+              attempt(() =>
+                harness.commit(async (tx) => {
+                  const doc = await tx.doc(SandboxDoc, id);
+                  doc.sandbox = machine.sandbox;
+                  const files = await tx.doc(WorkspaceDoc, id);
+                  files.storage = machine.storage;
+                }, context)
+              ),
+              () =>
+                Effect.ignore(
+                  attempt(() =>
+                    harness.commit(async (tx) => {
+                      const doc = await tx.doc(SandboxDoc, id);
+                      delete doc.sandbox;
+                    }, context)
+                  )
+                )
+            );
+          }
+          // Registered last, so it runs first: the conversation stops before its Sandbox goes.
+          yield* Effect.addFinalizer(() =>
+            Effect.ignore(attempt(() => handle.abort(context)))
+          );
+
+          const annotate = (prompt: string) =>
+            Effect.annotateCurrentSpan({
+              "langfuse.observation.type": "agent",
+              "langfuse.observation.input": prompt,
+              "langfuse.session.id": tracing.sessionOf(id),
+            });
+
+          const send = Effect.fn("Seat.send")(function* (prompt: string) {
+            const expanded = yield* expand(prompt, id);
+            yield* annotate(expanded);
+            // Admitted without waiting: a busy conversation queues it as a follow-up, and the answer arrives as
+            // events.
+            yield* tracing.traced(
+              id,
+              attempt(() =>
+                handle.submit(
+                  { type: "input", content: expanded, whenBusy: "followUp" },
+                  context
+                )
+              )
+            );
+          });
+
+          const ask = Effect.fn("Seat.ask")(function* (prompt: string) {
+            yield* annotate(prompt);
+            const answer = yield* tracing.traced(
+              id,
+              attempt(async () => {
+                const submission = await handle.submit(
+                  { type: "input", content: prompt },
+                  context
+                );
+                const settled = await submission.wait(context);
+                if (settled.status !== "done" || settled.type !== "input") {
+                  throw new Error(`Run failed: ${settled.status}`);
+                }
+                return answerText(handle, settled.answer);
+              })
+            );
+            yield* Effect.annotateCurrentSpan(
+              "langfuse.observation.output",
+              answer
+            );
+            return answer;
+          });
+
+          const stop = attempt(async () => {
+            await stopWaitingCalls(harness, id, context);
+            await handle.abort(context);
+            // The aborted calls' own cleanup commits may have been refused; none of them waits any more.
+            await clearApprovals(harness, id, context);
+          }).pipe(Effect.withSpan("Seat.stop"));
+
+          const decide = Effect.fn("Seat.decide")(function* (
+            key: string,
+            decision: "approve" | "deny" | "always"
+          ) {
+            const found = yield* attempt(() =>
               harness.commit(async (tx) => {
                 const doc = await tx.doc(ApprovalDoc, id);
                 if (doc.pending[key] === undefined) {
@@ -539,48 +587,132 @@ export class Agents extends Context.Service<
                 }
                 doc.decisions[key] = decision === "deny" ? "deny" : "approve";
                 return true;
-              }, context),
-            catch: (cause) => new AgentError({ cause }),
+              }, context)
+            );
+            if (!found) {
+              return yield* new ApprovalNotFound({ key });
+            }
           });
-          if (!found) {
-            return yield* new ApprovalNotFound({ key });
+
+          const pendingApprovals = attempt(() =>
+            harness.snapshot(ApprovalDoc, id, context)
+          ).pipe(Effect.map((doc) => Object.keys(doc?.pending ?? {}).length));
+
+          const running = watchStream(
+            () => harness.watchDoc(LiveDoc, id, context),
+            (value) => value?.run !== undefined
+          );
+
+          return {
+            id,
+            sandbox,
+            send,
+            ask,
+            stop,
+            decide,
+            pendingApprovals,
+            running,
+          } satisfies Seat;
+        });
+
+        // A conversation without metadata predates it, or is not a Conversation of this app.
+        const stored = Effect.fnUntraced(function* (id: ConversationId) {
+          const doc = yield* attempt(() =>
+            harness.snapshot(MetaDoc, id, context)
+          );
+          if (doc?.meta === undefined) {
+            return;
+          }
+          const workspace = yield* attempt(() =>
+            harness.snapshot(WorkspaceDoc, id, context)
+          );
+          return {
+            id,
+            meta: doc.meta,
+            level: workspace?.level ?? "none",
+          } satisfies StoredConversation;
+        });
+
+        const get = Effect.fn("Agents.get")(function* (id: ConversationId) {
+          const found = yield* stored(id);
+          if (found === undefined) {
+            return yield* new ConversationNotFound({ id: Number(id) });
+          }
+          return found;
+        });
+
+        const list = Effect.gen(function* () {
+          const ids = yield* attempt(() =>
+            scanTopLevel(harness, undefined, [])
+          );
+          const conversations: StoredConversation[] = [];
+          for (const id of ids) {
+            const found = yield* stored(id);
+            if (found !== undefined) {
+              conversations.push(found);
+            }
+          }
+          return conversations;
+        }).pipe(Effect.withSpan("Agents.list"));
+
+        const archive = Effect.fn("Agents.archive")(function* (
+          id: ConversationId,
+          at: number
+        ) {
+          yield* handleOf(id);
+          const storage = yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const doc = await tx.doc(MetaDoc, id);
+              if (doc.meta !== undefined) {
+                doc.meta = { ...doc.meta, archivedAt: at };
+              }
+              const approvals = await tx.doc(ApprovalDoc, id);
+              approvals.pending = {};
+              approvals.decisions = {};
+              const workspace = await tx.doc(WorkspaceDoc, id);
+              // Copied out: the draft cannot be read once the commit settles.
+              const files =
+                workspace.storage === undefined
+                  ? undefined
+                  : { ...workspace.storage };
+              delete workspace.storage;
+              return files;
+            }, context)
+          );
+          if (storage !== undefined) {
+            yield* workspaces.discard(storage);
           }
         });
 
-        const pendingApprovals = Effect.fn("Agents.pendingApprovals")(
-          function* (id: ConversationId) {
-            const count = yield* Effect.tryPromise({
-              try: async () => {
-                const doc = await harness.snapshot(ApprovalDoc, id, context);
-                return Object.keys(doc?.pending ?? {}).length;
-              },
-              catch: (cause) => new AgentError({ cause }),
-            });
-            return count;
-          }
-        );
+        const unarchive = Effect.fn("Agents.unarchive")(function* (
+          id: ConversationId
+        ) {
+          yield* handleOf(id);
+          yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const doc = await tx.doc(MetaDoc, id);
+              if (doc.meta !== undefined) {
+                const { archivedAt: _archivedAt, ...meta } = doc.meta;
+                doc.meta = meta;
+              }
+            }, context)
+          );
+        });
 
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
         ) {
           // Only an existence check; the watch below reads the conversation itself.
-          const handle = yield* Effect.tryPromise({
-            try: () => harness.conversation(id, context),
-            catch: (cause) => new AgentError({ cause }),
-          });
-          if (handle === undefined) {
-            return yield* new ConversationNotFound({ id: Number(id) });
-          }
+          yield* handleOf(id);
           // Attached now, not when the stream is run: events committed after this call are never missed. The attach
           // and wiring are uninterruptible, so an interrupt can never leave a watch without an owner; from then on
           // the stream's finalizer stops it.
           return yield* Effect.uninterruptible(
             Effect.gen(function* () {
               const queue = yield* Queue.unbounded<AgentEvent, Cause.Done>();
-              const watch = yield* Effect.tryPromise({
-                try: () => watchEvents(harness, id, context),
-                catch: (cause) => new AgentError({ cause }),
-              });
+              const watch = yield* attempt(() =>
+                watchEvents(harness, id, context)
+              );
               Queue.offerUnsafe(queue, watch.snapshot);
               watch.start((batch) => {
                 Queue.offerAllUnsafe(queue, batch);
@@ -610,46 +742,16 @@ export class Agents extends Context.Service<
           Effect.orDie
         );
 
-        const expandSkill = Effect.fn("Agents.expandSkill")(function* (
-          prompt: string,
-          id?: ConversationId
-        ) {
-          if (!prompt.includes("/skill:")) {
-            return prompt;
-          }
-          const available =
-            id === undefined
-              ? (yield* catalog).skills
-              : yield* Effect.tryPromise({
-                  try: () => harness.snapshot(SkillsDoc, id, context),
-                  catch: (cause) => new AgentError({ cause }),
-                }).pipe(
-                  Effect.flatMap((doc) =>
-                    doc?.skills === undefined
-                      ? catalog.pipe(Effect.map((c) => c.skills))
-                      : Effect.succeed(doc.skills)
-                  )
-                );
-          return yield* skills
-            .expand(prompt, available)
-            .pipe(
-              Effect.catchTag("SkillSourceError", (cause) =>
-                Effect.fail(new AgentError({ cause }))
-              )
-            );
-        });
-
         return Agents.of({
           model: options.model,
-          start,
-          attach,
-          decide,
-          pendingApprovals,
-          stored,
-          markEnded,
-          events,
           capabilities,
-          expandSkill,
+          create,
+          open,
+          get,
+          list,
+          archive,
+          unarchive,
+          events,
         });
       })
     );

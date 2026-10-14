@@ -90,8 +90,12 @@ export const Sidebar = ({
   const { data } = useConversations();
   const { data: info } = useInfo();
   const now = useNow();
-  const conversations = [...(data ?? [])].toSorted(
-    (a, b) => b.createdAt - a.createdAt
+  const [showArchived, setShowArchived] = useState(false);
+  const all = [...(data ?? [])].toSorted((a, b) => b.createdAt - a.createdAt);
+  const archivedCount = all.filter((c) => c.status === "archived").length;
+  // Archived conversations are hidden unless asked for, or unless one is open.
+  const conversations = all.filter(
+    (c) => showArchived || c.status !== "archived" || c.id === selectedId
   );
 
   let list: ReactNode;
@@ -119,7 +123,9 @@ export const Sidebar = ({
           {conversations.map((conversation) => {
             const { icon: Icon, label } = SANDBOX_INFO[conversation.sandbox];
             const selected = conversation.id === selectedId;
-            const ended = conversation.status === "ended";
+            const inactive =
+              conversation.status === "paused" ||
+              conversation.status === "archived";
             const needsApproval = conversation.pendingApprovals > 0;
             return (
               <li key={conversation.id}>
@@ -136,7 +142,7 @@ export const Sidebar = ({
                     <span
                       className={cn(
                         "min-w-0 flex-1 truncate text-sm",
-                        ended && "text-muted-foreground"
+                        inactive && "text-muted-foreground"
                       )}
                       title={conversation.title}
                     >
@@ -166,7 +172,9 @@ export const Sidebar = ({
                     {label}
                     {" · "}
                     {relativeTime(conversation.createdAt, now)}
-                    {ended ? " · Ended" : ""}
+                    {conversation.status === "paused" ? " · Paused" : ""}
+                    {conversation.status === "archived" ? " · Archived" : ""}
+                    {conversation.pausing ? " · Pausing" : ""}
                     {needsApproval ? " · Needs approval" : ""}
                   </span>
                 </button>
@@ -196,6 +204,21 @@ export const Sidebar = ({
       <ScrollArea className="mt-2 min-h-0 flex-1">
         <div className="px-2">{list}</div>
       </ScrollArea>
+      {archivedCount === 0 ? null : (
+        <div className="px-2 pb-1">
+          <Button
+            variant="ghost"
+            size="xs"
+            className="w-full justify-start"
+            aria-pressed={showArchived}
+            onClick={() => setShowArchived((shown) => !shown)}
+          >
+            {showArchived
+              ? "Hide archived"
+              : `Show archived (${archivedCount})`}
+          </Button>
+        </div>
+      )}
       <div className="border-border flex flex-col gap-1.5 border-t p-2">
         <CapabilitiesSheet />
         <span

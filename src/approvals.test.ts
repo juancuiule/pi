@@ -17,7 +17,12 @@ import { approvalKey, STOPPED, withApproval } from "./approvals.ts";
 import { Capacity } from "./capacity.ts";
 import type { SandboxChoice } from "./sandbox/sandbox.ts";
 import { Conversations } from "./server/conversations.ts";
-import { callTool, echoToolResult, fauxAgents } from "./testing/faux.ts";
+import {
+  callTool,
+  echoToolResult,
+  fauxAgents,
+  openSeat,
+} from "./testing/faux.ts";
 
 const answer = (text: string) => fauxAssistantMessage([fauxText(text)]);
 
@@ -36,7 +41,7 @@ const waitUntil = (check: Effect.Effect<boolean, unknown>, timeoutMs = 8000) =>
 const askConversation = (sandbox: SandboxChoice, prompt: string) =>
   Effect.gen(function* () {
     const agents = yield* Agents;
-    const conversation = yield* agents.start({ sandbox, approvals: "ask" });
+    const conversation = yield* openSeat({ sandbox, approvals: "ask" });
     const ref = yield* Ref.make<AgentEvent[]>([]);
     const events = yield* agents.events(conversation.id);
     const scope = yield* Scope.Scope;
@@ -137,22 +142,22 @@ describe("tool approvals", () => {
     const dir = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const { agents, conversation, ref } = yield* askConversation(
+          const { conversation, ref } = yield* askConversation(
             "shell",
             "touch a file"
           );
           const cwd = conversation.sandbox?.id;
           expect(cwd).toBeDefined();
           yield* waitUntil(
-            agents
-              .pendingApprovals(conversation.id)
-              .pipe(Effect.map((count) => count === 1))
+            conversation.pendingApprovals.pipe(
+              Effect.map((count) => count === 1)
+            )
           );
           const key = yield* waitUntil(
             pendingKey(ref).pipe(Effect.map((k) => k !== undefined))
           ).pipe(Effect.andThen(pendingKey(ref)));
           expect(key).toMatch(/^\d+:call-bash$/u);
-          yield* agents.decide(conversation.id, key as string, "approve");
+          yield* conversation.decide(key as string, "approve");
           yield* waitUntil(hasRunEnd(ref));
           const results = yield* toolResults(ref);
           expect(results[0]?.isError).not.toBeTruthy();
@@ -174,18 +179,18 @@ describe("tool approvals", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const { agents, conversation, ref } = yield* askConversation(
+          const { conversation, ref } = yield* askConversation(
             "shell",
             "touch a file"
           );
           const cwd = conversation.sandbox?.id ?? "";
           yield* waitUntil(
-            agents
-              .pendingApprovals(conversation.id)
-              .pipe(Effect.map((count) => count === 1))
+            conversation.pendingApprovals.pipe(
+              Effect.map((count) => count === 1)
+            )
           );
           const key = yield* pendingKey(ref);
-          yield* agents.decide(conversation.id, key as string, "deny");
+          yield* conversation.decide(key as string, "deny");
           yield* waitUntil(hasRunEnd(ref));
           const results = yield* toolResults(ref);
           expect(results[0]?.isError).toBeTruthy();
@@ -209,23 +214,23 @@ describe("tool approvals", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const { agents, conversation, ref } = yield* askConversation(
+          const { conversation, ref } = yield* askConversation(
             "shell",
             "touch two files"
           );
           const cwd = conversation.sandbox?.id ?? "";
           yield* waitUntil(
-            agents
-              .pendingApprovals(conversation.id)
-              .pipe(Effect.map((count) => count === 1))
+            conversation.pendingApprovals.pipe(
+              Effect.map((count) => count === 1)
+            )
           );
           const key = yield* pendingKey(ref);
-          yield* agents.decide(conversation.id, key as string, "always");
+          yield* conversation.decide(key as string, "always");
           // The run must complete with no second pending entry: policy is now auto.
           yield* waitUntil(hasRunEnd(ref));
           expect(existsSync(path.join(cwd, "one.txt"))).toBeTruthy();
           expect(existsSync(path.join(cwd, "two.txt"))).toBeTruthy();
-          expect(yield* agents.pendingApprovals(conversation.id)).toBe(0);
+          expect(yield* conversation.pendingApprovals).toBe(0);
         })
       ).pipe(Effect.provide(layer))
     );
@@ -246,18 +251,17 @@ describe("tool approvals", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const { agents, conversation, ref } = yield* askConversation(
+          const { conversation, ref } = yield* askConversation(
             "shell",
             "touch two files"
           );
           const cwd = conversation.sandbox?.id ?? "";
           yield* waitUntil(
-            agents
-              .pendingApprovals(conversation.id)
-              .pipe(Effect.map((count) => count === 2))
+            conversation.pendingApprovals.pipe(
+              Effect.map((count) => count === 2)
+            )
           );
-          yield* agents.decide(
-            conversation.id,
+          yield* conversation.decide(
             approvalKey(conversation.id, "one"),
             "always"
           );
@@ -275,14 +279,11 @@ describe("tool approvals", () => {
     const exit = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const agents = yield* Agents;
-          const conversation = yield* agents.start({
+          const conversation = yield* openSeat({
             sandbox: "none",
             approvals: "ask",
           });
-          return yield* Effect.exit(
-            agents.decide(conversation.id, "1:nope", "approve")
-          );
+          return yield* Effect.exit(conversation.decide("1:nope", "approve"));
         })
       ).pipe(Effect.provide(layer))
     );
@@ -374,9 +375,9 @@ describe("tool approvals", () => {
     expect(doc.pending).toStrictEqual({});
   });
 
-  it("stops a pending call cleanly when the conversation ends", async () => {
+  it("stops a Run whose call waits for approval: the call says why, and the Seat stays", async () => {
     const agents = fauxAgents([
-      callTool("bash", { command: "sleep 30" }),
+      callTool("bash", { command: "touch stopped.txt" }),
       echoToolResult,
     ]);
     const layer = Conversations.layer({
@@ -387,29 +388,74 @@ describe("tool approvals", () => {
       Layer.provide(Capacity.layer({ seats: 10, shells: 3, desktops: 1 }))
     );
 
-    await Effect.runPromise(
+    const { listed, reply, ran } = await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
           sandbox: "shell",
-          prompt: "sleep",
+          prompt: "touch a file",
           approvals: "ask",
         });
+        const firstOf = conversations.list.pipe(
+          Effect.map((all) => all.find((c) => c.id === created.id))
+        );
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.pendingApprovals === 1)
+          firstOf.pipe(Effect.map((c) => c?.pendingApprovals === 1))
+        );
+        yield* conversations.stop(created.id);
+        const afterStop = yield* firstOf;
+        // The next prompt runs on the same Seat; the model sees the stopped call's result.
+        yield* conversations.send(created.id, "what happened?");
+        yield* waitUntil(
+          conversations.events(created.id).pipe(
+            Effect.flatMap((events) =>
+              events.pipe(Stream.take(1), Stream.runCollect)
+            ),
+            Effect.map(([snapshot]) =>
+              snapshot?.type === "snapshot"
+                ? snapshot.entries.some((entry) =>
+                    (entry.model ?? []).some(
+                      (m) =>
+                        m.role === "assistant" &&
+                        m.content.some(
+                          (c) => c.type === "text" && c.text.includes("Stopped")
+                        )
+                    )
+                  )
+                : false
+            )
           )
         );
-        yield* conversations.end(created.id);
-        const listed = yield* conversations.list;
-        expect(listed[0]?.status).toBe("ended");
-        expect(listed[0]?.pendingApprovals).toBe(0);
-        // The pending doc entry was cleaned up too.
-        const agentsService = yield* Agents;
-        expect(
-          yield* agentsService.pendingApprovals(created.id as ConversationId)
-        ).toBe(0);
-      }).pipe(Effect.provide(Layer.merge(layer, agents.layer)))
+        const [snapshot] = yield* conversations
+          .events(created.id)
+          .pipe(
+            Effect.flatMap((events) =>
+              events.pipe(Stream.take(1), Stream.runCollect)
+            )
+          );
+        const texts =
+          snapshot?.type === "snapshot"
+            ? snapshot.entries.flatMap((entry) =>
+                (entry.model ?? []).flatMap((m) =>
+                  m.role === "assistant"
+                    ? m.content.flatMap((c) =>
+                        c.type === "text" ? [c.text] : []
+                      )
+                    : []
+                )
+              )
+            : [];
+        return {
+          listed: afterStop,
+          reply: texts.at(-1),
+          ran: existsSync(path.join(afterStop?.sandboxId ?? "", "stopped.txt")),
+        };
+      }).pipe(Effect.provide(layer))
     );
+
+    expect(listed?.status).toBe("idle");
+    expect(listed?.pendingApprovals).toBe(0);
+    expect(reply).toContain(STOPPED);
+    expect(ran).toBeFalsy();
   }, 30_000);
 });

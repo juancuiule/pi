@@ -26,12 +26,49 @@ const ConversationsHandlers = HttpApiBuilder.group(
           Effect.catchTags({
             AgentError: Effect.die,
             SandboxError: Effect.die,
+            // A Conversation it just created is never missing or archived.
+            ConversationNotFound: Effect.die,
+            ConversationArchived: Effect.die,
           })
         )
       )
       .handle("send", ({ params, payload }) =>
+        conversations.send(params.id, payload.prompt).pipe(
+          Effect.catchTags({
+            AgentError: Effect.die,
+            SandboxError: Effect.die,
+          })
+        )
+      )
+      .handle("resume", ({ params }) =>
+        conversations.resume(params.id).pipe(
+          Effect.catchTags({
+            AgentError: Effect.die,
+            SandboxError: Effect.die,
+          })
+        )
+      )
+      .handle("pause", ({ params }) =>
         conversations
-          .send(params.id, payload.prompt)
+          .pause(params.id)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("stop", ({ params }) =>
+        conversations
+          .stop(params.id)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("archive", ({ params }) =>
+        conversations.archive(params.id).pipe(
+          Effect.catchTags({
+            AgentError: Effect.die,
+            SandboxError: Effect.die,
+          })
+        )
+      )
+      .handle("unarchive", ({ params }) =>
+        conversations
+          .unarchive(params.id)
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
       .handle("events", ({ params }) =>
@@ -40,7 +77,6 @@ const ConversationsHandlers = HttpApiBuilder.group(
           Effect.catchTag("AgentError", Effect.die)
         )
       )
-      .handle("end", ({ params }) => conversations.end(params.id))
       .handle("approvals", ({ params, payload }) =>
         conversations
           .decide(params.id, payload.key, payload.decision)
@@ -57,10 +93,12 @@ const InfoHandlers = HttpApiBuilder.group(
       capabilities,
       model: { provider, modelId },
     } = yield* Agents;
+    const { capacity } = yield* Conversations;
     const model = `${provider}/${modelId}`;
     return handlers
       .handle("get", () => Effect.succeed({ model }))
-      .handle("capabilities", () => capabilities);
+      .handle("capabilities", () => capabilities)
+      .handle("capacity", () => capacity);
   })
 );
 

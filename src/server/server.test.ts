@@ -183,7 +183,7 @@ describe("HTTP API", () => {
     expect(JSON.stringify(events)).toContain("Paris.");
   });
 
-  it("lists, sends to and ends conversations", async () => {
+  it("lists, sends to, pauses, resumes and archives conversations", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const client = yield* HttpApiClient.make(Api);
@@ -191,23 +191,37 @@ describe("HTTP API", () => {
           payload: { sandbox: "shell", prompt: "hello" },
         });
         const listed = yield* client.conversations.list();
-        expect(listed.map((c) => c.id)).toStrictEqual([created.id]);
-        expect(listed[0]?.title).toBe("hello");
+        expect(listed.map((c) => [c.id, c.title])).toStrictEqual([
+          [created.id, "hello"],
+        ]);
         yield* client.conversations.send({
           params: { id: created.id },
           payload: { prompt: "again" },
         });
-        yield* client.conversations.end({ params: { id: created.id } });
-        // Ended conversations stay listed.
+        // Stop returns once nothing runs, so the Pause is immediate.
+        yield* client.conversations.stop({ params: { id: created.id } });
+        yield* client.conversations.pause({ params: { id: created.id } });
+        const statusOf = client.conversations
+          .list()
+          .pipe(Effect.map((all) => all.map((c) => [c.id, c.status])));
+        expect(yield* statusOf).toStrictEqual([[created.id, "paused"]]);
+        const capacity = yield* client.info.capacity();
         expect(
-          (yield* client.conversations.list()).map((c) => [
-            c.id,
-            c.status,
-            c.endedReason,
-          ])
-        ).toStrictEqual([[created.id, "ended", "ended"]]);
-        const info = yield* client.info.get();
-        expect(info.model).toBe("faux/faux-1");
+          capacity.every((each) => each.holders.length === 0)
+        ).toBeTruthy();
+        const resumed = yield* client.conversations.resume({
+          params: { id: created.id },
+        });
+        expect([resumed.status, resumed.sandboxId === undefined]).toStrictEqual(
+          ["idle", false]
+        );
+        yield* client.conversations.archive({ params: { id: created.id } });
+        const archived = yield* statusOf;
+        yield* client.conversations.unarchive({ params: { id: created.id } });
+        expect([archived, yield* statusOf]).toStrictEqual([
+          [[created.id, "archived"]],
+          [[created.id, "paused"]],
+        ]);
       }).pipe(
         Effect.provide(
           server([
@@ -219,12 +233,23 @@ describe("HTTP API", () => {
     );
   });
 
-  it("answers 404 for unknown conversations and 409 past the sandbox cap", async () => {
+  it("reports the model", async () => {
+    const info = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        return yield* client.info.get();
+      }).pipe(Effect.provide(server([])))
+    );
+
+    expect(info.model).toBe("faux/faux-1");
+  });
+
+  it("answers 404 for unknown conversations and 409 at a Capacity limit", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const client = yield* HttpApiClient.make(Api);
         const missing = yield* Effect.exit(
-          client.conversations.end({ params: { id: 424_242 } })
+          client.conversations.pause({ params: { id: 424_242 } })
         );
         expect(Exit.isFailure(missing)).toBeTruthy();
         expect(JSON.stringify(missing)).toContain("ConversationNotFound");

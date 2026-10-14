@@ -43,7 +43,7 @@ const sessionOfRun = async () => {
     )
   );
   return spans
-    .find((span) => span.name === "AgentConversation.ask")
+    .find((span) => span.name === "Seat.ask")
     ?.attributes.get("langfuse.session.id");
 };
 
@@ -63,10 +63,10 @@ describe("agent tracing", () => {
     );
 
     expect(tree(spans)).toStrictEqual([
-      "AgentConversation.ask < -",
-      "generation < AgentConversation.ask",
-      "tool calculate < AgentConversation.ask",
-      "generation < AgentConversation.ask",
+      "Seat.ask < -",
+      "generation < Seat.ask",
+      "tool calculate < Seat.ask",
+      "generation < Seat.ask",
     ]);
     const [askSpan, firstRequest, toolCall] = spans.filter(
       (span) => !span.name.startsWith("Agents.")

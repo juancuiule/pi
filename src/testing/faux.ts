@@ -11,6 +11,7 @@ import type { Storage } from "@earendil-works/pi-durable";
 import { Effect, Layer } from "effect";
 
 import { Agents } from "../agents/agents.ts";
+import type { ApprovalPolicy } from "../approvals.ts";
 import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { Skills } from "../skills/skills.ts";
@@ -52,14 +53,29 @@ export const fauxAgents = (
   };
 };
 
-/** Start a conversation with the given sandbox, ask one prompt, and end it. */
+/** Record a Conversation and give it a Seat until the scope closes. */
+export const openSeat = (
+  options: {
+    readonly sandbox?: SandboxChoice;
+    readonly approvals?: ApprovalPolicy;
+  } = {}
+) =>
+  Effect.gen(function* () {
+    const agents = yield* Agents;
+    const id = yield* agents.create({
+      prompt: "",
+      title: "",
+      level: options.sandbox ?? "none",
+      createdAt: Date.now(),
+      approvals: options.approvals,
+    });
+    return yield* agents.open(id);
+  });
+
+/** Open a Seat at the given Level, ask one prompt, and end the Seat. */
 export const ask = (prompt: string, sandbox: SandboxChoice = "none") =>
   Effect.scoped(
-    Effect.gen(function* () {
-      const agents = yield* Agents;
-      const conversation = yield* agents.start({ sandbox });
-      return yield* conversation.ask(prompt);
-    })
+    openSeat({ sandbox }).pipe(Effect.flatMap((seat) => seat.ask(prompt)))
   );
 
 /** A model turn that calls one tool. */

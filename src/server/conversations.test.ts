@@ -74,40 +74,131 @@ describe(Conversations, () => {
     expect(listed[0]?.sandbox).toBe("none");
   });
 
-  it("ends a conversation, removing its sandbox", async () => {
-    const { layer, sandboxes } = setup([answer("ok")]);
+  it("pauses an idle Conversation, freeing its Sandbox, and a send resumes it with its files", async () => {
+    const { layer, sandboxes } = setup([
+      callTool("bash", { command: "echo kept > note.txt" }),
+      echoToolResult,
+      callTool("bash", { command: "cat note.txt" }),
+      echoToolResult,
+    ]);
 
-    const exit = await Effect.runPromise(
+    const { paused, resumed } = await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
           sandbox: "shell",
-          prompt: "hello",
+          prompt: "leave a note",
         });
-        expect(sandboxes.live.size).toBe(1);
-        yield* conversations.end(created.id);
+        const current = conversations.list.pipe(
+          Effect.map((all) => all.find((c) => c.id === created.id))
+        );
+        yield* waitUntil(current.pipe(Effect.map((c) => c?.status === "idle")));
+        yield* conversations.pause(created.id);
         expect(sandboxes.live.size).toBe(0);
-        // Ended conversations stay listed: no longer live, never resumable.
-        const listed = yield* conversations.list;
-        expect(listed).toHaveLength(1);
-        expect(listed[0]?.status).toBe("ended");
-        expect(listed[0]?.endedReason).toBe("ended");
-        return yield* Effect.exit(conversations.send(created.id, "again"));
+        const pausedSummary = yield* current;
+        yield* conversations.send(created.id, "read it");
+        yield* waitUntil(
+          conversations.events(created.id).pipe(
+            Effect.flatMap((events) => events.pipe(Stream.runHead)),
+            Effect.map(
+              (head) =>
+                head._tag === "Some" &&
+                head.value.type === "snapshot" &&
+                JSON.stringify(head.value.entries).includes("kept") &&
+                head.value.run === undefined &&
+                head.value.entries.length >= 8
+            )
+          )
+        );
+        return { paused: pausedSummary, resumed: yield* current };
       }).pipe(Effect.provide(layer))
     );
 
-    expect(Exit.isFailure(exit)).toBeTruthy();
-    expect(JSON.stringify(exit)).toContain("ConversationEnded");
-  });
+    expect(paused?.status).toBe("paused");
+    expect(paused?.sandboxId).toBeUndefined();
+    expect(resumed?.status).not.toBe("paused");
+    expect(resumed?.sandboxId).toBeDefined();
+  }, 30_000);
 
-  it("ends a running conversation, stopping its run before the sandbox goes", async () => {
+  it("pauses a running Conversation once its Run ends", async () => {
+    const { layer, sandboxes, faux } = setup([
+      callTool("bash", { command: "sleep 1" }),
+      echoToolResult,
+    ]);
+
+    const during = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "sleep",
+        });
+        const current = conversations.list.pipe(
+          Effect.map((all) => all.find((c) => c.id === created.id))
+        );
+        yield* waitUntil(
+          current.pipe(Effect.map((c) => c?.status === "running"))
+        );
+        yield* conversations.pause(created.id);
+        const summary = yield* current;
+        yield* waitUntil(
+          current.pipe(Effect.map((c) => c?.status === "paused")),
+          10_000
+        );
+        return summary;
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(during?.status).toBe("running");
+    expect(during?.pausing).toBeTruthy();
+    // The Run finished: its follow-up model turn ran before the Seat closed.
+    expect(faux.state.callCount).toBe(2);
+    expect(sandboxes.live.size).toBe(0);
+  }, 30_000);
+
+  it("cancels a pending Pause when a prompt is sent", async () => {
+    const { layer } = setup([
+      callTool("bash", { command: "sleep 1" }),
+      echoToolResult,
+      answer("still here"),
+    ]);
+
+    const after = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "sleep",
+        });
+        const current = conversations.list.pipe(
+          Effect.map((all) => all.find((c) => c.id === created.id))
+        );
+        yield* waitUntil(
+          current.pipe(Effect.map((c) => c?.status === "running"))
+        );
+        yield* conversations.pause(created.id);
+        yield* conversations.send(created.id, "one more thing");
+        yield* waitUntil(
+          current.pipe(Effect.map((c) => c?.status === "idle")),
+          10_000
+        );
+        yield* Effect.sleep("100 millis");
+        return yield* current;
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(after?.status).toBe("idle");
+    expect(after?.pausing).toBeFalsy();
+  }, 30_000);
+
+  it("stops a Run without waiting for its tool, and keeps the Seat", async () => {
     const { layer, sandboxes, faux } = setup([
       callTool("bash", { command: "sleep 5" }),
       echoToolResult,
     ]);
 
     const started = Date.now();
-    const snapshot = await Effect.runPromise(
+    const after = await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
@@ -123,25 +214,57 @@ describe(Conversations, () => {
         yield* waitUntil(
           Effect.sync(() => faux.getPendingResponseCount() === 1)
         );
-        yield* conversations.end(created.id);
-        expect(sandboxes.live.size).toBe(0);
-        // The harness still knows the conversation; its snapshot shows no run.
-        const events = yield* conversations.events(created.id);
-        return yield* events.pipe(Stream.runHead);
+        yield* conversations.stop(created.id);
+        return (yield* conversations.list)[0];
       }).pipe(Effect.provide(layer))
     );
 
-    expect(snapshot._tag === "Some" && snapshot.value.type).toBe("snapshot");
-    expect(
-      snapshot._tag === "Some" &&
-        snapshot.value.type === "snapshot" &&
-        snapshot.value.run
-    ).toBeUndefined();
-    // The follow-up model turn never ran, and End did not wait for the sleep.
+    expect(after?.status).toBe("idle");
+    // The follow-up model turn never ran, and Stop did not wait for the sleep.
     expect(faux.getPendingResponseCount()).toBe(1);
     expect(faux.state.callCount).toBe(1);
     expect(Date.now() - started).toBeLessThan(5000);
+    // The Seat kept its Sandbox until the layer was torn down.
+    expect(sandboxes.live.size).toBe(0);
   }, 30_000);
+
+  it("archives a Conversation, deleting its files, and unarchives it with an empty Workspace", async () => {
+    const { layer, sandboxes } = setup([answer("ok"), answer("back")]);
+
+    const { archived, refused, unarchived } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "hello",
+        });
+        const current = conversations.list.pipe(
+          Effect.map((all) => all.find((c) => c.id === created.id))
+        );
+        expect(sandboxes.stored.size).toBe(1);
+        yield* conversations.archive(created.id);
+        expect(sandboxes.live.size).toBe(0);
+        expect(sandboxes.stored.size).toBe(0);
+        const archivedSummary = yield* current;
+        const sendExit = yield* Effect.exit(
+          conversations.send(created.id, "again")
+        );
+        yield* conversations.unarchive(created.id);
+        const unarchivedSummary = yield* current;
+        yield* conversations.send(created.id, "again");
+        return {
+          archived: archivedSummary,
+          refused: sendExit,
+          unarchived: unarchivedSummary,
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(archived?.status).toBe("archived");
+    expect(Exit.isFailure(refused)).toBeTruthy();
+    expect(JSON.stringify(refused)).toContain("ConversationArchived");
+    expect(unarchived?.status).toBe("paused");
+  });
 
   it("refuses sandboxes past the cap, even when created concurrently", async () => {
     const { layer } = setup([answer("a"), answer("b"), answer("c")], {
@@ -176,7 +299,29 @@ describe(Conversations, () => {
     expect(exits.at(2)?._tag).toBe("Success");
   });
 
-  it("sweeps idle conversations but never a running one", async () => {
+  it("names the Conversations holding a resource at its limit", async () => {
+    const { layer } = setup([answer("a"), answer("b")], { shells: 1 });
+
+    const { holder, refused } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const first = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "1",
+        });
+        const second = yield* Effect.exit(
+          conversations.create({ sandbox: "shell", prompt: "2" })
+        );
+        return { holder: first.id, refused: second };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(JSON.stringify(refused)).toContain(
+      `"resource":"shell","limit":1,"holders":[${holder}]`
+    );
+  });
+
+  it("sweeps idle Seats to paused, but never a running one", async () => {
     const { layer, sandboxes } = setup(
       [callTool("bash", { command: "sleep 2" }), echoToolResult],
       { idleTimeoutMs: 50, sweepEveryMs: 10 }
@@ -199,14 +344,10 @@ describe(Conversations, () => {
         const during = yield* conversations.list;
         expect(during).toHaveLength(1);
         expect(during[0]?.status).toBe("running");
-        // A swept shell conversation stays listed, ended because its sandbox was removed.
+        // Once idle, it is swept: paused, its Sandbox removed.
         yield* waitUntil(
           conversations.list.pipe(
-            Effect.map(
-              (all) =>
-                all[0]?.status === "ended" &&
-                all[0]?.endedReason === "sandbox_removed"
-            )
+            Effect.map((all) => all[0]?.status === "paused")
           ),
           15_000
         );
@@ -216,8 +357,8 @@ describe(Conversations, () => {
   }, 30_000);
 
   it("does not sweep a new conversation before its first run has ended", async () => {
-    // idleTimeoutMs 0: without the guard, the first sweep would close the
-    // conversation while its status is still the initial "idle".
+    // idleTimeoutMs 0: the first prompt starts the Run in the commit that admits it, so the
+    // first sweep already sees the Seat running.
     const { layer } = setup(
       [callTool("bash", { command: "sleep 1" }), echoToolResult],
       { idleTimeoutMs: 0, sweepEveryMs: 1 }
@@ -228,7 +369,9 @@ describe(Conversations, () => {
         const conversations = yield* Conversations;
         yield* conversations.create({ sandbox: "shell", prompt: "sleep" });
         yield* Effect.sleep("200 millis");
-        expect(yield* conversations.list).toHaveLength(1);
+        const listed = yield* conversations.list;
+        expect(listed).toHaveLength(1);
+        expect(listed[0]?.status).toBe("running");
       }).pipe(Effect.provide(layer))
     );
   }, 30_000);
@@ -261,7 +404,8 @@ describe(Conversations, () => {
           yield* Effect.sleep(`${delay} millis`);
           yield* Fiber.interrupt(fiber);
           for (const summary of yield* conversations.list) {
-            yield* conversations.end(summary.id);
+            yield* conversations.stop(summary.id);
+            yield* conversations.pause(summary.id);
           }
           expect(sandboxes.live.size).toBe(0);
         }

@@ -8,12 +8,24 @@ import { useSendMessage } from "@/lib/queries";
 
 import { Composer } from "./composer";
 
+const hintFor = (running: boolean, paused: boolean): string => {
+  if (running) {
+    return "The agent is working. New messages are queued.";
+  }
+  return paused
+    ? "Paused. Sending a message resumes it."
+    : "Enter to send · Shift+Enter for a new line";
+};
+
 export const MessageInput = ({
   id,
   running,
+  paused = false,
 }: {
   id: number;
   running: boolean;
+  /** Sending resumes a paused conversation first. */
+  paused?: boolean;
 }) => {
   const [prompt, setPrompt] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -44,11 +56,7 @@ export const MessageInput = ({
         pending={send.isPending}
         running={running}
         placeholder="Message the agent"
-        hint={
-          running
-            ? "The agent is working. New messages are queued."
-            : "Enter to send · Shift+Enter for a new line"
-        }
+        hint={hintFor(running, paused)}
         inputRef={textarea}
       />
     </div>

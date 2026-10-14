@@ -17,7 +17,6 @@ import type { AgentError } from "../agents/agents.ts";
 import { Capacity } from "../capacity.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { Conversations } from "./conversations.ts";
-import type { ConversationSummary } from "./conversations.ts";
 
 const defaults = {
   idleTimeoutMs: 60_000,
@@ -91,7 +90,7 @@ const db = () =>
   );
 
 describe("persistent conversations", () => {
-  it("keeps a chat conversation idle and resumable across a restart", async () => {
+  it("keeps a chat conversation paused and resumable across a restart", async () => {
     const file = db();
     let id = -1;
     await Effect.runPromise(
@@ -116,7 +115,7 @@ describe("persistent conversations", () => {
         Effect.gen(function* () {
           const listed = yield* conversations.list;
           const found = listed.find((c) => c.id === id);
-          expect(found?.status).toBe("idle");
+          expect(found?.status).toBe("paused");
           expect(found?.title).toBe("Say hi");
           // Attach before sending so the run's events are not missed.
           const stream = yield* conversations.events(id);
@@ -133,69 +132,81 @@ describe("persistent conversations", () => {
     );
   });
 
-  it("lists a shell conversation as ended with sandbox_removed after a restart", async () => {
+  it("resumes a shell conversation after a restart, with its Workspace's files", async () => {
+    const file = db();
+    let id = -1;
+    await Effect.runPromise(
+      withStack(
+        file,
+        [callTool("bash", { command: "echo kept > note.txt" }), echoToolResult],
+        (conversations) =>
+          Effect.gen(function* () {
+            ({ id } = yield* conversations.create({
+              sandbox: "shell",
+              prompt: "leave a note",
+            }));
+            yield* waitUntil(
+              conversations.list.pipe(
+                Effect.map((all) => all[0]?.status === "idle")
+              )
+            );
+          })
+      )
+    );
+
+    const result = await Effect.runPromise(
+      withStack(
+        file,
+        [callTool("bash", { command: "cat note.txt" }), echoToolResult],
+        (conversations) =>
+          Effect.gen(function* () {
+            const found = (yield* conversations.list).find((c) => c.id === id);
+            const stream = yield* conversations.events(id);
+            yield* conversations.send(id, "read it");
+            const got = yield* nextAnswer(stream);
+            return { found, got };
+          })
+      )
+    );
+
+    expect(result.found?.status).toBe("paused");
+    expect(result.found?.sandboxId).toBeUndefined();
+    expect(result.got._tag === "Some" && result.got.value).toContain("kept");
+  });
+
+  it("keeps an archived conversation listed across a restart and refuses sends", async () => {
     const file = db();
     let id = -1;
     await Effect.runPromise(
       withStack(file, [answer("ok")], (conversations) =>
         Effect.gen(function* () {
-          const created = yield* conversations.create({
-            sandbox: "shell",
-            prompt: "hello",
-          });
-          ({ id } = created);
-        })
-      )
-    );
-
-    const result = await Effect.runPromise(
-      withStack(file, [answer("unused")], (conversations) =>
-        Effect.gen(function* () {
-          const listed = yield* conversations.list;
-          const found = listed.find(
-            (c): c is ConversationSummary => c.id === id
-          );
-          const exit = yield* Effect.exit(conversations.send(id, "again"));
-          return { found, exit };
-        })
-      )
-    );
-
-    expect(result.found?.status).toBe("ended");
-    expect(result.found?.endedReason).toBe("sandbox_removed");
-    expect(result.found?.sandboxId).toBeUndefined();
-    expect(Exit.isFailure(result.exit)).toBeTruthy();
-    expect(JSON.stringify(result.exit)).toContain("ConversationEnded");
-  });
-
-  it("keeps an ended conversation listed and refuses further sends", async () => {
-    const file = db();
-    const result = await Effect.runPromise(
-      withStack(file, [answer("ok")], (conversations) =>
-        Effect.gen(function* () {
-          const created = yield* conversations.create({
+          ({ id } = yield* conversations.create({
             sandbox: "none",
             prompt: "hi",
-          });
-          yield* conversations.end(created.id);
+          }));
+          yield* conversations.archive(id);
+          // Archiving twice is a no-op.
+          yield* conversations.archive(id);
+        })
+      )
+    );
+
+    const result = await Effect.runPromise(
+      withStack(file, [], (conversations) =>
+        Effect.gen(function* () {
           const listed = yield* conversations.list;
-          const sendExit = yield* Effect.exit(
-            conversations.send(created.id, "again")
-          );
-          // Ending twice is a no-op.
-          yield* conversations.end(created.id);
+          const sendExit = yield* Effect.exit(conversations.send(id, "again"));
           return { listed, sendExit };
         })
       )
     );
 
-    expect(result.listed[0]?.status).toBe("ended");
-    expect(result.listed[0]?.endedReason).toBe("ended");
+    expect(result.listed[0]?.status).toBe("archived");
     expect(Exit.isFailure(result.sendExit)).toBeTruthy();
-    expect(JSON.stringify(result.sendExit)).toContain("ConversationEnded");
+    expect(JSON.stringify(result.sendExit)).toContain("ConversationArchived");
   });
 
-  it("sweeps an idle chat conversation dormant and a shell one to sandbox_removed", async () => {
+  it("sweeps idle chat and shell conversations to paused", async () => {
     const file = db();
     const listed = await Effect.runPromise(
       withStack(
@@ -203,26 +214,11 @@ describe("persistent conversations", () => {
         [answer("a"), answer("b")],
         (conversations) =>
           Effect.gen(function* () {
-            yield* conversations.create({
-              sandbox: "none",
-              prompt: "chat",
-            });
-            const shell = yield* conversations.create({
-              sandbox: "shell",
-              prompt: "shell",
-            });
+            yield* conversations.create({ sandbox: "none", prompt: "chat" });
+            yield* conversations.create({ sandbox: "shell", prompt: "shell" });
             yield* waitUntil(
               conversations.list.pipe(
-                Effect.map((all) => all.every((c) => c.status === "idle"))
-              )
-            );
-            // Both get swept; the chat one stays listed as idle.
-            yield* waitUntil(
-              conversations.list.pipe(
-                Effect.map(
-                  (all) =>
-                    all.find((c) => c.id === shell.id)?.status === "ended"
-                )
+                Effect.map((all) => all.every((c) => c.status === "paused"))
               ),
               15_000
             );
@@ -232,14 +228,10 @@ describe("persistent conversations", () => {
       )
     );
 
-    const chatSummary = listed.find((c) => c.title === "chat");
-    const shellSummary = listed.find((c) => c.title === "shell");
-    expect(chatSummary?.status).toBe("idle");
-    expect(shellSummary?.status).toBe("ended");
-    expect(shellSummary?.endedReason).toBe("sandbox_removed");
+    expect(listed.map((c) => c.status)).toStrictEqual(["paused", "paused"]);
   }, 30_000);
 
-  it("handles two sends racing to resume the same dormant chat", async () => {
+  it("handles two sends racing to resume the same paused chat", async () => {
     const file = db();
     let id = -1;
     await Effect.runPromise(
@@ -340,7 +332,7 @@ describe("persistent conversations", () => {
       withStack(file, [], (conversations, faux) =>
         Effect.gen(function* () {
           const listed = yield* conversations.list;
-          expect(listed.find((c) => c.id === id)?.status).not.toBe("running");
+          expect(listed.find((c) => c.id === id)?.status).toBe("paused");
           yield* Effect.sleep("300 millis");
           expect(faux.state.callCount).toBe(0);
         })

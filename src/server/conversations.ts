@@ -1,7 +1,7 @@
-// The server's conversations. Live ones own a Scope holding their sandbox and the fiber that tracks
-// their status; ended, swept or restarted ones are stored metadata that stays listed. Ending,
-// sweeping or tearing down the layer closes a live scope; a stored chat conversation can be resumed
-// by `send`, which attaches it in a fresh scope.
+// The server's Conversations: which have Seats (see GLOSSARY.md), and when that changes. A Seat owns a Scope holding
+// its Capacity claim, its Sandbox and the fiber that tracks whether a Run is going. Pause closes that scope; the
+// Conversation and its Workspace's files stay, and `send` or `resume` gives it a new Seat. Every Conversation is
+// paused after a restart.
 import type { AgentEvent, ConversationId } from "@earendil-works/pi-durable";
 import {
   Clock,
@@ -16,20 +16,19 @@ import {
 } from "effect";
 
 import { Agents } from "../agents/agents.ts";
-import type { AgentConversation, AgentError } from "../agents/agents.ts";
+import type { AgentError, Seat } from "../agents/agents.ts";
 import { Capacity } from "../capacity.ts";
-import type { Resource } from "../capacity.ts";
-import type { ConversationMeta } from "../conversation-meta.ts";
-import { ConversationEnded, ConversationNotFound } from "../errors.ts";
+import type { Resource, Usage } from "../capacity.ts";
+import type { StoredConversation } from "../conversation-meta.ts";
+import { ApprovalNotFound, ConversationArchived } from "../errors.ts";
 import type {
-  ApprovalNotFound,
   CapacityExhausted,
+  ConversationNotFound,
   SkillNotFound,
 } from "../errors.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 
-export type ConversationStatus = "running" | "idle" | "ended";
-export type EndedReason = "ended" | "sandbox_removed";
+export type ConversationStatus = "running" | "idle" | "paused" | "archived";
 
 export interface ConversationSummary {
   readonly id: number;
@@ -38,8 +37,9 @@ export interface ConversationSummary {
   readonly vncUrl?: string;
   readonly title: string;
   readonly status: ConversationStatus;
-  readonly endedReason?: EndedReason;
-  /** Calls waiting for an approval decision; live conversations only. */
+  /** True while a Pause waits for the current Run to end. */
+  readonly pausing: boolean;
+  /** Calls waiting for an approval decision; only a Seat has any. */
   readonly pendingApprovals: number;
   readonly createdAt: number;
 }
@@ -53,119 +53,95 @@ export const titleOf = (prompt: string): string => {
     : `${line.slice(0, TITLE_LENGTH - 1)}…`;
 };
 
+/** A Conversation with a Seat. */
 interface Live {
-  readonly conversation: AgentConversation;
+  readonly seat: Seat;
   readonly scope: Scope.Closeable;
-  readonly meta: {
-    readonly title: string;
-    readonly sandbox: SandboxChoice;
-    readonly createdAt: number;
-  };
-  status: ConversationStatus;
+  running: boolean;
+  /**
+   * Set by a send until the watch reports a Run: the watch's earlier values predate the send, so a `false` among
+   * them does not mean its Run ended.
+   */
+  awaiting: boolean;
+  /** Set by Pause during a Run: the Seat closes once the Run ends, unless a `send` comes first. */
+  pausing: boolean;
   lastActivity: number;
-  /** True from registration until the first run ends: `status` is still "idle" until `run_start` is consumed. */
-  firstRunPending: boolean;
   /** Held by sends and by `close`, so no send is admitted after the scope starts closing. */
   readonly lock: Semaphore.Semaphore;
 }
 
-/** A stored conversation: metadata only, no live scope. */
-interface Stored {
-  readonly meta: ConversationMeta;
-}
+const asId = (id: number) => id as ConversationId;
 
-const summaryOfLive = (id: number, live: Live): ConversationSummary => ({
-  id,
-  sandbox: live.meta.sandbox,
-  ...(live.conversation.sandbox === undefined
-    ? {}
-    : { sandboxId: live.conversation.sandbox.id }),
-  ...(live.conversation.sandbox?.vncUrl === undefined
-    ? {}
-    : { vncUrl: live.conversation.sandbox.vncUrl }),
-  title: live.meta.title,
-  status: live.status,
-  pendingApprovals: 0,
-  createdAt: live.meta.createdAt,
-});
+// A Seat takes a `seat`, and a sandbox Level's resource too.
+const resourcesFor = (level: SandboxChoice): readonly Resource[] =>
+  level === "none" ? ["seat"] : ["seat", level];
 
-// Stored rules: explicitly ended wins; a conversation whose sandbox is gone can never run again;
-// a chat conversation (`sandbox: "none"`) is only dormant — `send` re-attaches it.
-const summaryOfStored = (id: number, stored: Stored): ConversationSummary => {
-  const ended = stored.meta.endedAt !== undefined;
-  const sandboxRemoved = !ended && stored.meta.sandbox !== "none";
+const summaryOf = (
+  stored: StoredConversation,
+  live: Live | undefined,
+  pendingApprovals: number
+): ConversationSummary => {
+  const sandbox = live?.seat.sandbox;
+  let status: ConversationStatus = live?.running ? "running" : "idle";
+  if (live === undefined) {
+    status = stored.meta.archivedAt === undefined ? "paused" : "archived";
+  }
   return {
-    id,
-    sandbox: stored.meta.sandbox,
+    id: Number(stored.id),
+    sandbox: stored.level,
+    ...(sandbox === undefined ? {} : { sandboxId: sandbox.id }),
+    ...(sandbox?.vncUrl === undefined ? {} : { vncUrl: sandbox.vncUrl }),
     title: stored.meta.title,
-    status: ended || sandboxRemoved ? "ended" : "idle",
-    pendingApprovals: 0,
-    ...(ended || sandboxRemoved
-      ? { endedReason: ended ? "ended" : "sandbox_removed" }
-      : {}),
+    status,
+    pausing: live?.pausing ?? false,
+    pendingApprovals,
     createdAt: stored.meta.createdAt,
   };
 };
 
-const statusAfter = (
-  status: ConversationStatus,
-  event: AgentEvent
-): ConversationStatus => {
-  switch (event.type) {
-    case "snapshot": {
-      return event.run === undefined ? "idle" : "running";
-    }
-    case "run_start": {
-      return "running";
-    }
-    case "run_end": {
-      return "idle";
-    }
-    default: {
-      return status;
-    }
-  }
-};
-
-// A Seat takes a `seat`, and a sandbox Level's resource too.
-const resourcesFor = (sandbox: SandboxChoice): readonly Resource[] =>
-  sandbox === "none" ? ["seat"] : ["seat", sandbox];
+type SeatError =
+  | AgentError
+  | SandboxError
+  | CapacityExhausted
+  | ConversationNotFound
+  | ConversationArchived;
 
 export class Conversations extends Context.Service<
   Conversations,
   {
-    /** Start a conversation in a new sandbox and send its first prompt. */
+    /** Record a Conversation, give it a Seat and send its first prompt. */
     create(input: {
       readonly sandbox: SandboxChoice;
       readonly prompt: string;
-      readonly approvals?: "ask" | "auto";
-    }): Effect.Effect<
-      ConversationSummary,
-      AgentError | SandboxError | CapacityExhausted | SkillNotFound
-    >;
+      readonly approvals?: "ask" | "auto" | undefined;
+    }): Effect.Effect<ConversationSummary, SeatError | SkillNotFound>;
     readonly list: Effect.Effect<readonly ConversationSummary[], AgentError>;
-    /** Send to a live conversation, resume a dormant chat one, or reject an ended one. */
+    /** Send a prompt, resuming a paused Conversation first; a pending Pause is cancelled. */
     send(
       id: number,
       prompt: string
-    ): Effect.Effect<
-      void,
-      | AgentError
-      | CapacityExhausted
-      | ConversationNotFound
-      | ConversationEnded
-      | SkillNotFound
-    >;
-    /** Events of any conversation the harness knows, including a stored one's. */
+    ): Effect.Effect<void, SeatError | SkillNotFound>;
+    /** Give a paused Conversation a Seat; for one that has a Seat, cancel a Pause waiting for its Run. */
+    resume(id: number): Effect.Effect<ConversationSummary, SeatError>;
+    /** Free a Conversation's Seat: at once when idle, otherwise once the current Run ends. */
+    pause(id: number): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Abort the current Run; the Seat stays, unless a Pause was waiting for the Run to end. */
+    stop(id: number): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Stop and pause a Conversation, then archive it, deleting its Workspace's files. */
+    archive(
+      id: number
+    ): Effect.Effect<void, AgentError | SandboxError | ConversationNotFound>;
+    unarchive(
+      id: number
+    ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Events of any Conversation, with a Seat or not. */
     events(
       id: number
     ): Effect.Effect<
       Stream.Stream<AgentEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
-    /** End a conversation and remove its sandbox; it stays listed as ended. */
-    end(id: number): Effect.Effect<void, ConversationNotFound>;
-    /** Decide a pending tool call; `id` is the top-level conversation, `key` names the call. */
+    /** Decide a call waiting for approval; only a Seat has any, so without one every key is unknown. */
     decide(
       id: number,
       key: string,
@@ -174,6 +150,8 @@ export class Conversations extends Context.Service<
       void,
       AgentError | ConversationNotFound | ApprovalNotFound
     >;
+    /** Each resource's limit and holders, for choosing a Seat to free. */
+    readonly capacity: Effect.Effect<readonly Usage[]>;
   }
 >()("effect-pi/Conversations") {
   static readonly layer = (options: {
@@ -186,19 +164,10 @@ export class Conversations extends Context.Service<
         const agents = yield* Agents;
         const capacity = yield* Capacity;
         const live = new Map<number, Live>();
-        const stored = new Map<number, Stored>();
-
-        // Every persisted conversation that is not live right now.
-        for (const record of yield* agents.stored) {
-          stored.set(Number(record.id), { meta: record.meta });
-        }
-
         const layerScope = yield* Scope.Scope;
 
-        // Move a live entry to the stored map once its scope is closed. `endedAt` marks an explicit
-        // end; a swept or closed conversation keeps its meta and stays resumable (chat) or dead
-        // (sandbox removed by the finalizer).
-        const close = (id: number, endedAt?: number) =>
+        // End a Seat: its scope closes, which aborts the conversation, removes its Sandbox and releases its claim.
+        const close = (id: number) =>
           Effect.suspend(() => {
             const entry = live.get(id);
             if (entry === undefined) {
@@ -209,260 +178,251 @@ export class Conversations extends Context.Service<
                 return Effect.void;
               }
               live.delete(id);
-              stored.set(id, {
-                meta: {
-                  ...entry.meta,
-                  ...(endedAt === undefined ? {} : { endedAt }),
-                },
-              });
               return Scope.close(entry.scope, Exit.void);
             }).pipe(entry.lock.withPermit);
           });
 
-        // Submit to a live entry unless `close` got to it first; `false` means it is no longer live.
+        // Submit to a Seat unless `close` got to it first; `false` means it has no Seat any more.
         const sendLive = (id: number, entry: Live, prompt: string) =>
-          Effect.suspend(() =>
-            live.get(id) === entry
-              ? entry.conversation.send(prompt).pipe(Effect.as(true))
-              : Effect.succeed(false)
-          ).pipe(entry.lock.withPermit);
+          Effect.suspend(() => {
+            if (live.get(id) !== entry) {
+              return Effect.succeed(false);
+            }
+            entry.pausing = false;
+            return entry.seat.send(prompt).pipe(
+              Effect.andThen(Clock.currentTimeMillis),
+              Effect.map((now) => {
+                // A submit starts a Run in the commit that admits it, or queues behind the one going; the
+                // watch reports it later.
+                entry.running = true;
+                entry.awaiting = true;
+                entry.lastActivity = now;
+                return true;
+              })
+            );
+          }).pipe(entry.lock.withPermit);
 
-        // Register a live entry and start the fiber that tracks its status; the same steps `create`
-        // takes after `start` and `send` takes after `attach`.
-        const track = Effect.fn("Conversations.track")(function* (
-          created: Live
-        ) {
-          // The conversation exists, so `events` always finds it.
-          const events = yield* agents
-            .events(created.conversation.id)
-            .pipe(Effect.orDie);
-          yield* events.pipe(
-            Stream.runForEach((event) =>
+        // Register a Seat and track whether a Run is going; a Pause waiting for the Run closes it when it ends.
+        const register = Effect.fnUntraced(function* (id: number, entry: Live) {
+          live.set(id, entry);
+          const running = yield* entry.seat.running.pipe(Effect.orDie);
+          yield* running.pipe(
+            Stream.runForEach((value) =>
               Effect.gen(function* () {
-                const time = yield* Clock.currentTimeMillis;
-                created.status = statusAfter(created.status, event);
-                if (event.type === "run_end") {
-                  created.firstRunPending = false;
+                entry.lastActivity = yield* Clock.currentTimeMillis;
+                if (value) {
+                  entry.awaiting = false;
+                } else if (entry.awaiting) {
+                  return;
                 }
-                created.lastActivity = time;
+                entry.running = value;
+                if (!value && entry.pausing) {
+                  // Forked into the layer's scope: closing the Seat's own scope interrupts this fiber.
+                  yield* close(id).pipe(Effect.forkIn(layerScope));
+                }
               })
             ),
             Effect.ignore,
-            Effect.forkIn(created.scope)
+            Effect.forkIn(entry.scope)
           );
         });
+
+        // Claim, open and register cannot be interrupted between steps, or a Sandbox would leak; only the claim
+        // and `open` may be interrupted, and then the scope, with the claim and the Sandbox, is closed here.
+        const seatIn = <E>(
+          level: SandboxChoice,
+          acquire: (
+            claimed: (id: number) => Effect.Effect<void>
+          ) => Effect.Effect<
+            { readonly id: number; readonly seat: Seat },
+            E,
+            Scope.Scope
+          >
+        ) =>
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              // Forked from the layer's scope, so tearing the layer down closes it even mid-open.
+              const scope = yield* Scope.fork(layerScope);
+              const opened = yield* Effect.exit(
+                restore(
+                  Effect.gen(function* () {
+                    const claim = yield* capacity.claim(resourcesFor(level));
+                    return yield* acquire(claim.assign);
+                  }).pipe(Scope.provide(scope))
+                )
+              );
+              if (Exit.isFailure(opened)) {
+                yield* Scope.close(scope, Exit.void);
+                return yield* Effect.failCause(opened.cause);
+              }
+              const { id, seat } = opened.value;
+              const entry: Live = {
+                seat,
+                scope,
+                running: false,
+                awaiting: false,
+                pausing: false,
+                lastActivity: yield* Clock.currentTimeMillis,
+                lock: yield* Semaphore.make(1),
+              };
+              yield* register(id, entry);
+              return { id, entry };
+            })
+          );
 
         const create = Effect.fn("Conversations.create")(function* (input: {
           readonly sandbox: SandboxChoice;
           readonly prompt: string;
-          readonly approvals?: "ask" | "auto";
+          readonly approvals?: "ask" | "auto" | undefined;
         }) {
-          // Expanded first, so an unknown skill reserves and creates nothing. The title is the prompt as typed.
-          const prompt = yield* agents.expandSkill(input.prompt);
-          // Claim, start and register cannot be interrupted between steps, or a sandbox would leak; only
-          // `start` itself may be interrupted, and then its scope, with the claim, is closed here.
-          return yield* Effect.uninterruptibleMask((restore) =>
+          const { id, entry } = yield* seatIn(input.sandbox, (claimed) =>
             Effect.gen(function* () {
-              const now = yield* Clock.currentTimeMillis;
-              const title = titleOf(input.prompt);
-              // Forked from the layer's scope, so tearing the layer down closes it even mid-create.
-              const scope = yield* Scope.fork(layerScope);
-              // Claimed first, so a create at a limit creates nothing.
-              const claimed = yield* Effect.exit(
-                capacity
-                  .claim(resourcesFor(input.sandbox))
-                  .pipe(Scope.provide(scope))
-              );
-              if (Exit.isFailure(claimed)) {
-                yield* Scope.close(scope, Exit.void);
-                return yield* Effect.failCause(claimed.cause);
-              }
-              const started = yield* Effect.exit(
-                restore(
-                  agents
-                    .start({
-                      sandbox: input.sandbox,
-                      title,
-                      createdAt: now,
-                      ...(input.approvals === undefined
-                        ? {}
-                        : { approvals: input.approvals }),
-                    })
-                    .pipe(Scope.provide(scope))
-                )
-              );
-              if (Exit.isFailure(started)) {
-                yield* Scope.close(scope, Exit.void);
-                return yield* Effect.failCause(started.cause);
-              }
-              const conversation = started.value;
-              const created: Live = {
-                conversation,
-                scope,
-                meta: {
-                  title,
-                  sandbox: input.sandbox,
-                  createdAt: now,
-                },
-                status: "idle",
-                lastActivity: now,
-                firstRunPending: true,
-                lock: yield* Semaphore.make(1),
+              // Claimed first, so a create at a limit records nothing. The title is the prompt as typed.
+              const created = yield* agents.create({
+                prompt: input.prompt,
+                title: titleOf(input.prompt),
+                level: input.sandbox,
+                createdAt: yield* Clock.currentTimeMillis,
+                approvals: input.approvals,
+              });
+              yield* claimed(Number(created));
+              return {
+                id: Number(created),
+                seat: yield* agents.open(created),
               };
-              const id = Number(conversation.id);
-              yield* claimed.value.assign(id);
-              live.set(id, created);
-              stored.delete(id);
-              // A failure from here on must not leave the conversation, and its sandbox, registered. The
-              // conversation is already persisted and cannot be deleted, so it is marked ended: it stays
-              // listed as ended instead of as a resumable chat that never got its first prompt.
-              return yield* restore(
-                Effect.gen(function* () {
-                  yield* track(created);
-                  yield* sendLive(id, created, prompt);
-                  return summaryOfLive(id, created);
-                })
-              ).pipe(
-                Effect.onError(() =>
-                  Effect.gen(function* () {
-                    const endedAt = yield* Clock.currentTimeMillis;
-                    yield* close(id, endedAt);
-                    yield* Effect.ignore(
-                      agents.markEnded(id as ConversationId, endedAt)
-                    );
-                  })
-                )
-              );
             })
           );
+          // A Seat whose first prompt cannot be sent is paused: the Conversation stays, resumable.
+          yield* sendLive(id, entry, input.prompt).pipe(
+            Effect.onError(() => close(id))
+          );
+          const stored = yield* agents.get(asId(id));
+          return summaryOf(stored, entry, 0);
         });
 
-        // Resumes run one at a time. Two sends can race to resume the same dormant conversation, and
-        // a second attach could not simply be discarded: closing its scope aborts the conversation,
-        // including the run the first send just started.
+        // Resumes run one at a time. Two sends can race to resume the same Conversation, and a second Seat
+        // could not simply be discarded: closing its scope aborts the conversation, including the Run the
+        // first send just started.
         const resuming = yield* Semaphore.make(1);
 
-        // A stored chat conversation comes back live: attach it in a scope forked from the layer's.
-        const resume = Effect.fn("Conversations.resume")(function* (
-          id: number,
-          entry: Stored
-        ) {
-          return yield* Effect.uninterruptibleMask((restore) =>
-            Effect.gen(function* () {
-              const existing = live.get(id);
-              if (existing !== undefined) {
-                return existing;
+        const seatOf = (id: number) =>
+          Effect.suspend(() => {
+            const existing = live.get(id);
+            if (existing !== undefined) {
+              return Effect.succeed(existing);
+            }
+            return Effect.gen(function* () {
+              const stored = yield* agents.get(asId(id));
+              if (stored.meta.archivedAt !== undefined) {
+                return yield* new ConversationArchived({ id });
               }
-              const scope = yield* Scope.fork(layerScope);
-              const attached = yield* Effect.exit(
-                restore(
-                  Effect.gen(function* () {
-                    const claim = yield* capacity.claim(
-                      resourcesFor(entry.meta.sandbox)
-                    );
-                    yield* claim.assign(id);
-                    return yield* agents.attach(id as ConversationId);
-                  }).pipe(Scope.provide(scope))
-                )
+              const { entry } = yield* seatIn(stored.level, (claimed) =>
+                Effect.gen(function* () {
+                  yield* claimed(id);
+                  return { id, seat: yield* agents.open(asId(id)) };
+                })
               );
-              if (Exit.isFailure(attached)) {
-                yield* Scope.close(scope, Exit.void);
-                return yield* Effect.failCause(attached.cause);
-              }
-              const now = yield* Clock.currentTimeMillis;
-              const revived: Live = {
-                conversation: attached.value,
-                scope,
-                meta: {
-                  title: entry.meta.title,
-                  sandbox: entry.meta.sandbox,
-                  createdAt: entry.meta.createdAt,
-                },
-                status: "idle",
-                lastActivity: now,
-                firstRunPending: false,
-                lock: yield* Semaphore.make(1),
-              };
-              live.set(id, revived);
-              stored.delete(id);
-              yield* track(revived);
-              return revived;
-            })
-          ).pipe(resuming.withPermit);
-        });
+              return entry;
+            });
+          }).pipe(resuming.withPermit);
 
         const send = Effect.fn("Conversations.send")(function* (
           id: number,
           prompt: string
         ) {
-          const expanded = yield* agents.expandSkill(
-            prompt,
-            id as ConversationId
+          // A Seat that closes while this send waits for it is resumed again: the send is the newer intent.
+          for (let tries = 0; tries < 3; tries += 1) {
+            const entry = yield* seatOf(id);
+            if (yield* sendLive(id, entry, prompt)) {
+              return;
+            }
+          }
+          return yield* Effect.die(
+            new Error(`Conversation ${id} kept losing its Seat`)
           );
-          const liveEntry = live.get(id);
-          // A live entry that closed while this send waited falls through to the stored rules below.
-          if (
-            liveEntry !== undefined &&
-            (yield* sendLive(id, liveEntry, expanded))
-          ) {
-            return;
-          }
-          const storedEntry = stored.get(id);
-          if (storedEntry === undefined) {
-            return yield* new ConversationNotFound({ id });
-          }
-          if (storedEntry.meta.endedAt !== undefined) {
-            return yield* new ConversationEnded({ id, reason: "ended" });
-          }
-          if (storedEntry.meta.sandbox !== "none") {
-            return yield* new ConversationEnded({
-              id,
-              reason: "sandbox_removed",
-            });
-          }
-          const revived = yield* resume(id, storedEntry);
-          if (yield* sendLive(id, revived, expanded)) {
-            return;
-          }
-          // Only End closes a just-resumed conversation (the sweep waits for it to go idle).
-          return yield* new ConversationEnded({ id, reason: "ended" });
         });
 
-        const end = Effect.fn("Conversations.end")(function* (id: number) {
-          const now = yield* Clock.currentTimeMillis;
-          if (live.has(id)) {
-            yield* close(id, now);
-            // The metadata write is best-effort: a failure here is a defect, not a 500 to report.
-            yield* agents
-              .markEnded(id as ConversationId, now)
-              .pipe(Effect.orDie);
+        const resume = Effect.fn("Conversations.resume")(function* (
+          id: number
+        ) {
+          const entry = yield* seatOf(id);
+          // Resuming a Seat whose Pause waits for the Run cancels that Pause.
+          entry.pausing = false;
+          const stored = yield* agents.get(asId(id));
+          return summaryOf(stored, entry, 0);
+        });
+
+        const pause = Effect.fn("Conversations.pause")(function* (id: number) {
+          const entry = live.get(id);
+          if (entry === undefined) {
+            yield* agents.get(asId(id));
             return;
           }
-          const storedEntry = stored.get(id);
-          if (storedEntry === undefined) {
-            return yield* new ConversationNotFound({ id });
+          entry.pausing = true;
+          // Read after setting `pausing`, so a Run ending in between is seen here or by the tracking fiber.
+          if (!entry.running) {
+            yield* close(id);
           }
-          if (storedEntry.meta.endedAt === undefined) {
-            yield* agents
-              .markEnded(id as ConversationId, now)
-              .pipe(Effect.orDie);
-            stored.set(id, {
-              meta: { ...storedEntry.meta, endedAt: now },
-            });
+        });
+
+        const stop = Effect.fn("Conversations.stop")(function* (id: number) {
+          const entry = live.get(id);
+          if (entry === undefined) {
+            yield* agents.get(asId(id));
+            return;
           }
+          yield* entry.seat.stop;
+          // `stop` returns once the conversation is idle; the watch may report it later.
+          entry.running = false;
+          entry.awaiting = false;
+          if (entry.pausing) {
+            yield* close(id);
+          }
+        });
+
+        const archive = Effect.fn("Conversations.archive")(function* (
+          id: number
+        ) {
+          const entry = live.get(id);
+          if (entry !== undefined) {
+            yield* entry.seat.stop;
+            yield* close(id);
+          }
+          yield* agents.archive(asId(id), yield* Clock.currentTimeMillis);
+        });
+
+        const decide = Effect.fn("Conversations.decide")(function* (
+          id: number,
+          key: string,
+          decision: "approve" | "deny" | "always"
+        ) {
+          const entry = live.get(id);
+          if (entry === undefined) {
+            yield* agents.get(asId(id));
+            return yield* new ApprovalNotFound({ key });
+          }
+          yield* entry.seat.decide(key, decision);
+        });
+
+        const list = Effect.gen(function* () {
+          const stored = yield* agents.list;
+          const listed: ConversationSummary[] = [];
+          for (const each of stored) {
+            const entry = live.get(Number(each.id));
+            const pending =
+              entry === undefined ? 0 : yield* entry.seat.pendingApprovals;
+            listed.push(summaryOf(each, entry, pending));
+          }
+          return listed.toSorted((a, b) => b.createdAt - a.createdAt);
         });
 
         const sweep = Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           const idle = [...live.entries()].flatMap(([id, entry]) =>
-            entry.status === "idle" &&
-            !entry.firstRunPending &&
-            now - entry.lastActivity >= options.idleTimeoutMs
+            !entry.running && now - entry.lastActivity >= options.idleTimeoutMs
               ? [id]
               : []
           );
-          // Swept conversations stay stored: chat ones resume on the next `send`, sandbox ones are
-          // `sandbox_removed` from then on.
           yield* Effect.forEach(idle, (id) => close(id), { discard: true });
         });
         yield* sweep.pipe(
@@ -472,31 +432,16 @@ export class Conversations extends Context.Service<
 
         return Conversations.of({
           create,
-          list: Effect.gen(function* () {
-            const listed: ConversationSummary[] = [];
-            for (const [id, entry] of live) {
-              const pending = yield* agents.pendingApprovals(
-                entry.conversation.id
-              );
-              listed.push({
-                ...summaryOfLive(id, entry),
-                pendingApprovals: pending,
-              });
-            }
-            for (const [id, entry] of stored) {
-              listed.push(summaryOfStored(id, entry));
-            }
-            return listed.toSorted((a, b) => b.createdAt - a.createdAt);
-          }),
+          list,
           send,
-          events: (id) => agents.events(id as ConversationId),
-          end,
-          decide: (id, key, decision) => {
-            if (!live.has(id) && !stored.has(id)) {
-              return Effect.fail(new ConversationNotFound({ id }));
-            }
-            return agents.decide(id as ConversationId, key, decision);
-          },
+          resume,
+          pause,
+          stop,
+          archive,
+          unarchive: (id) => agents.unarchive(asId(id)),
+          events: (id) => agents.events(asId(id)),
+          decide,
+          capacity: capacity.usage,
         });
       })
     );

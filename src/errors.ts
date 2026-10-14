@@ -17,9 +17,10 @@ export class CapacityExhausted extends Schema.TaggedError<CapacityExhausted>()(
   }
 ) {}
 
-export class ConversationEnded extends Schema.TaggedError<ConversationEnded>()(
-  "ConversationEnded",
-  { id: Schema.Number, reason: Schema.Literals(["ended", "sandbox_removed"]) }
+/** The Conversation is archived: it can be read, and unarchived, but gets no Seat. */
+export class ConversationArchived extends Schema.TaggedError<ConversationArchived>()(
+  "ConversationArchived",
+  { id: Schema.Number }
 ) {}
 
 export class ApprovalNotFound extends Schema.TaggedError<ApprovalNotFound>()(

@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSummary, SandboxChoice } from "effect-pi/api";
 
 import { runApi } from "./api";
+import { useCapacityGuard } from "./capacity-context";
+import type { CapacityGuard } from "./capacity-context";
 
 const LIST = ["conversations"] as const;
 
@@ -30,14 +32,18 @@ export const useCapabilities = () =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
+/** Every Conversation's summary, fetched now; for waiting on a status change. */
+export const fetchConversations = () => runApi((c) => c.conversations.list());
+
 export const useCreateConversation = () => {
   const queryClient = useQueryClient();
+  const guard = useCapacityGuard();
   return useMutation({
     mutationFn: (payload: {
       sandbox: SandboxChoice;
       prompt: string;
       approvals?: "ask" | "auto";
-    }) => runApi((c) => c.conversations.create({ payload })),
+    }) => guard(() => runApi((c) => c.conversations.create({ payload }))),
     onSuccess: (created: ConversationSummary) => {
       queryClient.setQueryData<readonly ConversationSummary[]>(LIST, (all) => [
         ...(all ?? []),
@@ -47,13 +53,20 @@ export const useCreateConversation = () => {
   });
 };
 
-export const useSendMessage = (id: number) =>
-  useMutation({
+/** Send a prompt; a paused Conversation is resumed first, which can take Capacity. */
+export const useSendMessage = (id: number) => {
+  const queryClient = useQueryClient();
+  const guard = useCapacityGuard();
+  return useMutation({
     mutationFn: (prompt: string) =>
-      runApi((c) =>
-        c.conversations.send({ params: { id }, payload: { prompt } })
+      guard(() =>
+        runApi((c) =>
+          c.conversations.send({ params: { id }, payload: { prompt } })
+        )
       ),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: LIST }),
   });
+};
 
 export const useDecideApproval = (id: number) => {
   const queryClient = useQueryClient();
@@ -66,11 +79,51 @@ export const useDecideApproval = (id: number) => {
   });
 };
 
-export const useEndConversation = () => {
+export type ConversationAction =
+  | "resume"
+  | "pause"
+  | "stop"
+  | "archive"
+  | "unarchive";
+
+const resumeWith = async (guard: CapacityGuard, id: number) => {
+  await guard(() => runApi((c) => c.conversations.resume({ params: { id } })));
+};
+
+/** Resume, Pause, Stop, Archive or Unarchive a Conversation. Resume can take Capacity. */
+export const useConversationAction = () => {
   const queryClient = useQueryClient();
+  const guard = useCapacityGuard();
   return useMutation({
-    mutationFn: (id: number) =>
-      runApi((c) => c.conversations.end({ params: { id } })),
+    mutationFn: ({
+      id,
+      action,
+    }: {
+      id: number;
+      action: ConversationAction;
+    }) => {
+      const params = { params: { id } };
+      switch (action) {
+        case "resume": {
+          return resumeWith(guard, id);
+        }
+        case "pause": {
+          return runApi((c) => c.conversations.pause(params));
+        }
+        case "stop": {
+          return runApi((c) => c.conversations.stop(params));
+        }
+        case "archive": {
+          return runApi((c) => c.conversations.archive(params));
+        }
+        case "unarchive": {
+          return runApi((c) => c.conversations.unarchive(params));
+        }
+        default: {
+          throw new TypeError(`Unknown action: ${action satisfies never}`);
+        }
+      }
+    },
     onSettled: () => queryClient.invalidateQueries({ queryKey: LIST }),
   });
 };

@@ -14,10 +14,11 @@ import { vncViewUrl } from "@/lib/vnc";
 
 export const DesktopPanel = ({
   vncUrl,
-  ended,
+  paused,
 }: {
   vncUrl: string | undefined;
-  ended?: boolean;
+  /** Without a Seat, so without a desktop until it is resumed. */
+  paused?: boolean;
 }) => {
   const [control, setControl] = useState(false);
 
@@ -26,8 +27,8 @@ export const DesktopPanel = ({
       <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4">
         <Monitor className="size-5" />
         <p className="text-sm">
-          {ended
-            ? "The desktop was removed with its sandbox."
+          {paused
+            ? "Paused. The desktop comes back when the conversation resumes."
             : "No desktop view for this sandbox."}
         </p>
       </div>

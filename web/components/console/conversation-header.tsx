@@ -8,19 +8,8 @@ import {
   PanelRight,
   ShieldAlert,
 } from "lucide-react";
-import { useState } from "react";
 import { toast } from "sonner";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -33,26 +22,25 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { apiError } from "@/lib/api";
 import { hasPendingApproval } from "@/lib/approval";
 import type { ConversationState } from "@/lib/conversation-state";
 import { totalUsage } from "@/lib/conversation-state";
 import { exportSlug, toJsonl, toMarkdown } from "@/lib/export";
 import { formatCost, formatTokens } from "@/lib/format";
-import { useEndConversation } from "@/lib/queries";
+import { useConversationAction } from "@/lib/queries";
+import type { ConversationAction } from "@/lib/queries";
 
+import { ConversationActions } from "./conversation-actions";
 import { SandboxBadge } from "./sandbox-badge";
 
 export const ConversationHeader = ({
   conversation,
   state,
-  onEnded,
   onMenu,
   sidePanel,
 }: {
   conversation: ConversationSummary;
   state: ConversationState;
-  onEnded: () => void;
   /** Opens the mobile navigation sheet. */
   onMenu: () => void;
   /** Present when a sandbox side panel can be shown. */
@@ -62,29 +50,18 @@ export const ConversationHeader = ({
     toggle: () => void;
   };
 }) => {
-  const [confirming, setConfirming] = useState(false);
-  const end = useEndConversation();
+  const act = useConversationAction();
   const { tokens, cost } = totalUsage(state.usage);
+  const { status } = conversation;
 
-  const onEnd = () => {
-    end.mutate(conversation.id, {
-      onSuccess: () => {
-        setConfirming(false);
-        onEnded();
-      },
-      onError: (error) => {
-        // Already gone on the server: nothing left to end, so leave the conversation.
-        if (error.message === apiError({ _tag: "ConversationNotFound" })) {
-          setConfirming(false);
-          onEnded();
-        }
-        toast.error(error.message);
-      },
-    });
+  const run = (action: ConversationAction) => {
+    act.mutate(
+      { id: conversation.id, action },
+      { onError: (error) => toast.error(error.message) }
+    );
   };
 
   const hasSandbox = conversation.sandbox !== "none";
-  const ended = conversation.status === "ended";
 
   const handleTogglePanel = () => sidePanel?.toggle();
 
@@ -145,6 +122,21 @@ export const ConversationHeader = ({
           {state.queued > 0 ? (
             <span className="tabular-nums">{state.queued} queued</span>
           ) : null}
+          {status === "paused" ? <span>Paused</span> : null}
+          {status === "archived" ? <span>Archived</span> : null}
+          {conversation.pausing ? (
+            <span className="inline-flex items-center gap-1">
+              Pausing after this run
+              <Button
+                variant="link"
+                size="xs"
+                disabled={act.isPending}
+                onClick={() => run("resume")}
+              >
+                Keep running
+              </Button>
+            </span>
+          ) : null}
           {conversation.pendingApprovals > 0 ? (
             <span className="text-warning inline-flex items-center gap-1">
               <ShieldAlert className="size-3" aria-hidden />
@@ -192,34 +184,7 @@ export const ConversationHeader = ({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      {ended ? null : (
-        <Button
-          variant="destructive"
-          size="sm"
-          disabled={end.isPending}
-          onClick={() => setConfirming(true)}
-        >
-          End
-        </Button>
-      )}
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>End this conversation?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {hasSandbox
-                ? "The agent stops and its sandbox is removed. This can't be undone."
-                : "The agent stops. This can't be undone."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={onEnd}>
-              {end.isPending ? "Ending…" : "End conversation"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConversationActions conversation={conversation} />
     </header>
   );
 };
