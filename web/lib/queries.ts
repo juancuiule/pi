@@ -1,7 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ConversationSummary, SandboxChoice } from "effect-pi/api";
+import type {
+  ApprovalChoice,
+  ConversationSummary,
+  SandboxChoice,
+} from "effect-pi/api";
 
 import { runApi } from "./api";
 import { useCapacityGuard } from "./capacity-context";
@@ -83,10 +87,8 @@ export const useSendMessage = (id: number) => {
 export const useDecideApproval = (id: number) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: {
-      key: string;
-      decision: "approve" | "deny" | "always";
-    }) => runApi((c) => c.conversations.approvals({ params: { id }, payload })),
+    mutationFn: (payload: { key: string; decision: ApprovalChoice }) =>
+      runApi((c) => c.conversations.approvals({ params: { id }, payload })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: LIST }),
   });
 };

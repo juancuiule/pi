@@ -1,7 +1,7 @@
 "use client";
 
 import { Collapsible } from "@base-ui/react/collapsible";
-import type { Message } from "effect-pi/api";
+import type { ApprovalChoice, Message } from "effect-pi/api";
 import {
   Ban,
   Check,
@@ -127,7 +127,7 @@ const Arguments = ({ call }: { call: ToolCallBlock }) => {
 
 const ApprovalActions = ({ approvalKey }: { approvalKey: string }) => {
   const approvalMutation = useApproval();
-  const decide = (decision: "approve" | "deny" | "always") => {
+  const decide = (decision: ApprovalChoice) => {
     approvalMutation?.mutate(
       { key: approvalKey, decision },
       { onError: (error) => toast.error(error.message) }

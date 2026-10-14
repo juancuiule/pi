@@ -19,13 +19,18 @@ export type PendingApproval = {
   readonly requestedAt: number;
 };
 
+/** What a waiting call is told; `stop` is written by `stopWaitingCalls` just before the conversation is aborted. */
+export type ApprovalDecision = "approve" | "deny" | "stop";
+
+/** What the person decides for a waiting call; `always` approves it and turns the policy to `auto`. */
+export type ApprovalChoice = "approve" | "deny" | "always";
+
 // A type, not an interface: it is stored in a pi-durable document, which must be a JSON type.
 // oxlint-disable-next-line typescript/consistent-type-definitions
 export type ApprovalState = {
   policy: ApprovalPolicy;
   pending: Record<string, PendingApproval>;
-  /** `stop` is written by `stopWaitingCalls` just before the conversation is aborted. */
-  decisions: Record<string, "approve" | "deny" | "stop">;
+  decisions: Record<string, ApprovalDecision>;
 };
 
 export const ApprovalDoc = defineDoc<ApprovalState>({
@@ -90,7 +95,7 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => {
       const signal = context.abortSignal;
       // Declared before the try so the finally can always detach the listener and stop the watch.
       let watch: DocumentWatch<ApprovalState> | undefined;
-      const waiting = Promise.withResolvers<"approve" | "deny" | "stop">();
+      const waiting = Promise.withResolvers<ApprovalDecision>();
       const onAbort = () => {
         waiting.reject(
           signal?.reason instanceof Error ? signal.reason : new Error("aborted")
