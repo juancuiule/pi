@@ -7,6 +7,7 @@ import {
   Archive,
   ArchiveRestore,
   ArrowUpCircle,
+  LoaderCircle,
   Pause,
   Play,
   Square,
@@ -39,6 +40,7 @@ import {
 import { upgradesFrom } from "@/lib/capacity";
 import { useConversationAction, useUpgrade } from "@/lib/queries";
 import type { ConversationAction } from "@/lib/queries";
+import { useResuming } from "@/lib/store";
 
 export const ConversationActions = ({
   conversation,
@@ -47,6 +49,7 @@ export const ConversationActions = ({
 }) => {
   const [confirming, setConfirming] = useState(false);
   const act = useConversationAction();
+  const resuming = useResuming(conversation);
   const upgrade = useUpgrade();
   const higher = upgradesFrom(conversation.sandbox);
   const { status } = conversation;
@@ -102,11 +105,15 @@ export const ConversationActions = ({
         <Button
           variant="outline"
           size="sm"
-          disabled={act.isPending}
+          disabled={act.isPending || resuming}
           onClick={() => run("resume")}
         >
-          <Play />
-          Resume
+          {resuming ? (
+            <LoaderCircle className="motion-safe:animate-spin" />
+          ) : (
+            <Play />
+          )}
+          {resuming ? "Resuming…" : "Resume"}
         </Button>
       ) : null}
       {status === "archived" || higher.length === 0 ? null : (

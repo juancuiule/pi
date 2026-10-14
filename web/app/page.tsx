@@ -28,7 +28,7 @@ import {
   useConversations,
   useDecideApproval,
 } from "@/lib/queries";
-import { useConversationStore } from "@/lib/store";
+import { useConversationStore, useResuming } from "@/lib/store";
 import { useConversationEvents } from "@/lib/use-conversation-events";
 import { useMediaQuery } from "@/lib/use-media-query";
 
@@ -91,12 +91,14 @@ const ArchivedNotice = ({ id, onNew }: { id: number; onNew: () => void }) => {
 const Composer = ({
   id,
   running,
+  resuming,
   paused,
   readOnly,
   onNew,
 }: {
   id: number;
   running: boolean;
+  resuming: boolean;
   paused: boolean;
   readOnly: boolean;
   onNew: () => void;
@@ -104,7 +106,12 @@ const Composer = ({
   readOnly ? (
     <ArchivedNotice id={id} onNew={onNew} />
   ) : (
-    <MessageInput id={id} running={running} paused={paused} />
+    <MessageInput
+      id={id}
+      running={running}
+      resuming={resuming}
+      paused={paused}
+    />
   );
 
 const NotFound = ({ onNew }: { onNew: () => void }) => (
@@ -138,6 +145,7 @@ const Console = () => {
   );
   const { data } = useConversations();
   const conversation = data?.find((c) => c.id === selectedId);
+  const resuming = useResuming(conversation);
   const readOnly = readOnlyOf(gone, conversation);
   const showSandbox =
     conversation !== undefined && conversation.sandbox !== "none";
@@ -192,10 +200,11 @@ const Console = () => {
               }
             />
           )}
-          <Transcript state={state} />
+          <Transcript state={state} resuming={resuming} />
           <Composer
             id={selectedId}
             running={state.running}
+            resuming={resuming}
             paused={conversation?.status === "paused"}
             readOnly={readOnly}
             onNew={clear}
@@ -246,9 +255,10 @@ const Console = () => {
                     <DesktopPanel
                       vncUrl={conversation.vncUrl}
                       paused={seatlessOf(conversation)}
+                      resuming={resuming}
                     />
                   ) : (
-                    <TerminalPanel state={state} />
+                    <TerminalPanel state={state} resuming={resuming} />
                   )}
                 </div>
               </ResizablePanel>

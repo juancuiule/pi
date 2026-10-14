@@ -1,5 +1,6 @@
 "use client";
 
+import type { ConversationSummary } from "effect-pi/api";
 import {
   LoaderCircle,
   Monitor,
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/tooltip";
 import { relativeTime } from "@/lib/format";
 import { useConversations, useInfo } from "@/lib/queries";
+import { useConversationStore } from "@/lib/store";
 import { useMounted } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +46,31 @@ const THEMES = [
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
 ] as const;
+
+/** The spinner a row gets while its Seat is busy: Resuming ahead of Running; neither when an approval waits. */
+const activityOf = (
+  conversation: ConversationSummary,
+  isResuming: boolean
+): "Resuming" | "Running" | undefined => {
+  if (conversation.pendingApprovals > 0) {
+    return undefined;
+  }
+  if (isResuming) {
+    return "Resuming";
+  }
+  return conversation.status === "running" ? "Running" : undefined;
+};
+
+/** The row's trailing status word, e.g. " · Paused"; a resume in flight reads " · Resuming" instead. */
+const statusSuffix = (
+  conversation: ConversationSummary,
+  isResuming: boolean
+): string => {
+  if (conversation.status === "paused") {
+    return isResuming ? " · Resuming" : " · Paused";
+  }
+  return conversation.status === "archived" ? " · Archived" : "";
+};
 
 const ThemeToggle = () => {
   const { theme, setTheme } = useTheme();
@@ -89,6 +116,7 @@ export const Sidebar = ({
 }) => {
   const { data } = useConversations();
   const { data: info } = useInfo();
+  const resuming = useConversationStore((store) => store.resuming);
   const now = useNow();
   const [showArchived, setShowArchived] = useState(false);
   const all = [...(data ?? [])].toSorted((a, b) => b.createdAt - a.createdAt);
@@ -127,6 +155,10 @@ export const Sidebar = ({
               conversation.status === "paused" ||
               conversation.status === "archived";
             const needsApproval = conversation.pendingApprovals > 0;
+            const isResuming =
+              conversation.status === "paused" &&
+              (resuming[conversation.id] ?? 0) > 0;
+            const activity = activityOf(conversation, isResuming);
             return (
               <li key={conversation.id}>
                 <button
@@ -157,23 +189,22 @@ export const Sidebar = ({
                         <span className="sr-only">Needs approval</span>
                       </>
                     ) : null}
-                    {conversation.status === "running" && !needsApproval ? (
+                    {activity === undefined ? null : (
                       <>
                         <LoaderCircle
                           aria-hidden
                           className="text-muted-foreground size-3.5 shrink-0 motion-safe:animate-spin"
                         />
-                        <span className="sr-only">Running</span>
+                        <span className="sr-only">{activity}</span>
                       </>
-                    ) : null}
+                    )}
                   </span>
                   <span className="text-muted-foreground flex items-center gap-1 text-xs">
                     <Icon className="size-3" />
                     {label}
                     {" · "}
                     {relativeTime(conversation.createdAt, now)}
-                    {conversation.status === "paused" ? " · Paused" : ""}
-                    {conversation.status === "archived" ? " · Archived" : ""}
+                    {statusSuffix(conversation, isResuming)}
                     {conversation.pausing ? " · Pausing" : ""}
                     {needsApproval ? " · Needs approval" : ""}
                   </span>

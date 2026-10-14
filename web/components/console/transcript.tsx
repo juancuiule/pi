@@ -230,7 +230,39 @@ const Entry = ({
   }
 };
 
-const Body = ({ state }: { state: ConversationState }) => (
+/** The transcript's trailing activity line: "Resuming…" while a paused Conversation gets a Seat, else "Working…". */
+const StatusLine = ({
+  state,
+  resuming,
+}: {
+  state: ConversationState;
+  resuming: boolean;
+}) => {
+  const working =
+    state.running &&
+    state.streaming === undefined &&
+    !hasPendingApproval(state);
+  if (!resuming && !working) {
+    return null;
+  }
+  return (
+    <p
+      aria-live="polite"
+      className="text-muted-foreground flex items-center gap-1.5 text-sm"
+    >
+      <LoaderCircle aria-hidden className="size-3.5 motion-safe:animate-spin" />
+      {resuming ? "Resuming…" : "Working…"}
+    </p>
+  );
+};
+
+const Body = ({
+  state,
+  resuming,
+}: {
+  state: ConversationState;
+  resuming: boolean;
+}) => (
   <>
     {state.entries.map((entry) => (
       <Entry key={entry.id} entry={entry} state={state} />
@@ -248,24 +280,18 @@ const Body = ({ state }: { state: ConversationState }) => (
         {failure}
       </p>
     ))}
-    {state.running &&
-    state.streaming === undefined &&
-    !hasPendingApproval(state) ? (
-      <p
-        aria-live="polite"
-        className="text-muted-foreground flex items-center gap-1.5 text-sm"
-      >
-        <LoaderCircle
-          aria-hidden
-          className="size-3.5 motion-safe:animate-spin"
-        />
-        Working…
-      </p>
-    ) : null}
+    <StatusLine state={state} resuming={resuming} />
   </>
 );
 
-export const Transcript = ({ state }: { state: ConversationState }) => {
+export const Transcript = ({
+  state,
+  resuming = false,
+}: {
+  state: ConversationState;
+  /** A resume is in flight; the run's "Working…" line reads "Resuming…" instead. */
+  resuming?: boolean;
+}) => {
   const viewport = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
   const root = useRef<HTMLDivElement | null>(null);
@@ -315,7 +341,7 @@ export const Transcript = ({ state }: { state: ConversationState }) => {
     <div className="relative min-h-0 flex-1">
       <ScrollArea ref={root} className="h-full">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6">
-          <Body state={state} />
+          <Body state={state} resuming={resuming} />
         </div>
       </ScrollArea>
       {showJump ? (
