@@ -1,15 +1,9 @@
 "use client";
 
 import type { ApprovalChoice, Message } from "effect-pi/api";
-import {
-  CircleAlert,
-  FileCode,
-  Info,
-  LoaderCircle,
-  TriangleAlert,
-} from "lucide-react";
+import { CircleAlert, Info, LoaderCircle, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { createElement, Fragment, useState } from "react";
+import { createElement, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -19,9 +13,7 @@ import {
   CodeBlockActions,
   CodeBlockContent,
   CodeBlockCopyButton,
-  CodeBlockHeader,
   CodeBlockLine,
-  CodeBlockTitle,
 } from "@/components/ui/code-block";
 import {
   TraceCollapsible,
@@ -39,17 +31,11 @@ import { toolResultEntryOf, toolResultOf } from "@/lib/conversation-state";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
 import type { ToolDiagnostic } from "@/lib/diagnostics";
 import { diagnosticsOf, visibleResultContent } from "@/lib/diagnostics";
-import type { EditHunk } from "@/lib/tool-input";
-import {
-  diffOf,
-  diffRowsOf,
-  editHunksOf,
-  fileLanguage,
-  isEditConfirmation,
-} from "@/lib/tool-input";
+import { editHunksOf, isEditConfirmation, patchOf } from "@/lib/tool-input";
 import { toolSummary } from "@/lib/tool-summary";
 import { cn } from "@/lib/utils";
 
+import { EditPreview, FilePreview, PatchPreview } from "./file-blocks";
 import { toolIcon } from "./tool-icon";
 
 type AssistantMessage = Extract<Message, { role: "assistant" }>;
@@ -112,132 +98,30 @@ const pathArg = (call: ToolCallBlock): string | undefined => {
   return typeof path === "string" ? path : undefined;
 };
 
-/** A file being written: the path as title, its content highlighted and numbered like an editor. */
-const FileBlock = ({ path, content }: { path: string; content: string }) => {
-  const lines = useHighlightedCode(content, fileLanguage(path));
-  return (
-    <CodeBlock size="sm">
-      <CodeBlockHeader>
-        <CodeBlockTitle>
-          <FileCode aria-hidden />
-          {path}
-        </CodeBlockTitle>
-        <CodeBlockActions>
-          <CodeBlockCopyButton value={content} />
-        </CodeBlockActions>
-      </CodeBlockHeader>
-      <CodeBlockContent lineNumbers className="max-h-80">
-        {lines.map((line, index) => (
-          // oxlint-disable-next-line react/no-array-index-key -- lines have no id; input only grows or is replaced
-          <CodeBlockLine key={index}>{line}</CodeBlockLine>
-        ))}
-      </CodeBlockContent>
-    </CodeBlock>
-  );
-};
-
-/** One requested replacement: old lines removed, new lines added, highlighted as the file's language. */
-const HunkLines = ({
-  hunk,
-  language,
+const Arguments = ({
+  call,
+  toolResult,
 }: {
-  readonly hunk: EditHunk;
-  readonly language: string;
+  call: ToolCallBlock;
+  toolResult: ToolResult | undefined;
 }) => {
-  const removed = useHighlightedCode(hunk.oldText, language);
-  const added = useHighlightedCode(hunk.newText, language);
-  return (
-    <>
-      {removed.map((line, index) => (
-        // oxlint-disable-next-line react/no-array-index-key
-        <CodeBlockLine key={`r${index}`} variant="removed">
-          {line}
-        </CodeBlockLine>
-      ))}
-      {added.map((line, index) => (
-        // oxlint-disable-next-line react/no-array-index-key
-        <CodeBlockLine key={`a${index}`} variant="added">
-          {line}
-        </CodeBlockLine>
-      ))}
-    </>
-  );
-};
-
-/** The edit a call asks for, shown as a diff before the result's real diff exists. */
-const EditInput = ({
-  path,
-  hunks,
-}: {
-  readonly path: string;
-  readonly hunks: readonly EditHunk[];
-}) => {
-  const language = fileLanguage(path);
-  return (
-    <CodeBlock size="sm">
-      <CodeBlockHeader>
-        <CodeBlockTitle>
-          <FileCode aria-hidden />
-          {path}
-        </CodeBlockTitle>
-      </CodeBlockHeader>
-      <CodeBlockContent className="max-h-80">
-        {hunks.map((hunk, index) => (
-          // oxlint-disable-next-line react/no-array-index-key -- hunks have no id; input only grows or is replaced
-          <Fragment key={index}>
-            {index === 0 ? null : <CodeBlockLine>…</CodeBlockLine>}
-            <HunkLines hunk={hunk} language={language} />
-          </Fragment>
-        ))}
-      </CodeBlockContent>
-    </CodeBlock>
-  );
-};
-
-/** The real diff a finished edit produced (`details.diff`), tinted per row. */
-const DiffBlock = ({
-  path,
-  diff,
-}: {
-  readonly path: string | undefined;
-  readonly diff: string;
-}) => (
-  <CodeBlock size="sm">
-    {path === undefined ? null : (
-      <CodeBlockHeader>
-        <CodeBlockTitle>
-          <FileCode aria-hidden />
-          {path}
-        </CodeBlockTitle>
-        <CodeBlockActions>
-          <CodeBlockCopyButton value={diff} />
-        </CodeBlockActions>
-      </CodeBlockHeader>
-    )}
-    <CodeBlockContent className="max-h-80">
-      {diffRowsOf(diff).map((row, index) => (
-        // oxlint-disable-next-line react/no-array-index-key -- diff rows are fixed for a result
-        <CodeBlockLine key={index} variant={row.variant}>
-          {row.text}
-        </CodeBlockLine>
-      ))}
-    </CodeBlockContent>
-  </CodeBlock>
-);
-
-const Arguments = ({ call }: { call: ToolCallBlock }) => {
   const args = call.arguments as Record<string, unknown> | undefined;
   const path = pathArg(call);
   if (call.name === "write") {
     const content = args?.content;
     if (path !== undefined && typeof content === "string") {
-      return <FileBlock path={path} content={content} />;
+      return <FilePreview path={path} content={content} />;
     }
   }
-  if (call.name === "edit" && path !== undefined) {
+  // The requested-hunks diff matters only before the result lands; a finished edit's real patch supersedes it.
+  if (
+    call.name === "edit" &&
+    path !== undefined &&
+    patchOf(toolResult?.details) === undefined
+  ) {
     const hunks = editHunksOf(args);
     if (hunks.length > 0) {
-      return <EditInput path={path} hunks={hunks} />;
+      return <EditPreview path={path} hunks={hunks} />;
     }
   }
   const command =
@@ -457,18 +341,18 @@ const CallOutput = ({
   readonly diagnostics: readonly ToolDiagnostic[];
 }) => {
   const finished = toolResult !== undefined;
-  const editDiff =
-    call.name === "edit" ? diffOf(toolResult?.details) : undefined;
+  const editPatch =
+    call.name === "edit" ? patchOf(toolResult?.details) : undefined;
   const visibleContent = finished
     ? visibleResultContent(toolResult.content, diagnostics).filter(
         (block) =>
-          editDiff === undefined ||
+          editPatch === undefined ||
           block.type !== "text" ||
           !isEditConfirmation(block.text)
       )
     : [];
   const hasOutput = finished
-    ? editDiff !== undefined ||
+    ? editPatch !== undefined ||
       visibleContent.length > 0 ||
       diagnostics.length > 0
     : (tool?.output ?? "") !== "";
@@ -479,9 +363,7 @@ const CallOutput = ({
     <Section label="Output">
       {finished ? (
         <>
-          {editDiff === undefined ? null : (
-            <DiffBlock path={pathArg(call)} diff={editDiff} />
-          )}
+          {editPatch === undefined ? null : <PatchPreview patch={editPatch} />}
           {visibleContent.map((block, index) => (
             <ResultBlock
               key={`${call.id}:${index}`}
@@ -546,7 +428,7 @@ export const ToolCall = ({
         <div className="flex flex-col gap-3">
           {hasInput(call) ? (
             <Section label="Input">
-              <Arguments call={call} />
+              <Arguments call={call} toolResult={toolResult} />
             </Section>
           ) : null}
           {approval.awaiting && approval.key !== undefined ? (
