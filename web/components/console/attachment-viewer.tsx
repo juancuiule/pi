@@ -155,7 +155,7 @@ const PagesView = ({
 }: {
   prepared: PreparedAttachment;
   id: string;
-  conversation: number;
+  conversation?: number;
 }) => {
   const [limit, setLimit] = useState(STEP.pages);
   const [mode, setMode] = useState<PdfMode>("pages");
@@ -214,7 +214,7 @@ const Contents = ({
   info: AttachmentInfo;
   prepared: PreparedAttachment;
   original: string;
-  conversation: number;
+  conversation?: number;
 }) => {
   switch (prepared.kind) {
     case "image": {
@@ -313,7 +313,8 @@ export const AttachmentViewer = ({
   onOpenChange,
 }: {
   attachment: AttachmentRef;
-  conversation: number;
+  /** Unset while the message's Conversation is still being created; the upload is staged. */
+  conversation?: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) => {
@@ -324,7 +325,7 @@ export const AttachmentViewer = ({
       runApi((c) =>
         c.attachments.view({
           params: { id: attachment.id },
-          query: { conversation },
+          query: conversation === undefined ? {} : { conversation },
         })
       ),
     enabled: open,

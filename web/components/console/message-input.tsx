@@ -3,9 +3,10 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { canSend, sendable } from "@/lib/attachments";
+import { attachmentRef, canSend, sendable } from "@/lib/attachments";
 import { useTakeDraft } from "@/lib/draft";
 import { useSendMessage } from "@/lib/queries";
+import { useConversationStore } from "@/lib/store";
 import { useDraftAttachments } from "@/lib/use-draft-attachments";
 
 import { Composer } from "./composer";
@@ -51,16 +52,33 @@ export const MessageInput = ({
       return;
     }
     // Files added while this sends are not part of it, and stay in the composer.
-    const { ids, keys } = sendable(files.items);
+    const { ids, keys, drafts } = sendable(files.items);
+    const text = prompt.trim();
+    // Names this send's submission; the `submission` event carries it back.
+    const requestId = crypto.randomUUID();
+    // The bubble shows now, marked "Sending…"; the marked "sent" drafts are not deleted when this unmounts.
+    useConversationStore.getState().addPending(id, {
+      requestId,
+      prompt: text,
+      attachments: drafts.map((draft) => attachmentRef(draft.info)),
+    });
+    setPrompt("");
+    files.take(keys);
+    textarea.current?.focus();
     send.mutate(
-      { prompt: prompt.trim(), attachments: ids },
+      { prompt: text, attachments: ids, requestId },
       {
-        onSuccess: () => {
-          setPrompt("");
-          files.take(keys);
-          textarea.current?.focus();
+        onSuccess: (ack) =>
+          useConversationStore.getState().ackPending(id, requestId, ack),
+        onError: (error) => {
+          // Back to just before Send: the pending bubble goes, the draft — and any text typed since — returns.
+          useConversationStore.getState().dropPending(id, requestId);
+          setPrompt((current) =>
+            current.trim() === "" ? text : `${text}\n\n${current}`
+          );
+          files.restore(drafts);
+          toast.error(error.message);
         },
-        onError: (error) => toast.error(error.message),
       }
     );
   };

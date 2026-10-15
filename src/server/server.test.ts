@@ -310,6 +310,38 @@ describe("HTTP API", () => {
     );
   });
 
+  // Issue #16: the send's answer names its submission so the console's pending message can resolve; a retried
+  // requestId is the same submission again, not a second message.
+  it("answers sends with the submission a requestId deduplicates", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hi", requestId: "create-1" },
+        });
+        const sent = yield* client.conversations.send({
+          params: { id: created.id },
+          payload: { prompt: "again", requestId: "send-1" },
+        });
+        const retry = yield* client.conversations.send({
+          params: { id: created.id },
+          payload: { prompt: "again", requestId: "send-1" },
+        });
+        return { created, sent, retry };
+      }).pipe(
+        Effect.provide(
+          server([
+            fauxAssistantMessage([fauxText("one")]),
+            fauxAssistantMessage([fauxText("two")]),
+          ])
+        )
+      )
+    );
+    expect(result.created.submission.id).toBeTypeOf("number");
+    expect(result.sent.id).toBeTypeOf("number");
+    expect(result.retry.id).toBe(result.sent.id);
+  });
+
   it("reports the model", async () => {
     const info = await Effect.runPromise(
       Effect.gen(function* () {

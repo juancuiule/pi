@@ -1,5 +1,8 @@
 // Handlers for the API in api.ts. Agent and sandbox failures are defects: they surface as 500s.
-import type { ConversationId } from "@earendil-works/pi-durable";
+import type {
+  ConversationId,
+  SubmissionRecord,
+} from "@earendil-works/pi-durable";
 import type { Schema } from "effect";
 import { Effect, Layer, Stream } from "effect";
 import { HttpServerResponse } from "effect/http";
@@ -15,6 +18,14 @@ import { loopbackOnly } from "./loopback.ts";
 
 // ConversationEvents are plain JSON (pi-durable's committed AgentEvents, and storage records); the cast only names that for the SSE schema.
 const asJson = (event: ConversationEvent) => event as unknown as Schema.Json;
+
+/** The wire shape of an admitted input: its submission's id, and its entry's once placed. */
+const ackOf = (record: SubmissionRecord) => ({
+  id: Number(record.id),
+  ...(record.status === "placed" || record.status === "done"
+    ? { entry: Number(record.entry) }
+    : {}),
+});
 
 /** A message needs text or attachments. */
 const message = (payload: {
@@ -45,6 +56,10 @@ const ConversationsHandlers = HttpApiBuilder.group(
           Effect.flatMap(({ prompt, attachments }) =>
             conversations.create({ ...payload, prompt, attachments })
           ),
+          Effect.map(({ submission, ...summary }) => ({
+            ...summary,
+            submission: ackOf(submission),
+          })),
           Effect.catchTags({
             AgentError: Effect.die,
             SandboxError: Effect.die,
@@ -57,8 +72,14 @@ const ConversationsHandlers = HttpApiBuilder.group(
       .handle("send", ({ params, payload }) =>
         message(payload).pipe(
           Effect.flatMap(({ prompt, attachments }) =>
-            conversations.send(params.id, prompt, attachments)
+            conversations.send(
+              params.id,
+              prompt,
+              attachments,
+              payload.requestId
+            )
           ),
+          Effect.map(ackOf),
           Effect.catchTags({
             AgentError: Effect.die,
             SandboxError: Effect.die,

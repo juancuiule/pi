@@ -117,7 +117,8 @@ export const SentChip = ({
   conversation,
 }: {
   attachment: AttachmentRef;
-  conversation: number;
+  /** Unset while the message's Conversation is still being created; the upload is staged. */
+  conversation?: number;
 }) => {
   const [open, setOpen] = useState(false);
   // The viewer (and its request) exists only once the chip was opened; a transcript has many chips.

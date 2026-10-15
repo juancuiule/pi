@@ -115,5 +115,19 @@ export const useDraftAttachments = (conversation?: number) => {
     setItems((current) => current.filter((item) => !keys.includes(item.key)));
   };
 
-  return { items, add, remove, take };
+  /** Put back drafts a failed send took, ahead of any added since; they are unsent uploads again. */
+  const restore = (drafts: readonly DraftAttachment[]) => {
+    for (const draft of drafts) {
+      sent.current.delete(draft.key);
+      removed.current.delete(draft.key);
+    }
+    setItems((current) => [
+      ...drafts.filter((draft) =>
+        current.every((item) => item.key !== draft.key)
+      ),
+      ...current,
+    ]);
+  };
+
+  return { items, add, remove, take, restore };
 };

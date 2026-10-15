@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/trace";
 import { hasPendingApproval } from "@/lib/approval";
 import { splitAttachments } from "@/lib/attachments";
-import type { ConversationState } from "@/lib/conversation-state";
+import type { ConversationState, PendingInput } from "@/lib/conversation-state";
 import { settingsNote } from "@/lib/settings-note";
 import {
   parseSkillMessage,
@@ -229,8 +229,8 @@ const Entry = ({
   entry: EntryRecord;
   state: ConversationState;
   showThinking: boolean;
-  /** For the attachments' download links. */
-  conversation: number;
+  /** For the attachments' download links; unset while a create is in flight. */
+  conversation?: number;
 }) => {
   const message = entry.model?.[0];
   const note =
@@ -334,6 +334,41 @@ const Entry = ({
   }
 };
 
+/**
+ * A message on its way: the bubble shows right away, marked "Sending…" until the server confirms its submission;
+ * the real entry then replaces it, so it is never in the transcript twice. `conversation` is unset while a new
+ * Conversation's create is still in flight.
+ */
+export const PendingMessage = ({
+  pending,
+  conversation,
+}: {
+  pending: PendingInput;
+  conversation?: number;
+}) => (
+  <div className="bg-muted text-foreground ml-auto flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5">
+    {pending.prompt === "" ? null : (
+      <p className="text-prose break-words whitespace-pre-wrap">
+        {pending.prompt}
+      </p>
+    )}
+    {pending.attachments.length === 0 ? null : (
+      <div className="flex flex-wrap gap-1.5">
+        {pending.attachments.map((attachment) => (
+          <SentChip
+            key={attachment.id}
+            attachment={attachment}
+            conversation={conversation}
+          />
+        ))}
+      </div>
+    )}
+    {pending.submission === undefined ? (
+      <span className="text-muted-foreground self-end text-xs">Sending…</span>
+    ) : null}
+  </div>
+);
+
 /** The transcript's trailing activity line: "Resuming…" while a paused Conversation gets a Seat, else "Working…". */
 const StatusLine = ({
   state,
@@ -389,7 +424,7 @@ const Body = ({
   state: ConversationState;
   resuming: boolean;
   showThinking: boolean;
-  conversation: number;
+  conversation?: number;
 }) => (
   <>
     {state.entries.map((entry) => {
@@ -416,6 +451,13 @@ const Body = ({
         showThinking={showThinking}
       />
     )}
+    {state.pending.map((pending) => (
+      <PendingMessage
+        key={pending.requestId}
+        pending={pending}
+        conversation={conversation}
+      />
+    ))}
     {state.failures.map((failure) => (
       <Failure key={failure}>{failure}</Failure>
     ))}
@@ -430,7 +472,8 @@ export const Transcript = ({
   showThinking = true,
 }: {
   state: ConversationState;
-  conversation: number;
+  /** For the attachments' links; unset on the new-conversation screen while its create is in flight. */
+  conversation?: number;
   /** A resume is in flight; the run's "Working…" line reads "Resuming…" instead. */
   resuming?: boolean;
   /** The header's per-conversation switch: false drops thinking blocks, keeping text and tool calls. */

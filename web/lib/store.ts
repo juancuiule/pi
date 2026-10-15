@@ -1,8 +1,18 @@
-import type { ConversationEvent, ConversationSummary } from "effect-pi/api";
+import type {
+  ConversationEvent,
+  ConversationSummary,
+  SubmissionAck,
+} from "effect-pi/api";
 import { create } from "zustand";
 
-import { applyEvent, initialState } from "./conversation-state";
-import type { ConversationState } from "./conversation-state";
+import {
+  applyEvent,
+  initialState,
+  withAck,
+  withoutPending,
+  withPending,
+} from "./conversation-state";
+import type { ConversationState, PendingInput } from "./conversation-state";
 
 interface Store {
   readonly byId: Readonly<Record<number, ConversationState>>;
@@ -17,10 +27,24 @@ interface Store {
   readonly hiddenThinking: Readonly<Record<number, true>>;
   apply(id: number, event: ConversationEvent): void;
   markEnded(id: number): void;
+  /** Show a message being sent; the submission carrying its requestId resolves it. */
+  addPending(id: number, pending: PendingInput): void;
+  /** The send failed: remove its pending message. */
+  dropPending(id: number, requestId: string): void;
+  /** The send's answer names the pending's submission — the `submission` event may already have. */
+  ackPending(id: number, requestId: string, ack: SubmissionAck): void;
   beginResume(id: number): void;
   endResume(id: number): void;
   toggleThinking(id: number): void;
 }
+
+const update =
+  (id: number, change: (state: ConversationState) => ConversationState) =>
+  (store: Store) => {
+    const state = store.byId[id] ?? initialState;
+    const next = change(state);
+    return next === state ? {} : { byId: { ...store.byId, [id]: next } };
+  };
 
 export const useConversationStore = create<Store>()((set) => ({
   byId: {},
@@ -42,6 +66,12 @@ export const useConversationStore = create<Store>()((set) => ({
     }),
   markEnded: (id) =>
     set((store) => ({ ended: { ...store.ended, [id]: true } })),
+  addPending: (id, pending) =>
+    set(update(id, (state) => withPending(state, pending))),
+  dropPending: (id, requestId) =>
+    set(update(id, (state) => withoutPending(state, requestId))),
+  ackPending: (id, requestId, ack) =>
+    set(update(id, (state) => withAck(state, requestId, ack))),
   beginResume: (id) =>
     set((store) => ({
       resuming: { ...store.resuming, [id]: (store.resuming[id] ?? 0) + 1 },

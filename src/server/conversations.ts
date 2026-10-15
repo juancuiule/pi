@@ -2,7 +2,10 @@
 // its Capacity claim, its Sandbox and the fiber that tracks whether a Run is going. Pause closes that scope; the
 // Conversation and its Workspace's files stay, and `send` or `resume` gives it a new Seat. Every Conversation is
 // paused after a restart.
-import type { ConversationId } from "@earendil-works/pi-durable";
+import type {
+  ConversationId,
+  SubmissionRecord,
+} from "@earendil-works/pi-durable";
 import {
   Clock,
   Context,
@@ -126,28 +129,34 @@ export class Conversations extends Context.Service<
   {
     /**
      * Record a Conversation, give it a Seat and send its first message: the prompt and the staged uploads in
-     * `attachments`, which it claims, all or none.
+     * `attachments`, which it claims, all or none. `requestId` deduplicates the message's submission, whose record
+     * comes back with the summary.
      */
     create(input: {
       readonly sandbox: SandboxChoice;
       readonly prompt: string;
       readonly attachments?: readonly string[] | undefined;
+      readonly requestId?: string | undefined;
       readonly approvals?: "ask" | "auto" | undefined;
       readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
     }): Effect.Effect<
-      ConversationSummary,
+      ConversationSummary & { readonly submission: SubmissionRecord },
       SeatError | SkillNotFound | InvalidSetting | AttachmentError
     >;
     readonly list: Effect.Effect<readonly ConversationSummary[], AgentError>;
     /**
      * Send a prompt with the Conversation's unsent uploads in `attachments`, resuming a paused Conversation first; a
-     * pending Pause is cancelled.
+     * pending Pause is cancelled. `requestId` deduplicates the submission, whose record comes back.
      */
     send(
       id: number,
       prompt: string,
-      attachments?: readonly string[]
-    ): Effect.Effect<void, SeatError | SkillNotFound | AttachmentError>;
+      attachments?: readonly string[],
+      requestId?: string
+    ): Effect.Effect<
+      SubmissionRecord,
+      SeatError | SkillNotFound | AttachmentError
+    >;
     /** Give a paused Conversation a Seat; for one that has a Seat, cancel a Pause waiting for its Run. */
     resume(id: number): Effect.Effect<ConversationSummary, SeatError>;
     /** Free a Conversation's Seat: at once when idle, otherwise once the current Run ends. */
@@ -266,23 +275,35 @@ export class Conversations extends Context.Service<
           id: number,
           entry: Live,
           prompt: string,
-          files: readonly string[]
+          files: readonly string[],
+          requestId?: string
         ) =>
-          Effect.suspend(() => {
-            if (live.get(id) !== entry) {
-              return Effect.succeed(false);
+          Effect.suspend(
+            (): Effect.Effect<
+              SubmissionRecord | false,
+              | AgentError
+              | SkillNotFound
+              | AttachmentNotFound
+              | AttachmentRefused
+            > => {
+              if (live.get(id) !== entry) {
+                return Effect.succeed(false);
+              }
+              entry.pausing = false;
+              return entry.seat.send(prompt, files, requestId).pipe(
+                // A submit starts a Run in the commit that admits it, or queues behind the one going.
+                Effect.andThen((submission) =>
+                  refresh(entry).pipe(
+                    Effect.andThen(Clock.currentTimeMillis),
+                    Effect.map((now) => {
+                      entry.lastActivity = now;
+                      return submission;
+                    })
+                  )
+                )
+              );
             }
-            entry.pausing = false;
-            return entry.seat.send(prompt, files).pipe(
-              // A submit starts a Run in the commit that admits it, or queues behind the one going.
-              Effect.andThen(refresh(entry)),
-              Effect.andThen(Clock.currentTimeMillis),
-              Effect.map((now) => {
-                entry.lastActivity = now;
-                return true;
-              })
-            );
-          }).pipe(entry.lock.withPermit);
+          ).pipe(entry.lock.withPermit);
 
         // Register a Seat and track whether a Run is going; a Pause waiting for the Run closes it when it ends.
         const register = Effect.fnUntraced(function* (id: number, entry: Live) {
@@ -367,10 +388,63 @@ export class Conversations extends Context.Service<
             })
           );
 
+        // Resumes run one at a time. Two sends can race to resume the same Conversation, and a second Seat
+        // could not simply be discarded: closing its scope aborts the conversation, including the Run the
+        // first send just started.
+        const resuming = yield* Semaphore.make(1);
+
+        const seatOf = (id: number) =>
+          Effect.suspend(() => {
+            const existing = live.get(id);
+            if (existing !== undefined) {
+              return Effect.succeed(existing);
+            }
+            return Effect.gen(function* () {
+              const stored = yield* agents.get(asId(id));
+              if (stored.meta.archivedAt !== undefined) {
+                return yield* new ConversationArchived({ id });
+              }
+              // `open` claims the Level's resource itself.
+              const { entry } = yield* seatIn("none", (claimed) =>
+                Effect.gen(function* () {
+                  yield* claimed.assign(id);
+                  return { id, seat: yield* agents.open(asId(id)) };
+                })
+              );
+              return entry;
+            });
+          }).pipe(resuming.withPermit);
+
+        const send = Effect.fn("Conversations.send")(function* (
+          id: number,
+          prompt: string,
+          files: readonly string[] = [],
+          requestId?: string
+        ) {
+          // A Seat that closes while this send waits for it is resumed again: the send is the newer intent.
+          for (let tries = 0; tries < 3; tries += 1) {
+            const entry = yield* seatOf(id);
+            const submission = yield* sendLive(
+              id,
+              entry,
+              prompt,
+              files,
+              requestId
+            );
+            if (submission !== false) {
+              return submission;
+            }
+          }
+          return yield* Effect.die(
+            new Error(`Conversation ${id} kept losing its Seat`)
+          );
+        });
+
         const create = Effect.fn("Conversations.create")(function* (input: {
           readonly sandbox: SandboxChoice;
           readonly prompt: string;
           readonly attachments?: readonly string[] | undefined;
+          readonly requestId?: string | undefined;
           readonly approvals?: "ask" | "auto" | undefined;
           readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
         }) {
@@ -406,55 +480,14 @@ export class Conversations extends Context.Service<
             })
           ).pipe(Effect.onError(() => reservation?.release ?? Effect.void));
           // A Seat whose first prompt cannot be sent is paused: the Conversation stays, resumable.
-          yield* sendLive(id, entry, input.prompt, files).pipe(
-            Effect.onError(() => close(id))
-          );
+          const submission = yield* send(
+            id,
+            input.prompt,
+            files,
+            input.requestId
+          ).pipe(Effect.onError(() => close(id)));
           const stored = yield* agents.get(asId(id));
-          return summaryOf(stored, entry, 0);
-        });
-
-        // Resumes run one at a time. Two sends can race to resume the same Conversation, and a second Seat
-        // could not simply be discarded: closing its scope aborts the conversation, including the Run the
-        // first send just started.
-        const resuming = yield* Semaphore.make(1);
-
-        const seatOf = (id: number) =>
-          Effect.suspend(() => {
-            const existing = live.get(id);
-            if (existing !== undefined) {
-              return Effect.succeed(existing);
-            }
-            return Effect.gen(function* () {
-              const stored = yield* agents.get(asId(id));
-              if (stored.meta.archivedAt !== undefined) {
-                return yield* new ConversationArchived({ id });
-              }
-              // `open` claims the Level's resource itself.
-              const { entry } = yield* seatIn("none", (claimed) =>
-                Effect.gen(function* () {
-                  yield* claimed.assign(id);
-                  return { id, seat: yield* agents.open(asId(id)) };
-                })
-              );
-              return entry;
-            });
-          }).pipe(resuming.withPermit);
-
-        const send = Effect.fn("Conversations.send")(function* (
-          id: number,
-          prompt: string,
-          files: readonly string[] = []
-        ) {
-          // A Seat that closes while this send waits for it is resumed again: the send is the newer intent.
-          for (let tries = 0; tries < 3; tries += 1) {
-            const entry = yield* seatOf(id);
-            if (yield* sendLive(id, entry, prompt, files)) {
-              return;
-            }
-          }
-          return yield* Effect.die(
-            new Error(`Conversation ${id} kept losing its Seat`)
-          );
+          return { ...summaryOf(stored, entry, 0), submission };
         });
 
         const resume = Effect.fn("Conversations.resume")(function* (

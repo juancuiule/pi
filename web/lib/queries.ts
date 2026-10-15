@@ -92,10 +92,12 @@ export const useCreateConversation = () => {
       prompt: string;
       /** Ids of staged uploads; the create claims them. */
       attachments?: readonly string[];
+      /** Dedupes the first message's submission, which carries it. */
+      requestId?: string;
       approvals?: "ask" | "auto";
       settings?: Omit<SettingsChange, "approvals">;
     }) => guard(() => runApi((c) => c.conversations.create({ payload }))),
-    onSuccess: (created: ConversationSummary) => {
+    onSuccess: (created) => {
       queryClient.setQueryData<readonly ConversationSummary[]>(LIST, (all) => [
         ...(all ?? []),
         created,
@@ -112,6 +114,8 @@ export const useSendMessage = (id: number) => {
     mutationFn: (payload: {
       prompt: string;
       attachments?: readonly string[];
+      /** Dedupes the message's submission, which carries it. */
+      requestId?: string;
     }) => {
       // Counts on live conversations too; the resuming view only shows while the summary still says paused.
       useConversationStore.getState().beginResume(id);

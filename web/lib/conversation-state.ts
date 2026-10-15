@@ -11,6 +11,8 @@ import type {
   UsageState,
 } from "effect-pi/api";
 
+import type { AttachmentRef } from "./attachments";
+
 export interface ToolRun {
   readonly callId: string;
   readonly name: string;
@@ -19,8 +21,27 @@ export interface ToolRun {
   readonly status: "pending" | "running" | "done";
 }
 
+/**
+ * A message the person sent, shown before the server has placed it. The console sends it with `requestId`, which the
+ * admitted submission carries back (its `submission` event, or the send's answer); `entry` is the transcript entry
+ * that replaces it.
+ */
+export interface PendingInput {
+  readonly requestId: string;
+  /** What the person typed — the entry may differ (`/skill:` expands, attachment blocks are appended). */
+  readonly prompt: string;
+  /** Its files, as chips. */
+  readonly attachments: readonly AttachmentRef[];
+  /** The submission it was admitted as, once known. While absent the message reads "Sending…". */
+  readonly submission?: number;
+  /** The entry the submission placed, once known. */
+  readonly entry?: number;
+}
+
 export interface ConversationState {
   readonly entries: readonly EntryRecord[];
+  /** Sent inputs not yet in `entries`, in send order. */
+  readonly pending: readonly PendingInput[];
   readonly streaming: AssistantMessage | undefined;
   readonly tools: Readonly<Record<string, ToolRun>>;
   readonly running: boolean;
@@ -33,6 +54,7 @@ export interface ConversationState {
 
 export const initialState: ConversationState = {
   entries: [],
+  pending: [],
   streaming: undefined,
   tools: {},
   running: false,
@@ -41,6 +63,101 @@ export const initialState: ConversationState = {
   failures: [],
   unanswered: {},
 };
+
+/**
+ * Show a sent message as pending — unless its entry is already here, as when the answer to `create` lands after the
+ * subscription's snapshot.
+ */
+export const withPending = (
+  state: ConversationState,
+  pending: PendingInput
+): ConversationState =>
+  pending.entry !== undefined &&
+  state.entries.some((entry) => entry.id === pending.entry)
+    ? state
+    : { ...state, pending: [...state.pending, pending] };
+
+/** Drop a pending message without an answer: the send failed. */
+export const withoutPending = (
+  state: ConversationState,
+  requestId: string
+): ConversationState =>
+  state.pending.some((pending) => pending.requestId === requestId)
+    ? {
+        ...state,
+        pending: state.pending.filter(
+          (pending) => pending.requestId !== requestId
+        ),
+      }
+    : state;
+
+/** The parts of a submission a pending input matches on: its `requestId`, and `entry` once placed. */
+interface SubmissionHint {
+  readonly requestId?: string | undefined;
+  readonly id: number;
+  readonly status: string;
+  readonly entry?: number | undefined;
+}
+
+/**
+ * Confirm the pending input a submission carries: it is no longer "Sending…". It is dropped once its entry is in the
+ * transcript — normally the same commit — or when the input can no longer be answered.
+ */
+const withSubmission = (
+  state: ConversationState,
+  record: SubmissionHint
+): ConversationState => {
+  const index = state.pending.findIndex(
+    (pending) => pending.requestId === record.requestId
+  );
+  if (record.requestId === undefined || index === -1) {
+    return state;
+  }
+  if (
+    record.status === "unanswered" ||
+    (record.entry !== undefined &&
+      state.entries.some((entry) => entry.id === record.entry))
+  ) {
+    return {
+      ...state,
+      pending: state.pending.filter((_, i) => i !== index),
+    };
+  }
+  return {
+    ...state,
+    pending: state.pending.map((pending, i) =>
+      i === index
+        ? {
+            ...pending,
+            submission: record.id,
+            ...(record.entry === undefined ? {} : { entry: record.entry }),
+          }
+        : pending
+    ),
+  };
+};
+
+/** The send's answer names a pending's submission — the same fact its `submission` event may already have carried. */
+export const withAck = (
+  state: ConversationState,
+  requestId: string,
+  ack: { readonly id: number; readonly entry?: number | undefined }
+): ConversationState =>
+  withSubmission(state, {
+    requestId,
+    id: ack.id,
+    status: ack.entry === undefined ? "queued" : "placed",
+    entry: ack.entry,
+  });
+
+/** Pending whose placed entry just arrived are dropped — the real entry shows instead. */
+const withoutEntry = (
+  pending: readonly PendingInput[],
+  entry: number
+): readonly PendingInput[] =>
+  pending.some((p) => p.entry === entry)
+    ? pending.filter((p) => p.entry !== entry)
+    : pending;
 
 const withEntry = (
   entries: readonly EntryRecord[],
@@ -109,6 +226,43 @@ const applyOutput = (output: string, update: OutputUpdate): string => {
   return output.slice(update.trimStart ?? 0) + (update.append ?? "");
 };
 
+const applySnapshot = (
+  state: ConversationState,
+  event: Extract<ConversationEvent, { type: "snapshot" }>
+): ConversationState => {
+  // Pendings keep only what the fresh view cannot account for: a queued one survives while still in the inbox;
+  // a placed one's entry is in `entries` — or is out of view, then the transcript is right without it.
+  const inbox = new Set<number>(event.inbox.map((item) => item.id));
+  return {
+    ...initialState,
+    entries: event.entries,
+    pending: state.pending.filter(
+      (pending) =>
+        pending.submission === undefined ||
+        (pending.entry === undefined && inbox.has(pending.submission))
+    ),
+    streaming: event.generation?.message,
+    running: event.run !== undefined,
+    queued: event.inbox.length,
+    usage: event.usage,
+    unanswered: Object.fromEntries(
+      event.unanswered.map((input) => [input.entry, input])
+    ),
+    tools: Object.fromEntries(
+      event.tools.map((slot) => [
+        slot.callId,
+        {
+          callId: slot.callId,
+          name: slot.name,
+          output: slot.output ?? "",
+          details: slot.details,
+          status: slot.status,
+        },
+      ])
+    ),
+  };
+};
+
 const withTool = (
   state: ConversationState,
   callId: string,
@@ -146,35 +300,29 @@ const withSettled = (
       }
     : state;
 
+const applySubmission = (
+  state: ConversationState,
+  event: Extract<ConversationEvent, { type: "submission" }>
+): ConversationState => {
+  const { record } = event;
+  return withSubmission(withSettled(state, record), {
+    requestId: record.requestId,
+    id: record.id,
+    status: record.status,
+    entry:
+      record.status === "placed" || record.status === "done"
+        ? record.entry
+        : undefined,
+  });
+};
+
 export const applyEvent = (
   state: ConversationState,
   event: ConversationEvent
 ): ConversationState => {
   switch (event.type) {
     case "snapshot": {
-      return {
-        ...initialState,
-        entries: event.entries,
-        streaming: event.generation?.message,
-        running: event.run !== undefined,
-        queued: event.inbox.length,
-        usage: event.usage,
-        unanswered: Object.fromEntries(
-          event.unanswered.map((input) => [input.entry, input])
-        ),
-        tools: Object.fromEntries(
-          event.tools.map((slot) => [
-            slot.callId,
-            {
-              callId: slot.callId,
-              name: slot.name,
-              output: slot.output ?? "",
-              details: slot.details,
-              status: slot.status,
-            },
-          ])
-        ),
-      };
+      return applySnapshot(state, event);
     }
     case "run_start": {
       return { ...state, running: true };
@@ -202,10 +350,15 @@ export const applyEvent = (
         ...state,
         streaming: undefined,
         entries: withEntry(state.entries, event.entry),
+        pending: withoutEntry(state.pending, event.entry.id),
       };
     }
     case "entry_appended": {
-      return { ...state, entries: withEntry(state.entries, event.entry) };
+      return {
+        ...state,
+        entries: withEntry(state.entries, event.entry),
+        pending: withoutEntry(state.pending, event.entry.id),
+      };
     }
     case "tool_execution_start": {
       return withTool(state, event.toolCallId, event.toolName, (tool) => ({
@@ -241,7 +394,7 @@ export const applyEvent = (
       return { ...state, usage: event.usage };
     }
     case "submission": {
-      return withSettled(state, event.record);
+      return applySubmission(state, event);
     }
     case "task_failed": {
       return {

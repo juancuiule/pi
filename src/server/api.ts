@@ -224,7 +224,16 @@ const NoAttachment = AttachmentNotFound.pipe(HttpApiSchema.status(404));
 const MessageFields = {
   prompt: Schema.optionalKey(Schema.String),
   attachments: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** The sender's deduplication key: the admitted submission carries it, and resubmitting it is a no-op. */
+  requestId: Schema.optionalKey(Schema.String),
 };
+
+/** The input a message was admitted as: its submission, and the entry once it is placed. */
+export const SubmissionAck = Schema.Struct({
+  id: Schema.Number,
+  entry: Schema.optionalKey(Schema.Number),
+});
+export type SubmissionAck = typeof SubmissionAck.Type;
 
 const ConversationGroup = HttpApiGroup.make("conversations").add(
   HttpApiEndpoint.get("list", "/conversations", {
@@ -244,12 +253,16 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
         })
       ),
     }),
-    success: ConversationSummary.pipe(HttpApiSchema.status(201)),
+    success: Schema.Struct({
+      ...ConversationSummary.fields,
+      submission: SubmissionAck,
+    }).pipe(HttpApiSchema.status(201)),
     error: [Full, UnknownSkill, Invalid, Empty, Refused, NoAttachment],
   }),
   HttpApiEndpoint.post("send", "/conversations/:id/messages", {
     params: ById,
     payload: Schema.Struct(MessageFields),
+    success: SubmissionAck,
     error: [
       NotFound,
       Full,

@@ -109,6 +109,7 @@ describe(canSend, () => {
     expect(sendable([uploaded, failed])).toStrictEqual({
       ids: [ID],
       keys: ["f1"],
+      drafts: [uploaded],
     });
   });
 });

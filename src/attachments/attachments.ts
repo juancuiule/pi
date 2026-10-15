@@ -197,11 +197,13 @@ export class Attachments extends Context.Service<
     /**
      * Claim a conversation's unsent uploads for its next message, all or none, with their prepared contents in
      * order. Nothing else can take or remove them until the claim is committed (the message was admitted: they are
-     * sent from then on) or released (it was not: they can be sent again).
+     * sent from then on) or released (it was not: they can be sent again). `claim` names it — the message's
+     * requestId when it has one, so the submission it is stored with identifies it after a restart.
      */
     claimForMessage(
       conversationId: number,
-      ids: readonly string[]
+      ids: readonly string[],
+      claim?: string
     ): Effect.Effect<MessageClaim, AttachmentNotFound | AttachmentRefused>;
     /** A conversation's sent attachments, oldest first. */
     sent(conversationId: number): Effect.Effect<readonly AttachmentRecord[]>;
@@ -440,9 +442,13 @@ export class Attachments extends Context.Service<
           );
 
         const claimForMessage = Effect.fn("Attachments.claimForMessage")(
-          function* (conversationId: number, ids: readonly string[]) {
+          function* (
+            conversationId: number,
+            ids: readonly string[],
+            claimId?: string
+          ) {
             yield* tooMany(ids.length);
-            const claim = randomUUID();
+            const claim = claimId ?? randomUUID();
             const refusedIds = records.claimForMessage(
               conversationId,
               ids,

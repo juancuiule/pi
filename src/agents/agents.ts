@@ -12,6 +12,7 @@ import type {
   Extension,
   Harness as HarnessType,
   Storage,
+  SubmissionRecord,
   ToolRegistration,
   Tx,
   UserInput,
@@ -331,13 +332,15 @@ export interface Seat {
   /**
    * Send a prompt without waiting for the answer; it is queued as a follow-up while a Run is going. `/skill:` is
    * expanded against the conversation's skills first, in the prompt only; then come the blocks of `attachments`,
-   * the conversation's unsent uploads, which are kept with it from then on.
+   * the conversation's unsent uploads, which are kept with it from then on. `requestId` deduplicates the
+   * submission, which carries it; resolved with the admitted submission's record.
    */
   send(
     prompt: string,
-    attachments?: readonly string[]
+    attachments?: readonly string[],
+    requestId?: string
   ): Effect.Effect<
-    void,
+    SubmissionRecord,
     AgentError | SkillNotFound | AttachmentNotFound | AttachmentRefused
   >;
   /**
@@ -1287,31 +1290,37 @@ export class Agents extends Context.Service<
           const admit = Effect.fnUntraced(function* (
             text: string,
             ids: readonly string[],
-            whenBusy?: "followUp"
+            whenBusy?: "followUp",
+            requestId?: string
           ) {
             // What the person typed can never pass for a block the server appended.
             const typed = escapeAttachmentTags(text);
             // A message with attachments carries its claim's id, stored with the submission when it is admitted.
-            const submit = (content: UserInput, requestId?: string) =>
+            const submit = (content: UserInput, token?: string) =>
               attempt(() =>
                 handle.submit(
                   {
                     type: "input",
                     content,
                     ...(whenBusy === undefined ? {} : { whenBusy }),
-                    ...(requestId === undefined ? {} : { requestId }),
+                    ...(token === undefined ? {} : { requestId: token }),
                   },
                   context
                 )
               );
             if (ids.length === 0) {
-              return yield* submit(typed);
+              return yield* submit(typed, requestId);
             }
             yield* Effect.annotateCurrentSpan(
               "effect-pi.attachments",
               ids.join(",")
             );
-            const claim = yield* attachments.claimForMessage(Number(id), ids);
+            // The claim takes the request's id: the submission names it either way, so a restart settles it right.
+            const claim = yield* attachments.claimForMessage(
+              Number(id),
+              ids,
+              requestId
+            );
             const content = yield* messageContent(id, typed, claim.loaded).pipe(
               Effect.onError(() => claim.release)
             );
@@ -1344,17 +1353,19 @@ export class Agents extends Context.Service<
 
           const send = Effect.fn("Seat.send")(function* (
             prompt: string,
-            attachmentIds: readonly string[] = []
+            attachmentIds: readonly string[] = [],
+            requestId?: string
           ) {
             // Skills read only what the person typed, never a file's text.
             const expanded = yield* expand(prompt, id);
             yield* annotate(expanded);
             // Admitted without waiting: a busy conversation queues it as a follow-up, and the answer arrives as
             // events.
-            yield* tracing.traced(
+            const submission = yield* tracing.traced(
               id,
-              admit(expanded, attachmentIds, "followUp")
+              admit(expanded, attachmentIds, "followUp", requestId)
             );
+            return yield* attempt(() => submission.status(context));
           });
 
           const ask = Effect.fn("Seat.ask")(function* (
