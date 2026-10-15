@@ -88,7 +88,11 @@ const askAboutImage = (vision: boolean) => {
   );
 };
 
-describe("attachments in messages", () => {
+// Uploads are read in worker threads that load pdf.js or sharp; on a busy machine (the git hooks run checks in
+// parallel) starting one takes longer than vitest's default 5s.
+const WORKERS = { timeout: 30_000 };
+
+describe("attachments in messages", WORKERS, () => {
   it("sends a file's text after the person's, and keeps it with the conversation", async () => {
     const { layer } = fauxAgents([showMessage]);
     const result = await Effect.runPromise(
@@ -266,7 +270,7 @@ describe("attachments in messages", () => {
   });
 });
 
-describe("the attachment tools", () => {
+describe("the attachment tools", WORKERS, () => {
   it("read and search the conversation's sent files, and nothing else", async () => {
     const { layer, faux } = fauxAgents([]);
     const result = await Effect.runPromise(
@@ -318,7 +322,7 @@ describe("the attachment tools", () => {
   });
 });
 
-describe("tables", () => {
+describe("tables", WORKERS, () => {
   it("are read from any row with their header, and the agent is told how to compute over them", async () => {
     const rows = Array.from(
       { length: 300 },
@@ -365,7 +369,7 @@ describe("tables", () => {
   });
 });
 
-describe("upload checks and lifetimes", () => {
+describe("upload checks and lifetimes", WORKERS, () => {
   it("refuses unsupported files, files over the limit, and unsent uploads past the total", async () => {
     const { layer } = fauxAgents([], {
       attachmentLimits: { maxFileBytes: 100, maxUnsentBytes: 150 },
@@ -455,7 +459,7 @@ describe("upload checks and lifetimes", () => {
   });
 });
 
-describe("claims and quotas", () => {
+describe("claims and quotas", WORKERS, () => {
   it("lets one message take an upload at a time, gives it back when the message is not admitted, and keeps it when it is", async () => {
     const { layer } = fauxAgents([]);
     const result = await Effect.runPromise(
@@ -546,7 +550,7 @@ describe("claims and quotas", () => {
   });
 });
 
-describe("restarts", () => {
+describe("restarts", WORKERS, () => {
   it("commit a message's claim only when its message was admitted, and release the rest", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "restart-"));
     const layer = Attachments.local({
@@ -625,7 +629,7 @@ describe("restarts", () => {
   });
 });
 
-describe("attachments in a Sandbox", () => {
+describe("attachments in a Sandbox", WORKERS, () => {
   it("copies sent files into a shell's Workspace, and earlier ones into a new Sandbox", async () => {
     const { layer } = fauxAgents([showMessage, showMessage, showMessage]);
     const result = await Effect.runPromise(

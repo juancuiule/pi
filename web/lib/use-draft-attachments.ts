@@ -23,29 +23,23 @@ const forget = async (id: string) => {
   }
 };
 
-type Drafts = Readonly<Record<string, readonly DraftAttachment[]>>;
-
-const scopeOf = (conversation: number | undefined) =>
-  conversation === undefined ? "new" : String(conversation);
-
 /**
- * The files in a composer, per conversation (a switch keeps each one's files): each is uploaded as soon as it is
- * added (staged, or to `conversation`). Removing one deletes its upload, even one still uploading; so does leaving
- * the composer with files never sent. `take` drops the files a message sent, keeping any added since.
+ * The files in a composer: each is uploaded as soon as it is added (staged, or to `conversation`). Removing one
+ * deletes its upload, even one still uploading. The page remounts the composer for each conversation, so, like the
+ * typed draft, files do not survive a switch: leaving deletes the uploads never sent. `take` drops the files a
+ * message sent, keeping any added since.
  */
 export const useDraftAttachments = (conversation?: number) => {
-  const scope = scopeOf(conversation);
-  const [drafts, setDrafts] = useState<Drafts>({});
-  const items = drafts[scope] ?? [];
+  const [items, setItems] = useState<readonly DraftAttachment[]>([]);
   const counter = useRef(0);
   // Keys removed while uploading, whose upload is deleted when it lands; and keys sent, never deleted.
   const removed = useRef(new Set<string>());
   const sent = useRef(new Set<string>());
   const mounted = useRef(true);
   // The drafts as last rendered, for the cleanup when the composer goes away.
-  const latest = useRef<Drafts>(drafts);
+  const latest = useRef(items);
   useEffect(() => {
-    latest.current = drafts;
+    latest.current = items;
   });
 
   useEffect(() => {
@@ -54,7 +48,7 @@ export const useDraftAttachments = (conversation?: number) => {
     const sentKeys = sent.current;
     return () => {
       mounted.current = false;
-      for (const draft of Object.values(latest.current).flat()) {
+      for (const draft of latest.current) {
         if (draft.state === "uploaded" && !sentKeys.has(draft.key)) {
           void forget(draft.info.id);
         }
@@ -63,38 +57,26 @@ export const useDraftAttachments = (conversation?: number) => {
     };
   }, []);
 
-  const change = (
-    at: string,
-    edit: (current: readonly DraftAttachment[]) => readonly DraftAttachment[]
-  ) => setDrafts((current) => ({ ...current, [at]: edit(current[at] ?? []) }));
+  const replace = (key: string, next: DraftAttachment) =>
+    setItems((current) =>
+      current.map((item) => (item.key === key ? next : item))
+    );
 
-  const uploadOne = async (at: string, key: string, file: File) => {
+  const uploadOne = async (key: string, file: File) => {
     try {
       const info = await upload(file, conversation);
       if (removed.current.has(key) || !mounted.current) {
         await forget(info.id);
         return;
       }
-      change(at, (current) =>
-        current.map((item) =>
-          item.key === key
-            ? { key, name: file.name, state: "uploaded", info }
-            : item
-        )
-      );
+      replace(key, { key, name: file.name, state: "uploaded", info });
     } catch (error) {
-      change(at, (current) =>
-        current.map((item) =>
-          item.key === key
-            ? {
-                key,
-                name: file.name,
-                state: "failed",
-                error: error instanceof Error ? error.message : String(error),
-              }
-            : item
-        )
-      );
+      replace(key, {
+        key,
+        name: file.name,
+        state: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
@@ -103,7 +85,7 @@ export const useDraftAttachments = (conversation?: number) => {
       counter.current += 1;
       return { key: `f${counter.current}`, file };
     });
-    change(scope, (current) => [
+    setItems((current) => [
       ...current,
       ...added.map(({ key, file }): DraftAttachment => ({
         key,
@@ -112,14 +94,14 @@ export const useDraftAttachments = (conversation?: number) => {
       })),
     ]);
     for (const { key, file } of added) {
-      void uploadOne(scope, key, file);
+      void uploadOne(key, file);
     }
   };
 
   const remove = (key: string) => {
     const draft = items.find((item) => item.key === key);
     removed.current.add(key);
-    change(scope, (current) => current.filter((item) => item.key !== key));
+    setItems((current) => current.filter((item) => item.key !== key));
     if (draft?.state === "uploaded") {
       void forget(draft.info.id);
     }
@@ -130,9 +112,7 @@ export const useDraftAttachments = (conversation?: number) => {
     for (const key of keys) {
       sent.current.add(key);
     }
-    change(scope, (current) =>
-      current.filter((item) => !keys.includes(item.key))
-    );
+    setItems((current) => current.filter((item) => !keys.includes(item.key)));
   };
 
   return { items, add, remove, take };

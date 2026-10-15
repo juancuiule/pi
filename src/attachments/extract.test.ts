@@ -46,7 +46,11 @@ const refusal = async (promise: Promise<unknown>) => {
   return outcome as ExtractionRefusedError;
 };
 
-describe("extraction in a worker", () => {
+// Uploads are read in worker threads that load pdf.js or sharp; on a busy machine (the git hooks run checks in
+// parallel) starting one takes longer than vitest's default 5s.
+const WORKERS = { timeout: 30_000 };
+
+describe("extraction in a worker", WORKERS, () => {
   it("reads text, normalizing line ends", async () => {
     const { prepared } = await run(
       "text",
