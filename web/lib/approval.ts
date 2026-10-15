@@ -1,5 +1,6 @@
 // Pure read of a tool call's approval details, written by the server's withApproval wrapper
 // (src/approvals.ts): pending with its decision key, approved, denied, or stopped (by a Stop before a decision).
+// An `ask_user` call waits the same way and ends answered or skipped.
 import type { ConversationSummary } from "effect-pi/api";
 
 import type { ConversationState } from "./conversation-state";
@@ -8,7 +9,9 @@ export type Approval =
   | { readonly state: "pending"; readonly key: string }
   | { readonly state: "approved" }
   | { readonly state: "denied" }
-  | { readonly state: "stopped" };
+  | { readonly state: "stopped" }
+  | { readonly state: "answered" }
+  | { readonly state: "skipped" };
 
 export const approvalOf = (details: unknown): Approval | undefined => {
   if (typeof details !== "object" || details === null) {
@@ -26,6 +29,12 @@ export const approvalOf = (details: unknown): Approval | undefined => {
   }
   if (approval === "stopped") {
     return { state: "stopped" };
+  }
+  if (approval === "answered") {
+    return { state: "answered" };
+  }
+  if (approval === "skipped") {
+    return { state: "skipped" };
   }
   return undefined;
 };

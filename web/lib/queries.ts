@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   ApprovalChoice,
   ConversationSummary,
+  QuestionAnswer,
   SandboxChoice,
   SettingsChange,
 } from "effect-pi/api";
@@ -135,6 +136,16 @@ export const useDecideApproval = (id: number) => {
   return useMutation({
     mutationFn: (payload: { key: string; decision: ApprovalChoice }) =>
       runApi((c) => c.conversations.approvals({ params: { id }, payload })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: LIST }),
+  });
+};
+
+/** Answer an `ask_user` call; without `answers` its questions are skipped. */
+export const useAnswerQuestions = (id: number) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { key: string; answers?: QuestionAnswer[] }) =>
+      runApi((c) => c.conversations.answers({ params: { id }, payload })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: LIST }),
   });
 };

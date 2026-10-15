@@ -40,7 +40,11 @@ import {
   Stream,
 } from "effect";
 
-import type { ApprovalChoice, ApprovalPolicy } from "../approvals.ts";
+import type {
+  AnswerInput,
+  ApprovalChoice,
+  ApprovalPolicy,
+} from "../approvals.ts";
 import {
   ApprovalDoc,
   clearApprovals,
@@ -89,6 +93,7 @@ import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
 import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
+import { questionsExtension } from "../tools/questions.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
 import { makeAgentTracing } from "../tracing.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
@@ -356,7 +361,15 @@ export interface Seat {
     key: string,
     decision: ApprovalChoice
   ): Effect.Effect<void, AgentError | ApprovalNotFound>;
-  /** Count of calls waiting for approval. */
+  /**
+   * Answer an `ask_user` call with `answers`; without them its questions are skipped. Fails `ApprovalNotFound` when no
+   * call is waiting for answers under `key`.
+   */
+  answer(
+    key: string,
+    answers?: readonly AnswerInput[]
+  ): Effect.Effect<void, AgentError | ApprovalNotFound>;
+  /** Count of calls waiting for approval or answers. */
   readonly pendingApprovals: Effect.Effect<number, AgentError>;
   /** Whether a Run is going, as last committed. */
   readonly running: Effect.Effect<boolean, AgentError>;
@@ -571,11 +584,15 @@ export class Agents extends Context.Service<
         // Read and search over the conversation's attachments; always on, so a file once sent stays readable.
         const attachmentsExt = attachmentsExtension(attachments);
         registry.install(attachmentsExt);
+        // `ask_user`: questions as a form in the console.
+        const questionsExt = questionsExtension();
+        registry.install(questionsExt);
         // Every installed extension, for the console; and those every conversation selects, whatever its Level.
         const installed = [
           ...extensionsFor("desktop", desktop),
           workspaceExt,
           attachmentsExt,
+          questionsExt,
           skillsExt,
           ...mcp.extensions,
           tracing.extension,
@@ -583,6 +600,7 @@ export class Agents extends Context.Service<
         const everyLevel = new Set<Extension>([
           workspaceExt,
           attachmentsExt,
+          questionsExt,
           skillsExt,
           ...mcp.extensions,
           tracing.extension,
@@ -617,6 +635,7 @@ export class Agents extends Context.Service<
             ...extensionsFor(level, desktop),
             workspaceExt,
             attachmentsExt,
+            questionsExt,
             ...(withSkills ? [skillsExt] : []),
             ...mcp.extensions,
             tracing.extension,
@@ -704,6 +723,7 @@ export class Agents extends Context.Service<
                 const approvals = await tx.doc(ApprovalDoc, id);
                 approvals.pending = {};
                 approvals.decisions = {};
+                approvals.answers = {};
                 const sandbox = await tx.doc(SandboxDoc, id);
                 delete sandbox.sandbox;
               }, context)
@@ -1377,17 +1397,54 @@ export class Agents extends Context.Service<
             const found = yield* attempt(() =>
               harness.commit(async (tx) => {
                 const doc = await tx.doc(ApprovalDoc, id);
-                if (doc.pending[key] === undefined) {
+                const pending = doc.pending[key];
+                if (pending === undefined || pending.question === true) {
                   return false;
                 }
                 if (decision === "always") {
                   // Parallel calls of the same round are already waiting; under `auto` none of them should.
                   doc.policy = "auto";
-                  for (const waiting of Object.keys(doc.pending)) {
-                    doc.decisions[waiting] ??= "approve";
+                  for (const [waiting, entry] of Object.entries(doc.pending)) {
+                    if (entry.question !== true) {
+                      doc.decisions[waiting] ??= "approve";
+                    }
                   }
                 }
                 doc.decisions[key] = decision === "deny" ? "deny" : "approve";
+                return true;
+              }, context)
+            );
+            if (!found) {
+              return yield* new ApprovalNotFound({ key });
+            }
+          });
+
+          const answer = Effect.fn("Seat.answer")(function* (
+            key: string,
+            answers?: readonly AnswerInput[]
+          ) {
+            const found = yield* attempt(() =>
+              harness.commit(async (tx) => {
+                const doc = await tx.doc(ApprovalDoc, id);
+                if (
+                  doc.pending[key]?.question !== true ||
+                  doc.decisions[key] !== undefined
+                ) {
+                  return false;
+                }
+                if (answers === undefined) {
+                  doc.decisions[key] = "deny";
+                } else {
+                  // Copied out: the doc stores plain JSON, not the caller's readonly arrays.
+                  doc.answers = {
+                    ...doc.answers,
+                    [key]: answers.map((each) => ({
+                      ...each,
+                      selected: [...each.selected],
+                    })),
+                  };
+                  doc.decisions[key] = "approve";
+                }
                 return true;
               }, context)
             );
@@ -1426,6 +1483,7 @@ export class Agents extends Context.Service<
             ask,
             stop,
             decide,
+            answer,
             pendingApprovals,
             running,
             changes,
@@ -1486,6 +1544,7 @@ export class Agents extends Context.Service<
               const approvals = await tx.doc(ApprovalDoc, id);
               approvals.pending = {};
               approvals.decisions = {};
+              approvals.answers = {};
               const workspace = await tx.doc(WorkspaceDoc, id);
               // Copied out: the draft cannot be read once the commit settles.
               const files =
@@ -1637,8 +1696,10 @@ export class Agents extends Context.Service<
           approvals.policy = next.approvals;
           // Under `auto` nothing waits: calls already waiting are approved, as "always" does.
           if (next.approvals === "auto") {
-            for (const waiting of Object.keys(approvals.pending)) {
-              approvals.decisions[waiting] ??= "approve";
+            for (const [waiting, entry] of Object.entries(approvals.pending)) {
+              if (entry.question !== true) {
+                approvals.decisions[waiting] ??= "approve";
+              }
             }
           }
         };

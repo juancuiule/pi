@@ -138,6 +138,11 @@ const ConversationsHandlers = HttpApiBuilder.group(
         conversations
           .decide(params.id, payload.key, payload.decision)
           .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("answers", ({ params, payload }) =>
+        conversations
+          .answer(params.id, payload.key, payload.answers)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
       );
   })
 );

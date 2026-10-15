@@ -22,10 +22,11 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { ApprovalContext } from "@/lib/approval-context";
+import { AnswersContext, ApprovalContext } from "@/lib/approval-context";
 import {
   useConversationAction,
   useConversations,
+  useAnswerQuestions,
   useDecideApproval,
 } from "@/lib/queries";
 import { useConversationStore, useResuming } from "@/lib/store";
@@ -126,6 +127,25 @@ const NotFound = ({ onNew }: { onNew: () => void }) => (
   </div>
 );
 
+/** The approval and answer mutations bound to the open conversation, for its tool calls. */
+const ConversationMutations = ({
+  id,
+  children,
+}: {
+  id: number;
+  children: ReactNode;
+}) => {
+  const decideApproval = useDecideApproval(id);
+  const answerQuestions = useAnswerQuestions(id);
+  return (
+    <ApprovalContext.Provider value={decideApproval}>
+      <AnswersContext.Provider value={answerQuestions}>
+        {children}
+      </AnswersContext.Provider>
+    </ApprovalContext.Provider>
+  );
+};
+
 const Console = () => {
   const router = useRouter();
   const selectedId = parseId(useSearchParams().get("c"));
@@ -143,7 +163,6 @@ const Console = () => {
     (store) =>
       selectedId !== undefined && store.hiddenThinking[selectedId] === true
   );
-  const decideApproval = useDecideApproval(selectedId ?? 0);
   const gone = useConversationStore(
     (store) => selectedId !== undefined && (store.ended[selectedId] ?? false)
   );
@@ -183,7 +202,7 @@ const Console = () => {
       <NotFound onNew={clear} />
     ) : (
       // Keyed, so a draft or a take-control mode stays with its conversation.
-      <ApprovalContext.Provider key={selectedId} value={decideApproval}>
+      <ConversationMutations key={selectedId} id={selectedId}>
         <div className="flex h-full min-h-0 flex-col">
           {conversation === undefined ? null : (
             <ConversationHeader
@@ -219,7 +238,7 @@ const Console = () => {
             onNew={clear}
           />
         </div>
-      </ApprovalContext.Provider>
+      </ConversationMutations>
     );
   }
 

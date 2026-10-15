@@ -54,6 +54,14 @@ export type SandboxChoice = typeof SandboxChoice.Type;
 export const ApprovalChoice = Schema.Literals(["approve", "deny", "always"]);
 export type ApprovalChoice = typeof ApprovalChoice.Type;
 
+/** A person's answer to one `ask_user` question: the options picked, and their own text. */
+export const QuestionAnswer = Schema.Struct({
+  id: Schema.String,
+  selected: Schema.Array(Schema.String),
+  other: Schema.optionalKey(Schema.String),
+});
+export type QuestionAnswer = typeof QuestionAnswer.Type;
+
 export const ConversationSummary = Schema.Struct({
   id: Schema.Number,
   sandbox: SandboxChoice,
@@ -327,6 +335,16 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     payload: Schema.Struct({
       key: Schema.String,
       decision: ApprovalChoice,
+    }),
+    success: HttpApiSchema.NoContent,
+    error: [NotFound, ApprovalNotFound.pipe(HttpApiSchema.status(404))],
+  }),
+  // Answer an `ask_user` call; without `answers` its questions are skipped.
+  HttpApiEndpoint.post("answers", "/conversations/:id/answers", {
+    params: ById,
+    payload: Schema.Struct({
+      key: Schema.String,
+      answers: Schema.optionalKey(Schema.Array(QuestionAnswer)),
     }),
     success: HttpApiSchema.NoContent,
     error: [NotFound, ApprovalNotFound.pipe(HttpApiSchema.status(404))],
