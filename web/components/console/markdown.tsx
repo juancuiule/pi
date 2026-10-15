@@ -1,5 +1,6 @@
 "use client";
 
+import { ImageIcon } from "lucide-react";
 import { isValidElement, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
@@ -199,14 +200,54 @@ const UntrustedLink = ({
   );
 };
 
-/** For a document whose author is not the reader: links ask before opening, images do not load. */
+/**
+ * An image in a file the reader did not write: loading it fetches an address
+ * the file's author chose, so it loads only when the person asks for it.
+ */
+const UntrustedImage = ({
+  src,
+  alt,
+}: {
+  src?: string | Blob;
+  alt?: string;
+}) => {
+  const [shown, setShown] = useState(false);
+  const label = `[image${alt === undefined || alt === "" ? "" : `: ${alt}`}]`;
+  if (typeof src !== "string" || src === "") {
+    return <span className="text-muted-foreground">{label}</span>;
+  }
+  if (shown) {
+    return (
+      // oxlint-disable-next-line next/no-img-element -- fetched only on demand; the file does not load it on its own
+      <img
+        src={src}
+        alt={alt ?? ""}
+        referrerPolicy="no-referrer"
+        className="my-2 max-w-full rounded-lg outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+      />
+    );
+  }
+  return (
+    <span className="text-muted-foreground inline-flex items-baseline gap-1.5">
+      {label}
+      <button
+        type="button"
+        onClick={() => setShown(true)}
+        title={src}
+        className="bg-background text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 inline-flex items-center gap-1 rounded-md border px-1.5 align-baseline text-xs outline-none focus-visible:ring-2"
+      >
+        <ImageIcon aria-hidden className="size-3" />
+        Show image
+      </button>
+    </span>
+  );
+};
+
+/** For a document whose author is not the reader: links ask before opening, images load only when asked. */
 const untrustedComponents: Components = {
   ...components,
   a: UntrustedLink,
-  img: ({ alt }) =>
-    alt === undefined || alt === "" ? null : (
-      <span className="text-muted-foreground">{`[image: ${alt}]`}</span>
-    ),
+  img: UntrustedImage,
 };
 
 export const Markdown = ({
