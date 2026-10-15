@@ -229,3 +229,68 @@ describe(formatBlocks, () => {
     expect(blocks[1]).toContain("Not sent: this model does not take images");
   });
 });
+
+describe("tables", () => {
+  const table: Prepared = {
+    ...doc(
+      [
+        [
+          "fecha | región | total",
+          "2026-01-03 | Norte | 42",
+          "2026-01-04 | Sur | 17,50",
+          "2026-01-05 | Norte | 8",
+        ].join("\n"),
+      ],
+      "table"
+    ),
+    table: { rows: 3, columns: 3, delimiter: ";" },
+  };
+
+  it("classifies CSV and TSV, including CSV that Windows reports as Excel's", () => {
+    expect([
+      classify("ventas.csv", "application/vnd.ms-excel", bytes("a;b")),
+      classify("ventas.tsv", "text/tab-separated-values", bytes("a\tb")),
+      classify("ventas.csv", "application/pdf", bytes("a,b")),
+    ]).toStrictEqual([
+      { kind: "table", mediaType: "text/csv" },
+      { kind: "table", mediaType: "text/tab-separated-values" },
+      { unsupported: "The file's contents do not match its .csv name." },
+    ]);
+  });
+
+  it("repeats the header when reading from further down, and speaks of rows", () => {
+    const range = renderRange(table, { page: 1, line: 3 }, 1000);
+    expect(formatRead("att_t", "ventas.csv", table, range)).toBe(
+      [
+        "ventas.csv (att_t), 3 rows × 3 columns, after the header in row 1; from row 3:",
+        "1: fecha | región | total",
+        "…",
+        "3: 2026-01-04 | Sur | 17,50",
+        "4: 2026-01-05 | Norte | 8",
+        "[End of the file.]",
+      ].join("\n")
+    );
+    expect(
+      formatSearch(
+        "att_t",
+        "ventas.csv",
+        table,
+        "norte",
+        search(table, "norte"),
+        5
+      )
+    ).toContain(
+      "2 matching rows in ventas.csv (att_t):\nrow 2: 2026-01-03 | Norte | 42"
+    );
+  });
+
+  it("says in the block how the table is laid out", () => {
+    const [block] = formatBlocks(
+      [{ info: info("att_t", table, "ventas.csv"), prepared: table }],
+      { budget: 1000, images: true }
+    );
+    expect(block).toContain('type="table"');
+    expect(block).toContain("the file separates them with semicolons");
+    expect(block).toContain("2: 2026-01-03 | Norte | 42");
+  });
+});

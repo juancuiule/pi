@@ -147,4 +147,29 @@ describe("extraction in a worker", () => {
     );
     expect(slow.message).toContain("longer than");
   });
+
+  it("reads a CSV as rows, as written: BOM, semicolons, leading zeros and a quoted line break", async () => {
+    const { prepared } = await run(
+      "table",
+      '\uFEFFcódigo;nombre;precio\r\n007;"Pérez; Ana";3,50\r\n008;"dos\nlíneas";12\r\n009;solo\r\n',
+      "text/csv"
+    );
+    expect(prepared).toMatchObject({
+      kind: "table",
+      pages: [
+        "código | nombre | precio\n007 | Pérez; Ana | 3,50\n008 | dos\\nlíneas | 12\n009 | solo",
+      ],
+      table: { rows: 3, columns: 3, delimiter: ";" },
+      warnings: ["Row 4 has a different number of cells than the header (3)."],
+    });
+  });
+
+  it("reads a TSV with tabs whatever its contents", async () => {
+    const { prepared } = await run(
+      "table",
+      "a\tb,c\n1\t2,3\n",
+      "text/tab-separated-values"
+    );
+    expect(prepared.pages).toStrictEqual(["a | b,c\n1 | 2,3"]);
+  });
 });

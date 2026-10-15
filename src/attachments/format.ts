@@ -1,8 +1,11 @@
 // The text side of attachments, with no I/O: what kind of file an upload is, how its text is decoded, and what the
 // model reads: the `<attachment>` blocks of a message, `read_attachment`'s ranges and `search_attachment`'s matches.
-// Prepared text is numbered by page (PDFs) and line, so a citation names a place that exists.
+// Prepared text is numbered by page (PDFs) and line, or by row (tables), so a citation names a place that exists.
 
-export type AttachmentKind = "text" | "html" | "pdf" | "image";
+import { DELIMITER_NAMES } from "./table.ts";
+import type { Delimiter } from "./table.ts";
+
+export type AttachmentKind = "text" | "html" | "pdf" | "table" | "image";
 
 /** `partial`: a PDF with some pages that need OCR; `needs_ocr`: none of its pages has text. */
 export type AttachmentStatus = "ready" | "partial" | "needs_ocr";
@@ -12,7 +15,10 @@ export type AttachmentStatus = "ready" | "partial" | "needs_ocr";
 // oxlint-disable-next-line typescript/consistent-type-definitions
 export type Prepared = {
   readonly kind: AttachmentKind;
-  /** Documents: one entry per PDF page, or a single entry for text and HTML. Empty for images. */
+  /**
+   * Documents: one entry per PDF page, or a single entry for text, HTML and tables (one line per row, row 1 the
+   * header). Empty for images.
+   */
   readonly pages: readonly string[];
   /** 1-based pages without a text layer. */
   readonly ocrPages: readonly number[];
@@ -21,6 +27,12 @@ export type Prepared = {
   readonly extractor: string;
   /** Images: the decoded size of the original. */
   readonly image?: { readonly width: number; readonly height: number };
+  /** Tables: rows after the header, the header's columns, and the delimiter the file uses. */
+  readonly table?: {
+    readonly rows: number;
+    readonly columns: number;
+    readonly delimiter: string;
+  };
 };
 
 /** An attachment as the API and the console see it. */
@@ -39,6 +51,9 @@ export interface AttachmentInfo {
   readonly warnings: readonly string[];
   readonly width?: number;
   readonly height?: number;
+  /** Tables: rows after the header, and the header's columns. */
+  readonly rows?: number;
+  readonly columns?: number;
   readonly createdAt: number;
 }
 
@@ -53,6 +68,8 @@ const EXTENSIONS: Record<string, AttachmentKind> = {
   html: "html",
   htm: "html",
   pdf: "pdf",
+  csv: "table",
+  tsv: "table",
   png: "image",
   jpg: "image",
   jpeg: "image",
@@ -88,9 +105,18 @@ export const sniff = (head: Uint8Array): string | undefined => {
   return undefined;
 };
 
-const TEXT_TYPES: Record<"text" | "html", readonly string[]> = {
+const TEXT_TYPES: Record<"text" | "html" | "table", readonly string[]> = {
   text: ["text/plain", "text/markdown", "text/x-markdown"],
   html: ["text/html", "application/xhtml+xml"],
+  // Windows reports CSV files as Excel's type.
+  table: [
+    "text/csv",
+    "text/x-csv",
+    "application/csv",
+    "text/comma-separated-values",
+    "text/tab-separated-values",
+    "application/vnd.ms-excel",
+  ],
 };
 
 /** Reported types that say nothing: browsers send these for files they do not know. */
@@ -101,6 +127,16 @@ const baseType = (reported: string) =>
 
 const accepts = (reported: string, ...types: readonly string[]) =>
   UNKNOWN_TYPES.has(reported) || types.includes(reported);
+
+const textMediaType = (kind: "text" | "html" | "table", extension: string) => {
+  if (kind === "html") {
+    return "text/html";
+  }
+  if (kind === "table") {
+    return extension === "tsv" ? "text/tab-separated-values" : "text/csv";
+  }
+  return extension === "txt" ? "text/plain" : "text/markdown";
+};
 
 /** The media type a file of `kind` has when its signature and reported type agree with its extension. */
 const mediaTypeOf = (
@@ -123,18 +159,16 @@ const mediaTypeOf = (
         : undefined;
     }
     case "text":
-    case "html": {
-      // Some systems report Markdown and HTML as plain text.
+    case "html":
+    case "table": {
+      // Some systems report Markdown, HTML and tables as plain text.
       if (
         sniffed !== undefined ||
         !accepts(reported, ...TEXT_TYPES[kind], "text/plain")
       ) {
         return undefined;
       }
-      if (kind === "html") {
-        return "text/html";
-      }
-      return extension === "txt" ? "text/plain" : "text/markdown";
+      return textMediaType(kind, extension);
     }
     default: {
       throw new TypeError(`Unknown kind: ${kind satisfies never}`);
@@ -160,7 +194,7 @@ export const classify = (
   if (kind === undefined) {
     return {
       unsupported:
-        "Only text, Markdown, HTML, PDF, PNG, JPEG and WebP files can be attached.",
+        "Only text, Markdown, HTML, CSV, TSV, PDF, PNG, JPEG and WebP files can be attached.",
     };
   }
   const mediaType = mediaTypeOf(
@@ -258,6 +292,11 @@ const linesOf = (page: string) => (page === "" ? [] : page.split("\n"));
 
 const paged = (prepared: Prepared) => prepared.kind === "pdf";
 
+const tabular = (prepared: Prepared) => prepared.kind === "table";
+
+/** What a line is called: a table's lines are its rows. */
+const lineWord = (prepared: Prepared) => (tabular(prepared) ? "row" : "line");
+
 const ocrNote =
   "[No text layer on this page: it needs OCR, which is not available.]";
 
@@ -306,6 +345,18 @@ const lineStep = (
       };
 };
 
+/** A table read from further down starts with its header, so every range says what its columns are. */
+const headerLines = (
+  prepared: Prepared,
+  lines: readonly string[],
+  line: number
+): string[] => {
+  if (!tabular(prepared) || line <= 1 || line > lines.length) {
+    return [];
+  }
+  return [`1: ${lines[0] ?? ""}`, ...(line > 2 ? ["…"] : [])];
+};
+
 /**
  * Prepared text from `from`, lines with their numbers, up to about `budget` characters. With `split` (the default) a
  * range has at least one line, or part of one when a single line is longer; without it, only whole lines, possibly
@@ -346,12 +397,16 @@ export const renderRange = (
       }
     }
     const lines = linesOf(prepared.pages[page - 1] ?? "");
+    const header = headerLines(prepared, lines, line);
+    for (const text of header) {
+      push(text);
+    }
     for (; line <= lines.length; line += 1) {
       const step = lineStep(
         lines[line - 1] ?? "",
         { page, line, column },
         { used, budget },
-        { split, empty: out.length === 0 }
+        { split, empty: out.length === header.length }
       );
       if (step.kind === "stop") {
         return done(step.next);
@@ -370,9 +425,8 @@ export const renderRange = (
 const describePosition = (prepared: Prepared, position: Position) => {
   const column =
     position.column === undefined ? "" : `, column ${position.column + 1}`;
-  return paged(prepared)
-    ? `page ${position.page}, line ${position.line}${column}`
-    : `line ${position.line}${column}`;
+  const line = `${lineWord(prepared)} ${position.line}${column}`;
+  return paged(prepared) ? `page ${position.page}, ${line}` : line;
 };
 
 const nextCall = (id: string, prepared: Prepared, next: Position) => {
@@ -387,6 +441,9 @@ const nextCall = (id: string, prepared: Prepared, next: Position) => {
 
 /** The size of a document's prepared text, for coverage notes. */
 export const extent = (prepared: Prepared): string => {
+  if (prepared.table !== undefined) {
+    return `${prepared.table.rows} rows × ${prepared.table.columns} columns, after the header in row 1`;
+  }
   const lines = prepared.pages.reduce(
     (sum, page) => sum + linesOf(page).length,
     0
@@ -468,7 +525,7 @@ export const formatSearch = (
   limit: number
 ): string => {
   if (matches.length === 0) {
-    return `No line of ${name} (${id}) contains every term of "${query}".`;
+    return `No ${lineWord(prepared)} of ${name} (${id}) contains every term of "${query}".`;
   }
   const shown = matches.slice(0, limit);
   const lines = shown.map(
@@ -478,7 +535,7 @@ export const formatSearch = (
     matches.length > shown.length
       ? `\n[${matches.length - shown.length} more matches; search for more specific terms.]`
       : "";
-  return `${matches.length} matching lines in ${name} (${id}):\n${lines.join("\n")}${more}`;
+  return `${matches.length} matching ${lineWord(prepared)}s in ${name} (${id}):\n${lines.join("\n")}${more}`;
 };
 
 // --- The message's blocks ---
@@ -540,6 +597,11 @@ export const formatBlocks = (
     }
     const extra: Record<string, string> = { size: extent(prepared) };
     const notes: string[] = [];
+    if (prepared.table !== undefined) {
+      notes.push(
+        `[A table: one row per line, cells between " | " (the file separates them with ${DELIMITER_NAMES[prepared.table.delimiter as Delimiter] ?? `"${prepared.table.delimiter}"`}). Values are as written in the file.]`
+      );
+    }
     if (prepared.ocrPages.length > 0) {
       notes.push(
         prepared.ocrPages.length === prepared.pages.length

@@ -93,7 +93,15 @@ interface Row {
 
 type Details = Pick<
   AttachmentRecord,
-  "pages" | "chars" | "ocrPages" | "warnings" | "width" | "height" | "extractor"
+  | "pages"
+  | "chars"
+  | "ocrPages"
+  | "warnings"
+  | "width"
+  | "height"
+  | "rows"
+  | "columns"
+  | "extractor"
 >;
 
 const toRecord = (row: Row): AttachmentRecord => {
@@ -189,6 +197,8 @@ export const sqliteRecords = (
         ...(record.chars === undefined ? {} : { chars: record.chars }),
         ...(record.width === undefined ? {} : { width: record.width }),
         ...(record.height === undefined ? {} : { height: record.height }),
+        ...(record.rows === undefined ? {} : { rows: record.rows }),
+        ...(record.columns === undefined ? {} : { columns: record.columns }),
       };
       db.prepare(
         `INSERT INTO attachments (id, conversation_id, name, media_type, kind, size, sha256, status, details, created_at, sent_at)

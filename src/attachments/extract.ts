@@ -13,6 +13,12 @@ import { extractText, getDocumentProxy } from "unpdf";
 import type { AttachmentKind, Prepared } from "./format.ts";
 import { decodeText, normalizeText } from "./format.ts";
 import { htmlToText } from "./html.ts";
+import {
+  detectDelimiter,
+  parseDelimited,
+  raggedRows,
+  renderRow,
+} from "./table.ts";
 
 export interface ExtractLimits {
   readonly maxPdfPages: number;
@@ -106,6 +112,47 @@ const extractTextFile = (bytes: Uint8Array): Extracted => {
       ocrPages: [],
       warnings: [...warnings, ...emptyWarning(normalized)],
       extractor: "text",
+    },
+  };
+};
+
+/** How many ragged rows a warning lists. */
+const LISTED_ROWS = 5;
+
+const listRows = (rows: readonly number[]) =>
+  rows.length <= LISTED_ROWS
+    ? rows.join(", ")
+    : `${rows.slice(0, LISTED_ROWS).join(", ")} and ${rows.length - LISTED_ROWS} more`;
+
+/** CSV or TSV: one line per row, cells as written; not normalized, so line numbers stay row numbers. */
+const extractTable = (bytes: Uint8Array, mediaType: string): Extracted => {
+  const { text, warnings } = decoded(bytes);
+  const delimiter =
+    mediaType === "text/tab-separated-values" ? "\t" : detectDelimiter(text);
+  const { rows, unterminated } = parseDelimited(text, delimiter);
+  const ragged = raggedRows(rows);
+  const columns = rows[0]?.length ?? 0;
+  return {
+    prepared: {
+      kind: "table",
+      pages: [rows.map((row) => renderRow(row)).join("\n")],
+      ocrPages: [],
+      warnings: [
+        ...warnings,
+        ...(rows.length === 0 ? ["The file has no rows."] : []),
+        ...(unterminated
+          ? [
+              "A quoted value is never closed: the last row holds the rest of the file.",
+            ]
+          : []),
+        ...(ragged.length === 0
+          ? []
+          : [
+              `${ragged.length === 1 ? "Row" : "Rows"} ${listRows(ragged)} ${ragged.length === 1 ? "has" : "have"} a different number of cells than the header (${columns}).`,
+            ]),
+      ],
+      extractor: "delimited",
+      table: { rows: Math.max(0, rows.length - 1), columns, delimiter },
     },
   };
 };
@@ -264,6 +311,9 @@ export const extract = async (input: ExtractInput): Promise<Extracted> => {
     }
     case "html": {
       return extractHtml(bytes);
+    }
+    case "table": {
+      return extractTable(bytes, input.mediaType);
     }
     case "pdf": {
       return extractPdf(bytes, input.limits);

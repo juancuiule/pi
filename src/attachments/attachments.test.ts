@@ -15,6 +15,8 @@ import {
   callTool,
   echoToolResult,
   fauxAgents,
+  offered,
+  offeredIn,
   openSeat,
 } from "../testing/faux.ts";
 import { image, textPdf } from "../testing/files.ts";
@@ -310,6 +312,53 @@ describe("the attachment tools", () => {
       "1: <title>T</title><p>Hello <b>there</b></p>"
     );
     expect(result.unsent).toMatch(/^error: [\s\S]*No attachment att_/u);
+  });
+});
+
+describe("tables", () => {
+  it("are read from any row with their header, and the agent is told how to compute over them", async () => {
+    const rows = Array.from(
+      { length: 300 },
+      (_, index) =>
+        `${String(index + 1).padStart(4, "0")};${index % 2 === 0 ? "Norte" : "Sur"};${index}`
+    );
+    const csv = ["id;región;unidades", ...rows].join("\n");
+    const { layer, faux } = fauxAgents([], {
+      attachmentLimits: { inlineChars: 200 },
+    });
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat();
+          const info = yield* upload("ventas.csv", csv, Number(seat.id));
+          faux.setResponses([
+            showMessage,
+            callTool("read_attachment", { id: info.id, line: 250 }),
+            echoToolResult,
+            offered,
+          ]);
+          return {
+            info,
+            message: yield* seat.ask("Totals by region?", [info.id]),
+            read: yield* seat.ask("Read row 250."),
+            prompt: offeredIn(yield* seat.ask("What do you have?")).system,
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect(result.info).toMatchObject({
+      kind: "table",
+      mediaType: "text/csv",
+      rows: 300,
+      columns: 3,
+    });
+    expect(textOf(result.message)).toMatch(
+      /included="part"[\s\S]*1: id \| región \| unidades\n2: 0001 \| Norte \| 0/u
+    );
+    expect(result.read).toMatch(
+      /from row 250:\n1: id \| región \| unidades\n…\n250: 0249 \| Norte \| 248/u
+    );
+    expect(result.prompt).toContain("You cannot compute over a table here");
   });
 });
 

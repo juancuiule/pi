@@ -74,7 +74,7 @@ export const AttachmentInfo = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   mediaType: Schema.String,
-  kind: Schema.Literals(["text", "html", "pdf", "image"]),
+  kind: Schema.Literals(["text", "html", "pdf", "table", "image"]),
   size: Schema.Number,
   /** `partial`: some PDF pages need OCR; `needs_ocr`: none has text. */
   status: Schema.Literals(["ready", "partial", "needs_ocr"]),
@@ -84,6 +84,9 @@ export const AttachmentInfo = Schema.Struct({
   warnings: Schema.Array(Schema.String),
   width: Schema.optionalKey(Schema.Number),
   height: Schema.optionalKey(Schema.Number),
+  /** Tables: rows after the header, and the header's columns. */
+  rows: Schema.optionalKey(Schema.Number),
+  columns: Schema.optionalKey(Schema.Number),
   createdAt: Schema.Number,
 });
 export type AttachmentInfo = typeof AttachmentInfo.Type;
