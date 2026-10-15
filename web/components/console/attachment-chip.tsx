@@ -10,6 +10,7 @@ import {
   ScanText,
   X,
 } from "lucide-react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 import type {
@@ -19,6 +20,8 @@ import type {
 } from "@/lib/attachments";
 import { attachmentStatus, attachmentUrl, statusText } from "@/lib/attachments";
 import { cn } from "@/lib/utils";
+
+import { AttachmentViewer } from "./attachment-viewer";
 
 const KIND_ICON: Record<AttachmentKind, typeof FileText> = {
   text: FileText,
@@ -108,7 +111,7 @@ export const DraftChip = ({
   );
 };
 
-/** A sent file in the transcript: it downloads the original; an image shows its thumbnail. */
+/** A sent file in the transcript: it opens the viewer (what the agent reads, and the original to download). */
 export const SentChip = ({
   attachment,
   conversation,
@@ -116,6 +119,9 @@ export const SentChip = ({
   attachment: AttachmentRef;
   conversation: number;
 }) => {
+  const [open, setOpen] = useState(false);
+  // The viewer (and its request) exists only once the chip was opened; a transcript has many chips.
+  const [opened, setOpened] = useState(false);
   const Kind = KIND_ICON[attachment.kind];
   const status = statusText(attachment);
   const icon =
@@ -125,29 +131,42 @@ export const SentChip = ({
       <ScanText className="text-warning" />
     );
   return (
-    <a
-      href={attachmentUrl(attachment.id, "original", conversation)}
-      download={attachment.name}
-      title={`Download ${attachment.name}`}
-      className={cn(
-        chipClass,
-        "hover:bg-muted focus-visible:ring-ring/50 pr-2.5 outline-none focus-visible:ring-2"
-      )}
-    >
-      {attachment.kind === "image" ? (
-        // oxlint-disable-next-line next/no-img-element -- a small private thumbnail from our API
-        <img
-          src={attachmentUrl(attachment.id, "thumbnail", conversation)}
-          alt=""
-          className="size-8 shrink-0 rounded object-cover outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setOpened(true);
+          setOpen(true);
+        }}
+        title={`View ${attachment.name}`}
+        className={cn(
+          chipClass,
+          "hover:bg-muted focus-visible:ring-ring/50 pr-2.5 text-left outline-none focus-visible:ring-2"
+        )}
+      >
+        {attachment.kind === "image" ? (
+          // oxlint-disable-next-line next/no-img-element -- a small private thumbnail from our API
+          <img
+            src={attachmentUrl(attachment.id, "thumbnail", conversation)}
+            alt=""
+            className="size-8 shrink-0 rounded object-cover outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+          />
+        ) : null}
+        <ChipBody
+          icon={attachment.kind === "image" ? null : icon}
+          name={attachment.name}
+          status={status}
+          warning={status !== ""}
+        />
+      </button>
+      {opened ? (
+        <AttachmentViewer
+          attachment={attachment}
+          conversation={conversation}
+          open={open}
+          onOpenChange={setOpen}
         />
       ) : null}
-      <ChipBody
-        icon={attachment.kind === "image" ? null : icon}
-        name={attachment.name}
-        status={status}
-        warning={status !== ""}
-      />
-    </a>
+    </>
   );
 };

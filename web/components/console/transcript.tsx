@@ -272,7 +272,8 @@ const Entry = ({
       // Attachment blocks come last, after any skill hints.
       const files = splitAttachments(parsed.text);
       const { text, hinted } = splitSkillHints(files.text);
-      const { images } = parsed;
+      // A message's images are its attached images, already shown as chips that open them.
+      const images = files.attachments.length > 0 ? [] : parsed.images;
       const skill = parseSkillMessage(text);
       const shown = skill === undefined ? text : skill.request;
       return (

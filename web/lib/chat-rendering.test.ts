@@ -459,7 +459,7 @@ describe("Markdown code blocks", () => {
 });
 
 describe("attachments in the transcript", () => {
-  it("shows sent files as download chips instead of their text", () => {
+  it("shows sent files as chips that open them, instead of their text", () => {
     const id = `att_${"c".repeat(32)}`;
     const html = transcript({
       ...initialState,
@@ -471,10 +471,29 @@ describe("attachments in the transcript", () => {
         } as Message),
       ],
     });
-    expect(html).toContain(
-      `href="/api/attachments/${id}/original?conversation=1"`
-    );
-    expect(html).toContain("plan.md");
+    expect(html).toContain('title="View plan.md"');
     expect(html).not.toContain("secret plan");
+  });
+
+  it("does not repeat an attached image in full under its chip", () => {
+    const id = `att_${"d".repeat(32)}`;
+    const html = transcript({
+      ...initialState,
+      entries: [
+        entry({
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `What is this?\n\n<attachment id="${id}" name="factura.png" type="image" status="ready" width="10" height="10">\n[The image follows this message's text.]\n</attachment>`,
+            },
+            { type: "image", data: "AAAA", mimeType: "image/png" },
+          ],
+          timestamp: 0,
+        } as Message),
+      ],
+    });
+    expect(html).toContain(`/api/attachments/${id}/thumbnail?conversation=1`);
+    expect(html).not.toContain("data:image/png;base64,AAAA");
   });
 });

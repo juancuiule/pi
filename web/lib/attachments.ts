@@ -117,6 +117,14 @@ export const attachmentUrl = (
     conversation === undefined ? "" : `?conversation=${conversation}`
   }`;
 
+/** One page of a sent PDF, drawn as an image by the server. */
+export const attachmentPageUrl = (
+  id: string,
+  page: number,
+  conversation: number
+): string =>
+  `/api/attachments/${encodeURIComponent(id)}/pages/${page}?conversation=${conversation}`;
+
 /** A file in the composer: uploading, refused, or uploaded and checked. */
 export type DraftAttachment =
   | {
@@ -210,4 +218,29 @@ export const sendable = (
     ids: uploaded.map((draft) => draft.info.id),
     keys: uploaded.map((draft) => draft.key),
   };
+};
+
+/**
+ * The cells of a prepared table row: cells are joined with ` | `, and inside a cell `\|`, `\n` and `\\` stand for a
+ * pipe, a line break and a backslash (src/attachments/table.ts renderRow).
+ */
+export const tableCells = (line: string): string[] => {
+  const cells: string[] = [];
+  let cell = "";
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "\\" && index + 1 < line.length) {
+      const next = line[index + 1];
+      cell += next === "n" ? "\n" : (next ?? "");
+      index += 1;
+    } else if (line.startsWith(" | ", index)) {
+      cells.push(cell);
+      cell = "";
+      index += 2;
+    } else {
+      cell += char ?? "";
+    }
+  }
+  cells.push(cell);
+  return cells;
 };

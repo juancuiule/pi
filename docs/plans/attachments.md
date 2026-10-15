@@ -33,6 +33,7 @@ Statuses: `ready`; `partial` (a PDF with some pages that need OCR); `needs_ocr` 
 - The message is the typed text (the only part `/skill:` reads), then one `<attachment …>` block per file. Documents are inline, whole pages at a time, up to `ATTACHMENT_INLINE_CHARS` per message; a block that does not fit says which pages or lines it holds and how to read the rest. Images follow as image content when the model takes images; otherwise the block says the image was not sent.
 - The `attachments` extension (always on, locked) has `read_attachment` (any range, at most `ATTACHMENT_READ_CHARS` per call, with where it is in the whole file and what to read next) and `search_attachment` (lines matching every term, with page and line). Both run on the host, so they work at every Level, and only read the conversation's own sent attachments.
 - Conversations with a shell or desktop also get each sent original at `/workspace/.attachments/<id>/<name>`.
+- The console's viewer shows a file as the agent reads it (text, tables, notes) and, for PDFs, the pages as they look: drawn to WebP in the worker on first view and kept, so no uploaded document is ever opened by the browser.
 - Traces replace attachment text (message blocks and the tools' results) with its size, unless `TRACE_ATTACHMENT_TEXT=true`.
 
 ## Limits (`.env.schema`)

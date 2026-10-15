@@ -7,6 +7,7 @@ import {
   sizeText,
   splitAttachments,
   statusText,
+  tableCells,
 } from "./attachments";
 import type { DraftAttachment } from "./attachments";
 
@@ -155,6 +156,17 @@ describe(sizeText, () => {
       ).attachments
     ).toStrictEqual([
       { id: ID, name: "v.csv", kind: "table", status: "ready" },
+    ]);
+  });
+});
+
+describe(tableCells, () => {
+  it("splits a prepared row back into cells, undoing the escapes", () => {
+    expect(tableCells("a\\|b | x\\ny | c:\\\\d | ")).toStrictEqual([
+      "a|b",
+      "x\ny",
+      "c:\\d",
+      "",
     ]);
   });
 });

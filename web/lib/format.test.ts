@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatBytes,
   formatCost,
   formatDuration,
   formatTokens,
@@ -92,5 +93,13 @@ describe(relativeTime, () => {
 
   it("never goes negative", () => {
     expect(relativeTime(now + 60_000, now)).toBe("just now");
+  });
+});
+
+describe(formatBytes, () => {
+  it("rounds to the unit people read", () => {
+    expect([820, 14_500, 3_355_443, 26_214_400].map(formatBytes)).toStrictEqual(
+      ["820 B", "14 KB", "3.2 MB", "25 MB"]
+    );
   });
 });
