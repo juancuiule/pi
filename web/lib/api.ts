@@ -11,6 +11,45 @@ const makeClient = Effect.suspend(() =>
 
 export type ApiClient = Effect.Success<typeof makeClient>;
 
+/** The HTTP status of a client error's response, when it got one. */
+const responseStatus = (error: object): number | undefined => {
+  const reason = "reason" in error ? error.reason : undefined;
+  const response =
+    typeof reason === "object" && reason !== null && "response" in reason
+      ? reason.response
+      : undefined;
+  return typeof response === "object" &&
+    response !== null &&
+    "status" in response &&
+    typeof response.status === "number"
+    ? response.status
+    : undefined;
+};
+
+/** A message for the failures of uploads and messages with files. */
+const uploadError = (error: object & { _tag: unknown }): string | undefined => {
+  switch (error._tag) {
+    case "AttachmentRefused": {
+      return "message" in error ? String(error.message) : "File refused.";
+    }
+    case "AttachmentNotFound": {
+      return "A file is no longer available (sent already, or expired). Remove it and attach it again.";
+    }
+    case "EmptyMessage": {
+      return "Write a message or attach a file.";
+    }
+    case "HttpClientError": {
+      // An upload over the size limit is cut off while it streams, with no error body.
+      return responseStatus(error) === 413
+        ? "The file is too large to upload."
+        : "The request failed.";
+    }
+    default: {
+      return undefined;
+    }
+  }
+};
+
 /** A message for a failure from the API, for toasts and inline errors. */
 export const apiError = (error: unknown): string => {
   if (typeof error === "object" && error !== null && "_tag" in error) {
@@ -38,7 +77,7 @@ export const apiError = (error: unknown): string => {
         return "This conversation is archived. Unarchive it to continue.";
       }
       default: {
-        return String(error._tag);
+        return uploadError(error) ?? String(error._tag);
       }
     }
   }

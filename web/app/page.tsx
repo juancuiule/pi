@@ -206,6 +206,7 @@ const Console = () => {
           )}
           <Transcript
             state={state}
+            conversation={selectedId}
             resuming={resuming}
             showThinking={!thinkingHidden}
           />

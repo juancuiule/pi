@@ -1,10 +1,18 @@
 "use client";
 
-import { ArrowUp, BookOpen } from "lucide-react";
+import { ArrowUp, BookOpen, Paperclip } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ReactNode, RefObject } from "react";
+import type {
+  ClipboardEvent,
+  DragEvent,
+  KeyboardEvent,
+  ReactNode,
+  RefObject,
+} from "react";
 
 import { Button } from "@/components/ui/button";
+import { ACCEPTED_FILES, canSend } from "@/lib/attachments";
+import type { DraftAttachment } from "@/lib/attachments";
 import { useCapabilities } from "@/lib/queries";
 import {
   completeSkill,
@@ -14,6 +22,113 @@ import {
 } from "@/lib/skill-autocomplete";
 import { shouldSubmit } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
+
+import { DraftChip } from "./attachment-chip";
+
+/** Files for the next message: added by the picker, a drop or a paste; each uploads at once. */
+export interface ComposerAttachments {
+  readonly items: readonly DraftAttachment[];
+  readonly onAdd: (files: File[]) => void;
+  readonly onRemove: (key: string) => void;
+}
+
+const hasFiles = (event: DragEvent) =>
+  event.dataTransfer.types.includes("Files");
+
+/** Whether files are dragged over the box, and the handlers that take them when dropped. */
+const useFileDrop = (attachments: ComposerAttachments | undefined) => {
+  const [dragging, setDragging] = useState(false);
+  return {
+    dragging,
+    onDragOver: (event: DragEvent) => {
+      if (attachments === undefined || !hasFiles(event)) {
+        return;
+      }
+      event.preventDefault();
+      setDragging(true);
+    },
+    onDragLeave: () => setDragging(false),
+    onDrop: (event: DragEvent) => {
+      setDragging(false);
+      if (attachments === undefined || !hasFiles(event)) {
+        return;
+      }
+      event.preventDefault();
+      attachments.onAdd([...event.dataTransfer.files]);
+    },
+  };
+};
+
+const sendable = (
+  prompt: string,
+  attachments: ComposerAttachments | undefined
+) => canSend(prompt, attachments?.items ?? []);
+
+/** The files of the next message, each with its status and a remove button. */
+const DraftList = ({
+  attachments,
+}: {
+  attachments: ComposerAttachments | undefined;
+}) =>
+  attachments === undefined || attachments.items.length === 0 ? null : (
+    <ul aria-label="Attached files" className="flex flex-wrap gap-1.5">
+      {attachments.items.map((draft) => (
+        <DraftChip
+          key={draft.key}
+          draft={draft}
+          onRemove={() => attachments.onRemove(draft.key)}
+        />
+      ))}
+    </ul>
+  );
+
+/** A paste of files adds them instead of their names. */
+const pasteHandler =
+  (attachments: ComposerAttachments | undefined) =>
+  (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...event.clipboardData.files];
+    if (attachments !== undefined && files.length > 0) {
+      event.preventDefault();
+      attachments.onAdd(files);
+    }
+  };
+
+/** The paperclip: a file picker for the formats the server reads; none for a composer without attachments. */
+const AttachButton = ({
+  attachments,
+}: {
+  attachments: ComposerAttachments | undefined;
+}) => {
+  const picker = useRef<HTMLInputElement>(null);
+  if (attachments === undefined) {
+    return null;
+  }
+  return (
+    <>
+      <input
+        ref={picker}
+        type="file"
+        multiple
+        accept={ACCEPTED_FILES}
+        className="hidden"
+        onChange={(event) => {
+          attachments.onAdd([...(event.target.files ?? [])]);
+          // The same file can be picked again after removing it.
+          event.target.value = "";
+        }}
+      />
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Attach files"
+        title="Attach text, Markdown, HTML, PDF or image files"
+        onClick={() => picker.current?.click()}
+      >
+        <Paperclip />
+      </Button>
+    </>
+  );
+};
 
 export const Composer = ({
   prompt,
@@ -25,6 +140,7 @@ export const Composer = ({
   hint,
   tall = false,
   inputRef,
+  attachments,
 }: {
   prompt: string;
   onPrompt: (value: string) => void;
@@ -38,7 +154,9 @@ export const Composer = ({
   /** Roomier box for the start-of-conversation form. */
   tall?: boolean;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
+  attachments?: ComposerAttachments;
 }) => {
+  const { dragging, ...dropHandlers } = useFileDrop(attachments);
   const { data } = useCapabilities();
   const [selected, setSelected] = useState(0);
   // The prompt the list was dismissed for (Esc); it reopens once the prompt changes.
@@ -151,34 +269,45 @@ export const Composer = ({
           ? ""
           : `/skill:${active.name}, ${options.indexOf(active) + 1} of ${options.length}. Enter or Tab to complete, Escape to close.`}
       </span>
-      <div className="bg-card focus-within:border-ring focus-within:ring-ring/50 flex items-end gap-2 rounded-xl border p-1.5 shadow-xs focus-within:ring-3">
-        <textarea
-          ref={textarea}
-          autoFocus
-          aria-label="Message"
-          placeholder={placeholder}
-          rows={tall ? 3 : 1}
-          value={prompt}
-          onChange={(event) => {
-            onPrompt(event.target.value);
-            setCursor(event.target.selectionStart);
-            setSelected(0);
-          }}
-          onSelect={(event) => setCursor(event.currentTarget.selectionStart)}
-          onKeyDown={onKeyDown}
-          className={cn(
-            "placeholder:text-muted-foreground md:text-prose field-sizing-content max-h-44 flex-1 resize-none bg-transparent px-2.5 py-1.5 text-base outline-none",
-            tall ? "min-h-24" : "min-h-9"
-          )}
-        />
-        <Button
-          size="icon-sm"
-          aria-label={running ? "Queue message" : "Send"}
-          disabled={pending || prompt.trim() === ""}
-          onClick={onSubmit}
-        >
-          <ArrowUp />
-        </Button>
+      <div
+        {...dropHandlers}
+        className={cn(
+          "bg-card focus-within:border-ring focus-within:ring-ring/50 flex flex-col gap-1.5 rounded-xl border p-1.5 shadow-xs focus-within:ring-3",
+          dragging && "border-ring ring-ring/50 ring-3"
+        )}
+      >
+        <DraftList attachments={attachments} />
+        <div className="flex items-end gap-2">
+          <AttachButton attachments={attachments} />
+          <textarea
+            ref={textarea}
+            autoFocus
+            aria-label="Message"
+            placeholder={placeholder}
+            rows={tall ? 3 : 1}
+            value={prompt}
+            onChange={(event) => {
+              onPrompt(event.target.value);
+              setCursor(event.target.selectionStart);
+              setSelected(0);
+            }}
+            onSelect={(event) => setCursor(event.currentTarget.selectionStart)}
+            onKeyDown={onKeyDown}
+            onPaste={pasteHandler(attachments)}
+            className={cn(
+              "placeholder:text-muted-foreground md:text-prose field-sizing-content max-h-44 flex-1 resize-none bg-transparent px-2.5 py-1.5 text-base outline-none",
+              tall ? "min-h-24" : "min-h-9"
+            )}
+          />
+          <Button
+            size="icon-sm"
+            aria-label={running ? "Queue message" : "Send"}
+            disabled={pending || !sendable(prompt, attachments)}
+            onClick={onSubmit}
+          >
+            <ArrowUp />
+          </Button>
+        </div>
       </div>
       <p className="text-muted-foreground px-1 text-xs">{hint}</p>
     </div>

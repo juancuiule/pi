@@ -46,7 +46,12 @@ const transcript = (
   showThinking = true
 ) =>
   renderToStaticMarkup(
-    createElement(Transcript, { state, resuming, showThinking })
+    createElement(Transcript, {
+      state,
+      conversation: 1,
+      resuming,
+      showThinking,
+    })
   );
 const toolCall = (state: ConversationState) =>
   renderToStaticMarkup(createElement(ToolCall, { call, state }));
@@ -450,5 +455,26 @@ describe("Markdown code blocks", () => {
     expect(html).toContain(">pwd</code>");
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("attachments in the transcript", () => {
+  it("shows sent files as download chips instead of their text", () => {
+    const id = `att_${"c".repeat(32)}`;
+    const html = transcript({
+      ...initialState,
+      entries: [
+        entry({
+          role: "user",
+          content: `Read it.\n\n<attachment id="${id}" name="plan.md" type="text" status="ready" size="1 lines">\n1: secret plan\n</attachment>`,
+          timestamp: 0,
+        } as Message),
+      ],
+    });
+    expect(html).toContain(
+      `href="/api/attachments/${id}/original?conversation=1"`
+    );
+    expect(html).toContain("plan.md");
+    expect(html).not.toContain("secret plan");
   });
 });
