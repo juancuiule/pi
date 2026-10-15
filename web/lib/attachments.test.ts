@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   attachmentUrl,
   canSend,
-  sendableIds,
+  sendable,
   sizeText,
   splitAttachments,
   statusText,
@@ -49,6 +49,22 @@ describe(splitAttachments, () => {
   });
 });
 
+describe("typed examples of the format", () => {
+  it("stay text unless complete blocks run to the end of the message", () => {
+    const typed = `Explain this:\n\n<attachment id="${ID}" name="example.txt" type="text" status="ready">\nSample\n</attachment>\nMy question`;
+    expect(splitAttachments(typed)).toStrictEqual({
+      text: typed,
+      attachments: [],
+    });
+    // The server escapes a typed tag, so a real block after it is still found, and the typed one stays text.
+    const escaped = `Like <\u200Battachment id="${ID}">\n\n${block('name="real.md" type="text" status="ready"')}`;
+    expect(splitAttachments(escaped)).toStrictEqual({
+      text: `Like <\u200Battachment id="${ID}">`,
+      attachments: [{ id: ID, name: "real.md", kind: "text", status: "ready" }],
+    });
+  });
+});
+
 describe(canSend, () => {
   const uploaded: DraftAttachment = {
     key: "f1",
@@ -89,7 +105,10 @@ describe(canSend, () => {
   });
 
   it("sends only uploaded files", () => {
-    expect(sendableIds([uploaded, failed])).toStrictEqual([ID]);
+    expect(sendable([uploaded, failed])).toStrictEqual({
+      ids: [ID],
+      keys: ["f1"],
+    });
   });
 });
 

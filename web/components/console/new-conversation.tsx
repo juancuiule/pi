@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { RadioGroup } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
-import { canSend, sendableIds } from "@/lib/attachments";
+import { canSend, sendable } from "@/lib/attachments";
 import { useTakeDraft } from "@/lib/draft";
 import { useCapabilities, useCreateConversation, useInfo } from "@/lib/queries";
 import {
@@ -79,18 +79,19 @@ export const NewConversation = ({
     if (!canSend(prompt, files.items) || create.isPending) {
       return;
     }
+    const { ids, keys } = sendable(files.items);
     create.mutate(
       // Sent for chats too: the agent's upgrade_workspace is gated like commands.
       {
         sandbox,
         prompt: prompt.trim(),
-        attachments: sendableIds(files.items),
+        attachments: ids,
         approvals: approvals ? ("ask" as const) : ("auto" as const),
         ...(customized === undefined ? {} : { settings: customized }),
       },
       {
         onSuccess: (created) => {
-          files.clear();
+          files.take(keys);
           onCreated(created.id);
         },
         onError: (error) => toast.error(error.message),

@@ -19,8 +19,9 @@ export interface AttachmentRef {
   readonly included?: "part" | "none";
 }
 
-const BLOCK_START = /(?:^|\n\n)<attachment id="att_[0-9a-f]{32}"/u;
+const BLOCK_START = /(?:^|\n\n)<attachment id="att_[0-9a-f]{32}"/gu;
 const OPEN_TAG = "<attachment ";
+const CLOSE_TAG = "\n</attachment>";
 const ATTRIBUTE = /[a-z]+="[^"]*"/gu;
 const KINDS = new Set<string>(["text", "html", "pdf", "table", "image"]);
 const STATUSES = new Set<string>(["ready", "partial", "needs_ocr"]);
@@ -57,25 +58,53 @@ const refOf = (attributes: string): AttachmentRef | undefined => {
 };
 
 /** A user message's text without its attachment blocks, and the files they name. */
+/**
+ * The files of `tail` when it is nothing but complete blocks, separated by blank lines, up to the end. A file's text
+ * cannot hold a closing tag (the server escapes it), so a block ends at the first one.
+ */
+const blocksOf = (tail: string): AttachmentRef[] | undefined => {
+  const refs: AttachmentRef[] = [];
+  let at = 0;
+  while (at < tail.length) {
+    const lineEnd = tail.indexOf("\n", at);
+    const line = lineEnd === -1 ? "" : tail.slice(at, lineEnd);
+    const ref =
+      line.startsWith(OPEN_TAG) && line.endsWith(">")
+        ? refOf(line.slice(OPEN_TAG.length, -1))
+        : undefined;
+    const close = ref === undefined ? -1 : tail.indexOf(CLOSE_TAG, lineEnd);
+    if (ref === undefined || close === -1) {
+      return undefined;
+    }
+    refs.push(ref);
+    at = close + CLOSE_TAG.length;
+    if (at < tail.length && !tail.startsWith("\n\n", at)) {
+      return undefined;
+    }
+    at += 2;
+  }
+  return refs;
+};
+
+/**
+ * A user message's text without its attachment blocks, and the files they name. Only blocks that run, complete, to
+ * the end of the message count: the server appends them after the text, and escapes what a person types, so a typed
+ * example of the format stays text.
+ */
 export const splitAttachments = (
   text: string
 ): {
   readonly text: string;
   readonly attachments: readonly AttachmentRef[];
 } => {
-  const start = BLOCK_START.exec(text);
-  if (start === null) {
-    return { text, attachments: [] };
-  }
-  const blocks = text.slice(start.index);
-  const attachments = blocks.split("\n").flatMap((line) => {
-    if (!line.startsWith(OPEN_TAG) || !line.endsWith(">")) {
-      return [];
+  for (const match of text.matchAll(BLOCK_START)) {
+    const start = match.index + (match[0].startsWith("\n\n") ? 2 : 0);
+    const attachments = blocksOf(text.slice(start));
+    if (attachments !== undefined) {
+      return { text: text.slice(0, match.index), attachments };
     }
-    const ref = refOf(line.slice(OPEN_TAG.length, -1));
-    return ref === undefined ? [] : [ref];
-  });
-  return { text: text.slice(0, start.index), attachments };
+  }
+  return { text, attachments: [] };
 };
 
 /** Where the console gets an attachment's original or thumbnail; `conversation` is unset for a staged upload. */
@@ -167,8 +196,18 @@ export const canSend = (
   !drafts.some((draft) => draft.state === "uploading") &&
   (prompt.trim() !== "" || drafts.some((draft) => draft.state === "uploaded"));
 
-/** The ids a message sends: uploaded files only; refused ones stay behind for the person to remove. */
-export const sendableIds = (drafts: readonly DraftAttachment[]): string[] =>
-  drafts.flatMap((draft) =>
-    draft.state === "uploaded" ? [draft.info.id] : []
+/**
+ * What a message sends: the uploaded files' ids, and their keys to drop from the composer once it is sent. Refused
+ * files stay behind for the person to remove.
+ */
+export const sendable = (
+  drafts: readonly DraftAttachment[]
+): { readonly ids: string[]; readonly keys: string[] } => {
+  const uploaded = drafts.flatMap((draft) =>
+    draft.state === "uploaded" ? [draft] : []
   );
+  return {
+    ids: uploaded.map((draft) => draft.info.id),
+    keys: uploaded.map((draft) => draft.key),
+  };
+};

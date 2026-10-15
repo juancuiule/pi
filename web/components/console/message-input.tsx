@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { canSend, sendableIds } from "@/lib/attachments";
+import { canSend, sendable } from "@/lib/attachments";
 import { useTakeDraft } from "@/lib/draft";
 import { useSendMessage } from "@/lib/queries";
 import { useDraftAttachments } from "@/lib/use-draft-attachments";
@@ -50,12 +50,14 @@ export const MessageInput = ({
     if (!canSend(prompt, files.items) || send.isPending) {
       return;
     }
+    // Files added while this sends are not part of it, and stay in the composer.
+    const { ids, keys } = sendable(files.items);
     send.mutate(
-      { prompt: prompt.trim(), attachments: sendableIds(files.items) },
+      { prompt: prompt.trim(), attachments: ids },
       {
         onSuccess: () => {
           setPrompt("");
-          files.clear();
+          files.take(keys);
           textarea.current?.focus();
         },
         onError: (error) => toast.error(error.message),

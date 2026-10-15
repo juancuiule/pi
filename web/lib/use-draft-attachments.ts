@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { runApi } from "./api";
 import type { DraftAttachment } from "./attachments";
@@ -14,7 +14,7 @@ const upload = (file: File, conversation: number | undefined) => {
   return runApi((c) => c.attachments.upload({ payload }));
 };
 
-/** Delete an unsent upload; one that cannot be deleted now expires anyway. */
+/** Delete an unsent upload; the server refuses sent ones, and one that cannot be deleted now expires anyway. */
 const forget = async (id: string) => {
   try {
     await runApi((c) => c.attachments.remove({ params: { id } }));
@@ -23,45 +23,78 @@ const forget = async (id: string) => {
   }
 };
 
+type Drafts = Readonly<Record<string, readonly DraftAttachment[]>>;
+
+const scopeOf = (conversation: number | undefined) =>
+  conversation === undefined ? "new" : String(conversation);
+
 /**
- * The files in a composer: each is uploaded as soon as it is added (staged, or to `conversation`), and removing one
- * deletes the upload. The list belongs to one conversation; switching conversations starts an empty one.
+ * The files in a composer, per conversation (a switch keeps each one's files): each is uploaded as soon as it is
+ * added (staged, or to `conversation`). Removing one deletes its upload, even one still uploading; so does leaving
+ * the composer with files never sent. `take` drops the files a message sent, keeping any added since.
  */
 export const useDraftAttachments = (conversation?: number) => {
-  const [drafts, setDrafts] = useState<{
-    readonly conversation: number | undefined;
-    readonly items: readonly DraftAttachment[];
-  }>({ conversation, items: [] });
-  const items = drafts.conversation === conversation ? drafts.items : [];
+  const scope = scopeOf(conversation);
+  const [drafts, setDrafts] = useState<Drafts>({});
+  const items = drafts[scope] ?? [];
   const counter = useRef(0);
+  // Keys removed while uploading, whose upload is deleted when it lands; and keys sent, never deleted.
+  const removed = useRef(new Set<string>());
+  const sent = useRef(new Set<string>());
+  const mounted = useRef(true);
+  // The drafts as last rendered, for the cleanup when the composer goes away.
+  const latest = useRef<Drafts>(drafts);
+  useEffect(() => {
+    latest.current = drafts;
+  });
 
-  // Change this conversation's list; a list left behind by a switch is not touched.
+  useEffect(() => {
+    mounted.current = true;
+    const removedKeys = removed.current;
+    const sentKeys = sent.current;
+    return () => {
+      mounted.current = false;
+      for (const draft of Object.values(latest.current).flat()) {
+        if (draft.state === "uploaded" && !sentKeys.has(draft.key)) {
+          void forget(draft.info.id);
+        }
+        removedKeys.add(draft.key);
+      }
+    };
+  }, []);
+
   const change = (
+    at: string,
     edit: (current: readonly DraftAttachment[]) => readonly DraftAttachment[]
-  ) =>
-    setDrafts((current) =>
-      current.conversation === conversation
-        ? { conversation, items: edit(current.items) }
-        : current
-    );
-  const replace = (key: string, next: DraftAttachment) =>
-    change((current) =>
-      current.map((item) => (item.key === key ? next : item))
-    );
-  const drop = (key: string) =>
-    change((current) => current.filter((item) => item.key !== key));
+  ) => setDrafts((current) => ({ ...current, [at]: edit(current[at] ?? []) }));
 
-  const uploadOne = async (key: string, file: File) => {
+  const uploadOne = async (at: string, key: string, file: File) => {
     try {
       const info = await upload(file, conversation);
-      replace(key, { key, name: file.name, state: "uploaded", info });
+      if (removed.current.has(key) || !mounted.current) {
+        await forget(info.id);
+        return;
+      }
+      change(at, (current) =>
+        current.map((item) =>
+          item.key === key
+            ? { key, name: file.name, state: "uploaded", info }
+            : item
+        )
+      );
     } catch (error) {
-      replace(key, {
-        key,
-        name: file.name,
-        state: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      });
+      change(at, (current) =>
+        current.map((item) =>
+          item.key === key
+            ? {
+                key,
+                name: file.name,
+                state: "failed",
+                error: error instanceof Error ? error.message : String(error),
+              }
+            : item
+        )
+      );
     }
   };
 
@@ -70,32 +103,37 @@ export const useDraftAttachments = (conversation?: number) => {
       counter.current += 1;
       return { key: `f${counter.current}`, file };
     });
-    setDrafts((current) => ({
-      conversation,
-      items: [
-        ...(current.conversation === conversation ? current.items : []),
-        ...added.map(({ key, file }): DraftAttachment => ({
-          key,
-          name: file.name,
-          state: "uploading",
-        })),
-      ],
-    }));
+    change(scope, (current) => [
+      ...current,
+      ...added.map(({ key, file }): DraftAttachment => ({
+        key,
+        name: file.name,
+        state: "uploading",
+      })),
+    ]);
     for (const { key, file } of added) {
-      void uploadOne(key, file);
+      void uploadOne(scope, key, file);
     }
   };
 
   const remove = (key: string) => {
     const draft = items.find((item) => item.key === key);
-    drop(key);
+    removed.current.add(key);
+    change(scope, (current) => current.filter((item) => item.key !== key));
     if (draft?.state === "uploaded") {
       void forget(draft.info.id);
     }
   };
 
-  /** Empty the list once its files were sent. */
-  const clear = () => setDrafts({ conversation, items: [] });
+  /** Drop the files a message sent; files added while it was sending stay. */
+  const take = (keys: readonly string[]) => {
+    for (const key of keys) {
+      sent.current.add(key);
+    }
+    change(scope, (current) =>
+      current.filter((item) => !keys.includes(item.key))
+    );
+  };
 
-  return { items, add, remove, clear };
+  return { items, add, remove, take };
 };
