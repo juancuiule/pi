@@ -155,10 +155,13 @@ export interface AttachmentRecords {
   /** The message was admitted: its claimed uploads are sent. */
   commitClaim(claim: string, at: number): void;
   /**
-   * After a restart nothing is in flight: a message's claim may have been admitted, so its uploads are kept as sent
-   * (losing a file the transcript names is worse than keeping one); a staged reservation is released.
+   * Every claim still held: a message's (with its conversation) or a create's reservation (without one). Only a stop
+   * between claiming and settling leaves one.
    */
-  settleClaims(at: number): void;
+  pendingClaims(): readonly {
+    readonly claim: string;
+    readonly conversationId: number | undefined;
+  }[];
   /** Every sent attachment of a conversation, oldest first. */
   sent(conversationId: number): readonly AttachmentRecord[];
   /** Delete unsent, unclaimed records created before `before`, returning their ids. */
@@ -314,15 +317,20 @@ export const sqliteRecords = (
         "UPDATE attachments SET sent_at = ?, claim = NULL WHERE claim = ?"
       ).run(at, claim);
     },
-    settleClaims: (at) =>
-      transaction(() => {
-        db.prepare(
-          "UPDATE attachments SET sent_at = ?, claim = NULL WHERE claim IS NOT NULL AND conversation_id IS NOT NULL"
-        ).run(at);
-        db.prepare(
-          "UPDATE attachments SET claim = NULL WHERE claim IS NOT NULL"
-        ).run();
-      }),
+    pendingClaims: () =>
+      (
+        db
+          .prepare(
+            "SELECT DISTINCT claim, conversation_id FROM attachments WHERE claim IS NOT NULL"
+          )
+          .all() as unknown as {
+          claim: string;
+          conversation_id: number | null;
+        }[]
+      ).map((row) => ({
+        claim: row.claim,
+        conversationId: row.conversation_id ?? undefined,
+      })),
     sent: (conversationId) =>
       (
         db

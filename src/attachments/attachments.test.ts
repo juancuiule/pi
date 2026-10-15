@@ -2,11 +2,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
 import {
   fauxAssistantMessage,
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
+import { MemoryStorage } from "@earendil-works/pi-durable";
 import { Effect, Exit, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -545,23 +547,29 @@ describe("claims and quotas", () => {
 });
 
 describe("restarts", () => {
-  it("keep a message's claimed uploads as sent, and stage a create's reservation again", async () => {
+  it("commit a message's claim only when its message was admitted, and release the rest", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "restart-"));
-    const database = path.join(directory, "db.sqlite");
     const layer = Attachments.local({
       directory: path.join(directory, "files"),
-      database,
+      database: path.join(directory, "db.sqlite"),
     });
+    // Before the stop: two messages claimed files, one of them was admitted; a create reserved a staged file.
     const before = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const attachments = yield* Attachments;
-          const owned = yield* upload("a.txt", "a", 1);
-          const staged = yield* upload("b.txt", "b");
-          // A stop between admitting a message and committing its claim, and in the middle of a create.
-          yield* attachments.claimForMessage(1, [owned.id]);
+          const admitted = yield* upload("a.txt", "a", 1);
+          const lost = yield* upload("b.txt", "b", 1);
+          const staged = yield* upload("c.txt", "c");
+          const claim = yield* attachments.claimForMessage(1, [admitted.id]);
+          yield* attachments.claimForMessage(1, [lost.id]);
           yield* attachments.reserve([staged.id]);
-          return { owned: owned.id, staged: staged.id };
+          return {
+            admitted: admitted.id,
+            lost: lost.id,
+            staged: staged.id,
+            claim: claim.id,
+          };
         })
       ).pipe(Effect.provide(layer))
     );
@@ -569,16 +577,51 @@ describe("restarts", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const attachments = yield* Attachments;
+          yield* attachments.settleClaims((_conversation, claim) =>
+            Effect.succeed(claim === before.claim)
+          );
           return {
             sent: (yield* attachments.sent(1)).map((record) => record.id),
-            reserved: yield* Effect.exit(attachments.reserve([before.staged])),
+            resend: yield* Effect.exit(
+              attachments.claimForMessage(1, [before.lost])
+            ),
+            reserve: yield* Effect.exit(attachments.reserve([before.staged])),
           };
         })
       ).pipe(Effect.provide(layer))
     );
     rmSync(directory, { recursive: true, force: true });
-    expect(after.sent).toStrictEqual([before.owned]);
-    expect(Exit.isSuccess(after.reserved)).toBeTruthy();
+    expect(after.sent).toStrictEqual([before.admitted]);
+    expect([
+      Exit.isSuccess(after.resend),
+      Exit.isSuccess(after.reserve),
+    ]).toStrictEqual([true, true]);
+  });
+
+  it("send a message with attachments under its claim's id, so a restart can find it", async () => {
+    const storage = new MemoryStorage();
+    const { layer } = fauxAgents([showMessage], { storage });
+    const requestIds = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat();
+          const info = yield* upload("a.txt", "a", Number(seat.id));
+          yield* seat.ask("Read it.", [info.id]);
+          const page = yield* Effect.promise(() =>
+            storage.scanSubmissions(
+              { conversationId: seat.id },
+              10,
+              undefined,
+              BACKGROUND_CONTEXT
+            )
+          );
+          return page.items.map((record) => record.requestId);
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect(requestIds).toStrictEqual([
+      expect.stringMatching(/^[0-9a-f-]{36}$/u),
+    ]);
   });
 });
 

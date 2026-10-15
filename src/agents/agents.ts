@@ -711,6 +711,18 @@ export class Agents extends Context.Service<
           );
         });
 
+        // Attachments claimed by a message when the server stopped: sent if the message was admitted, which its
+        // submission (carrying the claim's id) shows, and free to send again otherwise.
+        yield* attachments.settleClaims((conversationId, claim) =>
+          attempt(() =>
+            durableStorage.submissionByRequest(
+              conversationId as ConversationId,
+              claim,
+              context
+            )
+          ).pipe(Effect.map((submission) => submission !== undefined))
+        );
+
         // The inputs of a conversation whose runs ended without an answer, in paged scans; pages are sequential
         // because each needs the previous cursor.
         const unansweredInputs = async (
@@ -1250,7 +1262,8 @@ export class Agents extends Context.Service<
           // Admit a message: `text`, then the conversation's unsent uploads in `ids`. The uploads are claimed first, so no
           // other message or removal takes them; the claim is committed exactly when the message is admitted (they are
           // sent from then on, and copied into the Sandbox) and released when it is not, so they can be sent again. The
-          // admission and the commit cannot be interrupted apart; a crash between them is settled at the next start.
+          // admission and the commit cannot be interrupted apart; after a stop, the next start commits a claim whose
+          // message was admitted (its submission carries the claim's id) and releases the others.
           const admit = Effect.fnUntraced(function* (
             text: string,
             ids: readonly string[],
@@ -1258,13 +1271,15 @@ export class Agents extends Context.Service<
           ) {
             // What the person typed can never pass for a block the server appended.
             const typed = escapeAttachmentTags(text);
-            const submit = (content: UserInput) =>
+            // A message with attachments carries its claim's id, stored with the submission when it is admitted.
+            const submit = (content: UserInput, requestId?: string) =>
               attempt(() =>
                 handle.submit(
                   {
                     type: "input",
                     content,
                     ...(whenBusy === undefined ? {} : { whenBusy }),
+                    ...(requestId === undefined ? {} : { requestId }),
                   },
                   context
                 )
@@ -1281,7 +1296,7 @@ export class Agents extends Context.Service<
               Effect.onError(() => claim.release)
             );
             const submission = yield* Effect.uninterruptible(
-              submit(content).pipe(
+              submit(content, claim.id).pipe(
                 Effect.onExit((exit) =>
                   Exit.isSuccess(exit) ? claim.commit : claim.release
                 )

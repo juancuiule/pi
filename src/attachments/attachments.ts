@@ -89,6 +89,8 @@ export interface LoadedAttachment {
 
 /** Uploads claimed for a message being sent. */
 export interface MessageClaim {
+  /** Unique per claim: the message's submission carries it, so a restart can tell whether it was admitted. */
+  readonly id: string;
   readonly loaded: readonly LoadedAttachment[];
   readonly commit: Effect.Effect<void>;
   readonly release: Effect.Effect<void>;
@@ -214,6 +216,16 @@ export class Attachments extends Context.Service<
     >;
     /** Delete unsent uploads older than the limit allows. */
     readonly sweep: Effect.Effect<void>;
+    /**
+     * Settle the claims a stop left, while nothing is in flight: a message's claim is committed when `admitted` finds
+     * its message (submitted with the claim's id), and released otherwise; a create's reservation is released.
+     */
+    settleClaims<E>(
+      admitted: (
+        conversationId: number,
+        claim: string
+      ) => Effect.Effect<boolean, E>
+    ): Effect.Effect<void, E>;
   }
 >()("effect-pi/Attachments") {
   static readonly layer = (options: {
@@ -229,8 +241,6 @@ export class Attachments extends Context.Service<
         const limits = { ...DEFAULT_LIMITS, ...options.limits };
         const { blobs, records } = options;
         const extracting = yield* Semaphore.make(limits.extractConcurrency);
-        // Nothing is in flight when the service starts: claims left by a stop are settled.
-        records.settleClaims(yield* Clock.currentTimeMillis);
         // Bytes of uploads being checked, counted against the unsent total before they have a record, so
         // simultaneous uploads cannot all pass the same check.
         let pendingBytes = 0;
@@ -430,6 +440,7 @@ export class Attachments extends Context.Service<
                 )
             ).pipe(Effect.onError(() => release));
             return {
+              id: claim,
               loaded,
               commit: Clock.currentTimeMillis.pipe(
                 Effect.map((at) => records.commitClaim(claim, at))
@@ -500,6 +511,24 @@ export class Attachments extends Context.Service<
           remove,
           reserve,
           claimForMessage,
+          settleClaims: (admitted) =>
+            Effect.forEach(
+              records.pendingClaims(),
+              ({ claim, conversationId }) =>
+                (conversationId === undefined
+                  ? Effect.succeed(false)
+                  : admitted(conversationId, claim)
+                ).pipe(
+                  Effect.flatMap((sent) =>
+                    sent
+                      ? Clock.currentTimeMillis.pipe(
+                          Effect.map((at) => records.commitClaim(claim, at))
+                        )
+                      : Effect.sync(() => records.release(claim))
+                  )
+                ),
+              { discard: true }
+            ),
           sent: (conversationId) =>
             Effect.sync(() => records.sent(conversationId)),
           open: openSent,
