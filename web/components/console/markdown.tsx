@@ -1,11 +1,21 @@
 "use client";
 
-import { isValidElement } from "react";
+import { isValidElement, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -136,15 +146,83 @@ const components: Components = {
   ),
 };
 
+/**
+ * A link in a file the reader did not write: show where it goes before opening
+ * it. A button, not an anchor, so no click opens the destination directly.
+ */
+const UntrustedLink = ({
+  href,
+  children,
+}: {
+  href?: string;
+  children?: ReactNode;
+}) => {
+  const [asking, setAsking] = useState(false);
+  if (href === undefined || href === "") {
+    return children;
+  }
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setAsking(true)}
+        className="inline cursor-pointer underline underline-offset-2"
+      >
+        {children}
+      </button>
+      <AlertDialog open={asking} onOpenChange={setAsking}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Open this link?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This link came from an uploaded file; its author chose the
+              destination. It opens in a new tab.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <p className="bg-muted rounded-md px-3 py-2 font-mono text-xs break-all select-all">
+            {href}
+          </p>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                window.open(href, "_blank", "noopener,noreferrer");
+                setAsking(false);
+              }}
+            >
+              Open link
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+};
+
+/** For a document whose author is not the reader: links ask before opening, images do not load. */
+const untrustedComponents: Components = {
+  ...components,
+  a: UntrustedLink,
+  img: ({ alt }) =>
+    alt === undefined || alt === "" ? null : (
+      <span className="text-muted-foreground">{`[image: ${alt}]`}</span>
+    ),
+};
+
 export const Markdown = ({
   children,
   className,
+  untrusted = false,
 }: {
   children: string;
   className?: string;
+  untrusted?: boolean;
 }) => (
   <div className={cn("text-prose", className)}>
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={untrusted ? untrustedComponents : components}
+    >
       {children}
     </ReactMarkdown>
   </div>

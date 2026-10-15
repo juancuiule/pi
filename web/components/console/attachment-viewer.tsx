@@ -243,7 +243,7 @@ const Contents = ({
       const text = prepared.pages[0] ?? "";
       return info.mediaType === "text/markdown" ? (
         <div className="text-sm">
-          <Markdown>{text}</Markdown>
+          <Markdown untrusted>{text}</Markdown>
         </div>
       ) : (
         <p className="bg-muted/50 rounded-lg p-3 text-xs whitespace-pre-wrap">
