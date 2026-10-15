@@ -455,6 +455,16 @@ describe("HTTP API", () => {
           created,
           again,
           owned: yield* download(staged.id, created.id),
+          viewed: yield* client.attachments.view({
+            params: { id: staged.id },
+            query: { conversation: created.id },
+          }),
+          viewedElsewhere: yield* Effect.flip(
+            client.attachments.view({
+              params: { id: staged.id },
+              query: { conversation: created.id + 1 },
+            })
+          ),
           unscoped: yield* download(staged.id),
           elsewhere: yield* download(staged.id, created.id + 1),
           events: JSON.stringify([...events]),
@@ -473,6 +483,11 @@ describe("HTTP API", () => {
         body: "# Brief\n\nKeep it short.",
         nosniff: "nosniff",
       },
+      viewed: {
+        info: { name: "brief.md", kind: "text" },
+        prepared: { kind: "text", pages: ["# Brief\n\nKeep it short."] },
+      },
+      viewedElsewhere: { _tag: "AttachmentNotFound" },
       unscoped: { status: 404 },
       elsewhere: { status: 404 },
     });

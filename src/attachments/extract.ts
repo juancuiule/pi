@@ -6,9 +6,10 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import * as canvas from "@napi-rs/canvas";
 import sharp from "sharp";
 import type { FormatEnum } from "sharp";
-import { extractText, getDocumentProxy } from "unpdf";
+import { extractText, getDocumentProxy, renderPageAsImage } from "unpdf";
 
 import type { AttachmentKind, Prepared } from "./format.ts";
 import { decodeText, normalizeText } from "./format.ts";
@@ -185,16 +186,16 @@ const extractHtml = (bytes: Uint8Array): Extracted => {
   };
 };
 
-const extractPdf = async (
-  bytes: Uint8Array,
-  limits: ExtractLimits
-): Promise<Extracted> => {
-  const document = await getDocumentProxy(bytes, {
-    disableFontFace: true,
-    useSystemFonts: false,
-    stopAtErrors: false,
-    verbosity: 0,
-  }).catch((error: unknown) => {
+/** Open a PDF with nothing loaded from outside it, or refuse it as one we cannot read. */
+const openPdf = async (bytes: Uint8Array) => {
+  try {
+    return await getDocumentProxy(bytes, {
+      disableFontFace: true,
+      useSystemFonts: false,
+      stopAtErrors: false,
+      verbosity: 0,
+    });
+  } catch (error) {
     const name = error instanceof Error ? error.name : "";
     throw new ExtractionRefusedError(
       "failed",
@@ -202,7 +203,14 @@ const extractPdf = async (
         ? "The PDF is password-protected."
         : `The PDF could not be read: ${error instanceof Error ? error.message : String(error)}`
     );
-  });
+  }
+};
+
+const extractPdf = async (
+  bytes: Uint8Array,
+  limits: ExtractLimits
+): Promise<Extracted> => {
+  const document = await openPdf(bytes);
   // No cleanup: the worker that runs this ends right after, and its memory with it.
   if (document.numPages > limits.maxPdfPages) {
     throw new ExtractionRefusedError(
@@ -310,6 +318,37 @@ const extractImage = async (
       `The image could not be read: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+};
+
+export interface RenderInput {
+  /** The PDF's original bytes. */
+  readonly bytes: Uint8Array;
+  /** 1-based. */
+  readonly page: number;
+  /** The image's long edge, in pixels. */
+  readonly edge: number;
+}
+
+/** One page of a PDF drawn as a WebP image, for the console to show the page as it looks. */
+export const renderPdfPage = async (
+  input: RenderInput
+): Promise<Uint8Array> => {
+  const document = await openPdf(input.bytes);
+  if (input.page < 1 || input.page > document.numPages) {
+    throw new ExtractionRefusedError(
+      "failed",
+      `The PDF has no page ${input.page}.`
+    );
+  }
+  const page = await document.getPage(input.page);
+  const viewport = page.getViewport({ scale: 1 });
+  const png = await renderPageAsImage(document, input.page, {
+    canvasImport: () => Promise.resolve(canvas),
+    scale: input.edge / Math.max(viewport.width, viewport.height, 1),
+  });
+  return new Uint8Array(
+    await sharp(new Uint8Array(png)).webp({ quality: 80 }).toBuffer()
+  );
 };
 
 /** Prepare one stored upload. Throws `ExtractionRefusedError` for files that cannot be attached. */

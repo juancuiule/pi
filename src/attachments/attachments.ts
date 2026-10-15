@@ -41,7 +41,7 @@ import type {
   AttachmentRecords,
   BlobStore,
 } from "./store.ts";
-import { runExtraction } from "./worker.ts";
+import { runExtraction, runPageRender } from "./worker.ts";
 
 export interface AttachmentLimits {
   readonly maxFileBytes: number;
@@ -163,8 +163,16 @@ const megabytes = (bytes: number) => `${Math.round(bytes / MB)} MB`;
 
 const key = (
   id: string,
-  file: "original" | "prepared.json" | "model" | "thumbnail.webp"
+  file:
+    | "original"
+    | "prepared.json"
+    | "model"
+    | "thumbnail.webp"
+    | `page-${number}.webp`
 ) => `${id}/${file}`;
+
+/** A PDF page drawn for the console is at most this many pixels on its long edge. */
+const PAGE_IMAGE_EDGE = 1600;
 
 export class Attachments extends Context.Service<
   Attachments,
@@ -214,6 +222,20 @@ export class Attachments extends Context.Service<
       { readonly record: AttachmentRecord; readonly bytes: Uint8Array },
       AttachmentNotFound
     >;
+    /** An attachment in its scope (as `file`), with what was prepared from it: what the model reads. */
+    view(
+      id: string,
+      conversationId: number | undefined
+    ): Effect.Effect<LoadedAttachment, AttachmentNotFound>;
+    /**
+     * One page of a PDF attachment in its scope, drawn as a WebP image, for the console to show the page as it looks.
+     * Drawn in a worker the first time, then kept with the attachment.
+     */
+    pageImage(
+      id: string,
+      conversationId: number | undefined,
+      page: number
+    ): Effect.Effect<Uint8Array, AttachmentNotFound | AttachmentRefused>;
     /** Delete unsent uploads older than the limit allows. */
     readonly sweep: Effect.Effect<void>;
     /**
@@ -485,6 +507,63 @@ export class Attachments extends Context.Service<
           return { record, bytes };
         });
 
+        const view = Effect.fn("Attachments.view")(function* (
+          id: string,
+          conversationId: number | undefined
+        ) {
+          const record = records.get(id);
+          if (
+            record === undefined ||
+            record.conversationId !== conversationId
+          ) {
+            return yield* new AttachmentNotFound({ id });
+          }
+          return { record, prepared: yield* preparedOf(record) };
+        });
+
+        const pageImage = Effect.fn("Attachments.pageImage")(function* (
+          id: string,
+          conversationId: number | undefined,
+          page: number
+        ) {
+          const record = records.get(id);
+          if (
+            record === undefined ||
+            record.conversationId !== conversationId ||
+            record.kind !== "pdf" ||
+            !Number.isInteger(page) ||
+            page < 1 ||
+            page > (record.pages ?? 0)
+          ) {
+            return yield* new AttachmentNotFound({ id });
+          }
+          const cached = key(id, `page-${page}.webp`);
+          const kept = yield* Effect.promise(() => blobs.get(cached));
+          if (kept !== undefined) {
+            return kept;
+          }
+          const { bytes } = yield* file(id, conversationId, "original");
+          const image = yield* Effect.tryPromise({
+            try: () =>
+              runPageRender(
+                { bytes, page, edge: PAGE_IMAGE_EDGE },
+                {
+                  timeoutMs: limits.extractTimeoutMs,
+                  memoryMb: limits.extractMemoryMb,
+                }
+              ),
+            catch: (error) =>
+              error instanceof ExtractionRefusedError
+                ? refused(error.reason, error.message)
+                : refused(
+                    "failed",
+                    `The page could not be drawn: ${String(error)}`
+                  ),
+          }).pipe(extracting.withPermit);
+          yield* Effect.promise(() => blobs.put(cached, image));
+          return image;
+        });
+
         const sweep = Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           const expired = records.expire(now - limits.unsentTtlMs);
@@ -511,6 +590,8 @@ export class Attachments extends Context.Service<
           remove,
           reserve,
           claimForMessage,
+          view,
+          pageImage,
           settleClaims: (admitted) =>
             Effect.forEach(
               records.pendingClaims(),

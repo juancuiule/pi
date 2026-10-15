@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { Effect, Exit, Layer } from "effect";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { Skills, SkillSource } from "../skills/skills.ts";
@@ -626,6 +627,38 @@ describe("restarts", WORKERS, () => {
     expect(requestIds).toStrictEqual([
       expect.stringMatching(/^[0-9a-f-]{36}$/u),
     ]);
+  });
+});
+
+describe("PDF pages for the console", WORKERS, () => {
+  it("draws a page once, as a bounded WebP, only within the PDF and its conversation", async () => {
+    const { layer } = fauxAgents([]);
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const attachments = yield* Attachments;
+        const pdf = yield* upload("r.pdf", textPdf(["One", ""]), 4);
+        const text = yield* upload("n.txt", "notes", 4);
+        const first = yield* attachments.pageImage(pdf.id, 4, 2);
+        const again = yield* attachments.pageImage(pdf.id, 4, 2);
+        const refused = yield* Effect.forEach(
+          [
+            attachments.pageImage(pdf.id, 4, 3),
+            attachments.pageImage(pdf.id, 5, 1),
+            attachments.pageImage(text.id, 4, 1),
+          ],
+          (attempt) => Effect.exit(attempt).pipe(Effect.map(Exit.isFailure))
+        );
+        return { first, again, refused };
+      }).pipe(Effect.provide(layer))
+    );
+    const meta = await sharp(result.first).metadata();
+    expect([meta.format, Math.max(meta.width, meta.height)]).toStrictEqual([
+      "webp",
+      1600,
+    ]);
+    // The second request is the stored image, not a new drawing.
+    expect(result.again).toStrictEqual(result.first);
+    expect(result.refused).toStrictEqual([true, true, true]);
   });
 });
 

@@ -91,6 +91,27 @@ export const AttachmentInfo = Schema.Struct({
 });
 export type AttachmentInfo = typeof AttachmentInfo.Type;
 
+/** What was prepared from an attachment: what the model reads (see src/attachments/format.ts `Prepared`). */
+export const PreparedAttachment = Schema.Struct({
+  kind: Schema.Literals(["text", "html", "pdf", "table", "image"]),
+  /** One entry per PDF page; a single one for text, HTML and tables (one line per row); none for images. */
+  pages: Schema.Array(Schema.String),
+  ocrPages: Schema.Array(Schema.Number),
+  warnings: Schema.Array(Schema.String),
+  extractor: Schema.String,
+  image: Schema.optionalKey(
+    Schema.Struct({ width: Schema.Number, height: Schema.Number })
+  ),
+  table: Schema.optionalKey(
+    Schema.Struct({
+      rows: Schema.Number,
+      columns: Schema.Number,
+      delimiter: Schema.String,
+    })
+  ),
+});
+export type PreparedAttachment = typeof PreparedAttachment.Type;
+
 export const ToolInfo = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
@@ -339,6 +360,23 @@ const AttachmentGroup = HttpApiGroup.make("attachments").add(
     query: AttachmentScope,
     success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
     error: NoAttachment,
+  }),
+  // The attachment and what was prepared from it, for the console's viewer.
+  HttpApiEndpoint.get("view", "/attachments/:id/view", {
+    params: { id: Schema.String },
+    query: AttachmentScope,
+    success: Schema.Struct({
+      info: AttachmentInfo,
+      prepared: PreparedAttachment,
+    }),
+    error: NoAttachment,
+  }),
+  // One page of a PDF drawn as a WebP image, so the console shows the page without opening the PDF itself.
+  HttpApiEndpoint.get("page", "/attachments/:id/pages/:page", {
+    params: { id: Schema.String, page: Schema.Int },
+    query: AttachmentScope,
+    success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+    error: [NoAttachment, Refused],
   }),
   // An image's small WebP preview.
   HttpApiEndpoint.get("thumbnail", "/attachments/:id/thumbnail", {

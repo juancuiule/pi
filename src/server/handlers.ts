@@ -6,7 +6,7 @@ import { HttpServerResponse } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 
 import { Agents } from "../agents/agents.ts";
-import { Attachments } from "../attachments/attachments.ts";
+import { Attachments, infoOf } from "../attachments/attachments.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
 import { ConversationArchived, EmptyMessage } from "../errors.ts";
 import { Api } from "./api.ts";
@@ -187,6 +187,27 @@ const AttachmentsHandlers = HttpApiBuilder.group(
                 "x-content-type-options": "nosniff",
                 "content-security-policy": "sandbox",
                 "cache-control": "private, no-store",
+              },
+            })
+          )
+        )
+      )
+      .handle("view", ({ params, query }) =>
+        attachments.view(params.id, query.conversation).pipe(
+          Effect.map(({ record, prepared }) => ({
+            info: infoOf(record),
+            prepared,
+          }))
+        )
+      )
+      .handle("page", ({ params, query }) =>
+        attachments.pageImage(params.id, query.conversation, params.page).pipe(
+          Effect.map((bytes) =>
+            HttpServerResponse.uint8Array(bytes, {
+              contentType: "image/webp",
+              headers: {
+                "x-content-type-options": "nosniff",
+                "cache-control": "private, max-age=86400",
               },
             })
           )
