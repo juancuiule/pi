@@ -90,6 +90,18 @@ The user picks a Level (`none`, `shell` or `desktop`) when a conversation starts
 - pi-durable passes sections as `sections` on the system message, beside `content`; the provider assembles the prompt. Tests that inspect the prompt read `sections`.
 - A test loads `skills/` and fails on any problem, so edits to a skill are checked by `pnpm test`.
 
+## Attachments
+
+Files people send with messages (TXT, Markdown, HTML, text PDFs, PNG/JPEG/WebP); the decisions are in `docs/plans/attachments.md`, the term in `GLOSSARY.md`.
+
+- `src/attachments/`: `format.ts` is the pure part (classifying an upload by name, reported type and signature; decoding text; numbered pages and lines; the message's `<attachment>` blocks; `read_attachment` ranges and `search_attachment` matches). `html.ts` turns HTML into text with htmlparser2, running and fetching nothing. `extract.ts` prepares a file (unpdf, sharp) and runs only inside a worker thread (`worker.ts`, with a timeout and a memory limit). `store.ts` has the `BlobStore` (a local directory, `ATTACHMENTS_DIR`) and the `attachments` table in the `EFFECT_PI_DB` file. `attachments.ts` has the `Attachments` service and the `attachments` extension.
+- Upload: `POST /api/attachments` (multipart `file`, optional `conversation`) checks and prepares the file before answering; a refused file keeps nothing (`AttachmentRefused`), a file over `ATTACHMENT_MAX_FILE_MB` is cut off while it streams (413). Without `conversation` the upload is staged and `create`'s `attachments` claims it, all or none; `send`'s `attachments` only takes the conversation's own unsent uploads. Ids are random; anything outside its scope is `AttachmentNotFound`. Unsent uploads expire (`ATTACHMENT_UNSENT_TTL`); sent ones stay through Pause and Archive. `GET /api/attachments/:id/original?conversation=` always downloads (`nosniff`, CSP sandbox).
+- A message is the typed text (the only part `/skill:` reads), then one block per file: document text inline, whole lines, up to `ATTACHMENT_INLINE_CHARS` per message, and a note saying what is left; images follow as image content when the model takes them. PDF pages without text are listed as needing OCR (statuses `partial`, `needs_ocr`); there is no OCR yet.
+- The `attachments` extension is locked on (its tools too) and selected by every conversation: `read_attachment` and `search_attachment` run on the host, at every Level, over the conversation's sent attachments. Shell and desktop Sandboxes also get each sent original at `/workspace/.attachments/<id>/<name>`.
+- Traces carry the size of attachment text, not the text, unless `TRACE_ATTACHMENT_TEXT=true`.
+- The console uploads a file when it is added to the composer (picker, drop, paste; `web/lib/use-draft-attachments.ts`), and shows sent files as download chips (`web/lib/attachments.ts` parses the blocks).
+- Tests: `fauxAgents` provides temporary `Attachments` (`attachmentLimits`, and `vision: false` for a model without images); `src/testing/files.ts` builds PDFs and images.
+
 ## MCP
 
 `mcp.config.ts` lists the remote MCP servers (Streamable HTTP only; pi-mcp has no legacy SSE transport). `Agents.layer({ mcp })` connects them when the layer is built (`src/mcp.ts`, 10s timeout each) and closes them on teardown.
