@@ -1,16 +1,35 @@
 // Handlers for the API in api.ts. Agent and sandbox failures are defects: they surface as 500s.
+import type { ConversationId } from "@earendil-works/pi-durable";
 import type { Schema } from "effect";
 import { Effect, Layer, Stream } from "effect";
+import { HttpServerResponse } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 
 import { Agents } from "../agents/agents.ts";
+import { Attachments } from "../attachments/attachments.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
+import { ConversationArchived, EmptyMessage } from "../errors.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";
 
 // ConversationEvents are plain JSON (pi-durable's committed AgentEvents, and storage records); the cast only names that for the SSE schema.
 const asJson = (event: ConversationEvent) => event as unknown as Schema.Json;
+
+/** A message needs text or attachments. */
+const message = (payload: {
+  readonly prompt?: string;
+  readonly attachments?: readonly string[];
+}): Effect.Effect<
+  { readonly prompt: string; readonly attachments: readonly string[] },
+  EmptyMessage
+> => {
+  const prompt = payload.prompt ?? "";
+  const attachments = payload.attachments ?? [];
+  return prompt.trim() === "" && attachments.length === 0
+    ? Effect.fail(new EmptyMessage())
+    : Effect.succeed({ prompt, attachments });
+};
 
 const ConversationsHandlers = HttpApiBuilder.group(
   Api,
@@ -22,7 +41,10 @@ const ConversationsHandlers = HttpApiBuilder.group(
         conversations.list.pipe(Effect.catchTag("AgentError", Effect.die))
       )
       .handle("create", ({ payload }) =>
-        conversations.create(payload).pipe(
+        message(payload).pipe(
+          Effect.flatMap(({ prompt, attachments }) =>
+            conversations.create({ ...payload, prompt, attachments })
+          ),
           Effect.catchTags({
             AgentError: Effect.die,
             SandboxError: Effect.die,
@@ -33,7 +55,10 @@ const ConversationsHandlers = HttpApiBuilder.group(
         )
       )
       .handle("send", ({ params, payload }) =>
-        conversations.send(params.id, payload.prompt).pipe(
+        message(payload).pipe(
+          Effect.flatMap(({ prompt, attachments }) =>
+            conversations.send(params.id, prompt, attachments)
+          ),
           Effect.catchTags({
             AgentError: Effect.die,
             SandboxError: Effect.die,
@@ -117,6 +142,72 @@ const ConversationsHandlers = HttpApiBuilder.group(
   })
 );
 
+/** `Content-Disposition` for a download, with the name kept in UTF-8 and a plain fallback. */
+const disposition = (name: string) => {
+  const fallback = name.replaceAll(/[^\w.-]+/gu, "_") || "file";
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+};
+
+const AttachmentsHandlers = HttpApiBuilder.group(
+  Api,
+  "attachments",
+  Effect.fnUntraced(function* (handlers) {
+    const attachments = yield* Attachments;
+    const agents = yield* Agents;
+    return handlers
+      .handle("upload", ({ payload }) =>
+        Effect.gen(function* () {
+          if (payload.conversation !== undefined) {
+            const stored = yield* agents.get(
+              payload.conversation as ConversationId
+            );
+            if (stored.meta.archivedAt !== undefined) {
+              return yield* new ConversationArchived({
+                id: payload.conversation,
+              });
+            }
+          }
+          return yield* attachments.upload({
+            path: payload.file.path,
+            name: payload.file.name,
+            contentType: payload.file.contentType,
+            conversationId: payload.conversation,
+          });
+        }).pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("remove", ({ params }) => attachments.remove(params.id))
+      .handle("original", ({ params, query }) =>
+        attachments.file(params.id, query.conversation, "original").pipe(
+          Effect.map(({ record, bytes }) =>
+            // Always a download, never rendered: an HTML file must not run on this origin.
+            HttpServerResponse.uint8Array(bytes, {
+              contentType: record.mediaType,
+              headers: {
+                "content-disposition": disposition(record.name),
+                "x-content-type-options": "nosniff",
+                "content-security-policy": "sandbox",
+                "cache-control": "private, no-store",
+              },
+            })
+          )
+        )
+      )
+      .handle("thumbnail", ({ params, query }) =>
+        attachments.file(params.id, query.conversation, "thumbnail").pipe(
+          Effect.map(({ bytes }) =>
+            HttpServerResponse.uint8Array(bytes, {
+              contentType: "image/webp",
+              headers: {
+                "x-content-type-options": "nosniff",
+                "cache-control": "private, max-age=86400",
+              },
+            })
+          )
+        )
+      );
+  })
+);
+
 const InfoHandlers = HttpApiBuilder.group(
   Api,
   "info",
@@ -135,6 +226,8 @@ const InfoHandlers = HttpApiBuilder.group(
 );
 
 export const ApiLayer = HttpApiBuilder.layer(Api).pipe(
-  Layer.provide(Layer.mergeAll(ConversationsHandlers, InfoHandlers)),
+  Layer.provide(
+    Layer.mergeAll(ConversationsHandlers, AttachmentsHandlers, InfoHandlers)
+  ),
   Layer.merge(loopbackOnly)
 );

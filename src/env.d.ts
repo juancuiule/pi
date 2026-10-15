@@ -132,6 +132,94 @@ export type CoercedEnvSchema = {
   SCREENSHOTS_DIR: string;
   
   /**
+   * **ATTACHMENTS_DIR**  
+   * Attachments' originals and prepared files (their metadata is in EFFECT_PI_DB).  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENTS_DIR: string;
+  
+  /**
+   * **ATTACHMENT_MAX_FILE_MB**  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_MAX_FILE_MB: number;
+  
+  /**
+   * **ATTACHMENT_MAX_FILES**  
+   * Files one message can take.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_MAX_FILES: number;
+  
+  /**
+   * **ATTACHMENT_MAX_UNSENT_MB**  
+   * All unsent uploads together.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_MAX_UNSENT_MB: number;
+  
+  /**
+   * **ATTACHMENT_MAX_PDF_PAGES**  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_MAX_PDF_PAGES: number;
+  
+  /**
+   * **ATTACHMENT_MAX_IMAGE_MEGAPIXELS**  
+   * Decoded pixels of an image, in millions.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_MAX_IMAGE_MEGAPIXELS: number;
+  
+  /**
+   * **ATTACHMENT_EXTRACT_TIMEOUT**  
+   * Reading one file (in a worker thread) is stopped after this long, or past this much memory.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M12%2020a7%207%200%200%201-7-7a7%207%200%200%201%207-7a7%207%200%200%201%207%207a7%207%200%200%201-7%207m7.03-12.61l1.42-1.42c-.45-.51-.9-.97-1.41-1.41L17.62%206c-1.55-1.26-3.5-2-5.62-2a9%209%200%200%200-9%209a9%209%200%200%200%209%209c5%200%209-4.03%209-9c0-2.12-.74-4.07-1.97-5.61M11%2014h2V8h-2m4-7H9v2h6z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_EXTRACT_TIMEOUT: number;
+  
+  /**
+   * **ATTACHMENT_EXTRACT_MEMORY_MB**  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_EXTRACT_MEMORY_MB: number;
+  
+  /**
+   * **ATTACHMENT_EXTRACT_CONCURRENCY**  
+   * Files read at once.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_EXTRACT_CONCURRENCY: number;
+  
+  /**
+   * **ATTACHMENT_UNSENT_TTL**  
+   * Uploads no message took are deleted after this long.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M12%2020a7%207%200%200%201-7-7a7%207%200%200%201%207-7a7%207%200%200%201%207%207a7%207%200%200%201-7%207m7.03-12.61l1.42-1.42c-.45-.51-.9-.97-1.41-1.41L17.62%206c-1.55-1.26-3.5-2-5.62-2a9%209%200%200%200-9%209a9%209%200%200%200%209%209c5%200%209-4.03%209-9c0-2.12-.74-4.07-1.97-5.61M11%2014h2V8h-2m4-7H9v2h6z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_UNSENT_TTL: number;
+  
+  /**
+   * **ATTACHMENT_INLINE_CHARS**  
+   * Characters of document text a message carries inline, all its attachments together; the agent reads the rest.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_INLINE_CHARS: number;
+  
+  /**
+   * **ATTACHMENT_READ_CHARS**  
+   * Characters read_attachment returns per call.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  ATTACHMENT_READ_CHARS: number;
+  
+  /**
+   * **TRACE_ATTACHMENT_TEXT**  
+   * Keep attachment text in traces; only its size otherwise.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M23%2023a7%207%200%201%201%207-7a7.01%207.01%200%200%201-7%207m0-12a5%205%200%201%200%205%205a5.006%205.006%200%200%200-5-5%22%2F%3E%3Ccircle%20cx%3D%229%22%20cy%3D%2216%22%20r%3D%227%22%20fill%3D%22%23808080%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRACE_ATTACHMENT_TEXT: boolean;
+  
+  /**
    * **MCP_CONNECT_TIMEOUT**  
    * How long to wait for each MCP server when the agents start.  
    * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M12%2020a7%207%200%200%201-7-7a7%207%200%200%201%207-7a7%207%200%200%201%207%207a7%207%200%200%201-7%207m7.03-12.61l1.42-1.42c-.45-.51-.9-.97-1.41-1.41L17.62%206c-1.55-1.26-3.5-2-5.62-2a9%209%200%200%200-9%209a9%209%200%200%200%209%209c5%200%209-4.03%209-9c0-2.12-.74-4.07-1.97-5.61M11%2014h2V8h-2m4-7H9v2h6z%22%2F%3E%3C%2Fsvg%3E)   
@@ -153,11 +241,11 @@ export type CoercedEnvSchema = {
   
 };
 
-type _CoercedEnvSchema_2cd09e60 = CoercedEnvSchema;
+type _CoercedEnvSchema_0d2a5c14 = CoercedEnvSchema;
 
 declare module 'varlock/env' {
-  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_2cd09e60> {}
-  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_2cd09e60, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SKILLS_DIR' | 'SCREENSHOTS_DIR' | 'MCP_CONNECT_TIMEOUT' | 'WEB_PORT' | 'API_URL'>> {}
+  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_0d2a5c14> {}
+  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_0d2a5c14, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SKILLS_DIR' | 'SCREENSHOTS_DIR' | 'ATTACHMENTS_DIR' | 'ATTACHMENT_MAX_FILE_MB' | 'ATTACHMENT_MAX_FILES' | 'ATTACHMENT_MAX_UNSENT_MB' | 'ATTACHMENT_MAX_PDF_PAGES' | 'ATTACHMENT_MAX_IMAGE_MEGAPIXELS' | 'ATTACHMENT_EXTRACT_TIMEOUT' | 'ATTACHMENT_EXTRACT_MEMORY_MB' | 'ATTACHMENT_EXTRACT_CONCURRENCY' | 'ATTACHMENT_UNSENT_TTL' | 'ATTACHMENT_INLINE_CHARS' | 'ATTACHMENT_READ_CHARS' | 'TRACE_ATTACHMENT_TEXT' | 'MCP_CONNECT_TIMEOUT' | 'WEB_PORT' | 'API_URL'>> {}
 }
 
 
@@ -167,11 +255,11 @@ export type EnvSchemaAsStrings = {
       : (NonNullable<CoercedEnvSchema[Property]> extends boolean ? ('true' | 'false') : string)
 };
 
-type _EnvSchemaAsStrings_2cd09e60 = EnvSchemaAsStrings;
+type _EnvSchemaAsStrings_0d2a5c14 = EnvSchemaAsStrings;
 declare global {
 
   // add types for global import.meta.env
-  interface ImportMetaEnv extends _EnvSchemaAsStrings_2cd09e60 {}
+  interface ImportMetaEnv extends _EnvSchemaAsStrings_0d2a5c14 {}
   interface ImportMeta {
     readonly env: ImportMetaEnv;
   }
