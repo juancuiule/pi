@@ -1,6 +1,7 @@
 // oxlint-disable no-redeclare -- a schema and its type share a name, the Effect idiom
 // The HTTP API, shared by the server and web/. Only type imports from pi packages: web/ bundles this file.
 import { Schema } from "effect";
+import { Multipart } from "effect/http";
 import {
   HttpApi,
   HttpApiEndpoint,
@@ -10,9 +11,12 @@ import {
 
 import {
   ApprovalNotFound,
+  AttachmentNotFound,
+  AttachmentRefused,
   CapacityExhausted,
   ConversationArchived,
   ConversationNotFound,
+  EmptyMessage,
   InvalidSetting,
   InvalidUpgrade,
   SkillNotFound,
@@ -33,9 +37,12 @@ export type {
 } from "@earendil-works/pi-durable";
 export {
   ApprovalNotFound,
+  AttachmentNotFound,
+  AttachmentRefused,
   CapacityExhausted,
   ConversationArchived,
   ConversationNotFound,
+  EmptyMessage,
   InvalidSetting,
   InvalidUpgrade,
   SkillNotFound,
@@ -61,6 +68,49 @@ export const ConversationSummary = Schema.Struct({
   pendingApprovals: Schema.Number,
 });
 export type ConversationSummary = typeof ConversationSummary.Type;
+
+/** A file uploaded for a message, checked and prepared (see docs/plans/attachments.md). */
+export const AttachmentInfo = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  mediaType: Schema.String,
+  kind: Schema.Literals(["text", "html", "pdf", "table", "image"]),
+  size: Schema.Number,
+  /** `partial`: some PDF pages need OCR; `needs_ocr`: none has text. */
+  status: Schema.Literals(["ready", "partial", "needs_ocr"]),
+  pages: Schema.optionalKey(Schema.Number),
+  chars: Schema.optionalKey(Schema.Number),
+  ocrPages: Schema.Array(Schema.Number),
+  warnings: Schema.Array(Schema.String),
+  width: Schema.optionalKey(Schema.Number),
+  height: Schema.optionalKey(Schema.Number),
+  /** Tables: rows after the header, and the header's columns. */
+  rows: Schema.optionalKey(Schema.Number),
+  columns: Schema.optionalKey(Schema.Number),
+  createdAt: Schema.Number,
+});
+export type AttachmentInfo = typeof AttachmentInfo.Type;
+
+/** What was prepared from an attachment: what the model reads (see src/attachments/format.ts `Prepared`). */
+export const PreparedAttachment = Schema.Struct({
+  kind: Schema.Literals(["text", "html", "pdf", "table", "image"]),
+  /** One entry per PDF page; a single one for text, HTML and tables (one line per row); none for images. */
+  pages: Schema.Array(Schema.String),
+  ocrPages: Schema.Array(Schema.Number),
+  warnings: Schema.Array(Schema.String),
+  extractor: Schema.String,
+  image: Schema.optionalKey(
+    Schema.Struct({ width: Schema.Number, height: Schema.Number })
+  ),
+  table: Schema.optionalKey(
+    Schema.Struct({
+      rows: Schema.Number,
+      columns: Schema.Number,
+      delimiter: Schema.String,
+    })
+  ),
+});
+export type PreparedAttachment = typeof PreparedAttachment.Type;
 
 export const ToolInfo = Schema.Struct({
   name: Schema.String,
@@ -119,6 +169,8 @@ export const Capabilities = Schema.Struct({
       tools: Schema.Array(ToolInfo),
       sections: Schema.Array(Schema.String),
       hooks: Schema.Number,
+      /** Always on: it cannot be switched off. */
+      locked: Schema.Boolean,
     })
   ),
   skills: Schema.Array(
@@ -157,6 +209,14 @@ const Full = CapacityExhausted.pipe(HttpApiSchema.status(409));
 const Archived = ConversationArchived.pipe(HttpApiSchema.status(409));
 const Invalid = InvalidSetting.pipe(HttpApiSchema.status(400));
 const ById = { id: Schema.Int };
+const Empty = EmptyMessage.pipe(HttpApiSchema.status(400));
+const Refused = AttachmentRefused.pipe(HttpApiSchema.status(400));
+const NoAttachment = AttachmentNotFound.pipe(HttpApiSchema.status(404));
+/** Text, attachments (ids of uploads), or both. */
+const MessageFields = {
+  prompt: Schema.optionalKey(Schema.String),
+  attachments: Schema.optionalKey(Schema.Array(Schema.String)),
+};
 
 const ConversationGroup = HttpApiGroup.make("conversations").add(
   HttpApiEndpoint.get("list", "/conversations", {
@@ -165,7 +225,7 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
   HttpApiEndpoint.post("create", "/conversations", {
     payload: Schema.Struct({
       sandbox: SandboxChoice,
-      prompt: Schema.NonEmptyString,
+      ...MessageFields,
       approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
       /** Changes to what a conversation at this Level gets by default. */
       settings: Schema.optionalKey(
@@ -177,12 +237,20 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
       ),
     }),
     success: ConversationSummary.pipe(HttpApiSchema.status(201)),
-    error: [Full, UnknownSkill, Invalid],
+    error: [Full, UnknownSkill, Invalid, Empty, Refused, NoAttachment],
   }),
   HttpApiEndpoint.post("send", "/conversations/:id/messages", {
     params: ById,
-    payload: Schema.Struct({ prompt: Schema.NonEmptyString }),
-    error: [NotFound, Full, Archived, UnknownSkill],
+    payload: Schema.Struct(MessageFields),
+    error: [
+      NotFound,
+      Full,
+      Archived,
+      UnknownSkill,
+      Empty,
+      Refused,
+      NoAttachment,
+    ],
   }),
   // What the conversation runs with now: its settings, model and prompt sections.
   HttpApiEndpoint.get("agent", "/conversations/:id/agent", {
@@ -265,6 +333,60 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
   })
 );
 
+/** `conversation`: the attachment's conversation; left out for an upload staged for a conversation not created yet. */
+const AttachmentScope = {
+  conversation: Schema.optionalKey(Schema.FiniteFromString),
+};
+
+const AttachmentGroup = HttpApiGroup.make("attachments").add(
+  // Upload one file: staged, or to `conversation`. It is checked and prepared before the answer.
+  HttpApiEndpoint.post("upload", "/attachments", {
+    payload: Schema.Struct({
+      file: Multipart.SingleFileSchema,
+      ...AttachmentScope,
+    }).pipe(HttpApiSchema.asMultipart({ maxParts: 2 })),
+    success: AttachmentInfo.pipe(HttpApiSchema.status(201)),
+    error: [Refused, NotFound, Archived],
+  }),
+  // Remove an upload no message took yet.
+  HttpApiEndpoint.delete("remove", "/attachments/:id", {
+    params: { id: Schema.String },
+    success: HttpApiSchema.NoContent,
+    error: NoAttachment,
+  }),
+  // The original, always as a download.
+  HttpApiEndpoint.get("original", "/attachments/:id/original", {
+    params: { id: Schema.String },
+    query: AttachmentScope,
+    success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+    error: NoAttachment,
+  }),
+  // The attachment and what was prepared from it, for the console's viewer.
+  HttpApiEndpoint.get("view", "/attachments/:id/view", {
+    params: { id: Schema.String },
+    query: AttachmentScope,
+    success: Schema.Struct({
+      info: AttachmentInfo,
+      prepared: PreparedAttachment,
+    }),
+    error: NoAttachment,
+  }),
+  // One page of a PDF drawn as a WebP image, so the console shows the page without opening the PDF itself.
+  HttpApiEndpoint.get("page", "/attachments/:id/pages/:page", {
+    params: { id: Schema.String, page: Schema.Int },
+    query: AttachmentScope,
+    success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+    error: [NoAttachment, Refused],
+  }),
+  // An image's small WebP preview.
+  HttpApiEndpoint.get("thumbnail", "/attachments/:id/thumbnail", {
+    params: { id: Schema.String },
+    query: AttachmentScope,
+    success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+    error: NoAttachment,
+  })
+);
+
 const InfoGroup = HttpApiGroup.make("info").add(
   HttpApiEndpoint.get("get", "/info", {
     success: Schema.Struct({ model: Schema.String }),
@@ -280,5 +402,6 @@ const InfoGroup = HttpApiGroup.make("info").add(
 
 export const Api = HttpApi.make("effect-pi")
   .add(ConversationGroup)
+  .add(AttachmentGroup)
   .add(InfoGroup)
   .prefix("/api");

@@ -130,7 +130,10 @@ export const SettingsPanel = ({
                             : "Off with its extension"
                         }
                         checked={tool.enabled && extension.enabled}
-                        disabled={disabled || !extension.enabled}
+                        // A locked extension's tools stay on with it.
+                        disabled={
+                          disabled || !extension.enabled || extension.locked
+                        }
                         onChange={(on) => onTool(tool.name, on)}
                         mono
                       />

@@ -10,10 +10,11 @@ import { createServer } from "node:http";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Duration, Effect, Layer } from "effect";
-import { HttpRouter } from "effect/http";
+import { HttpRouter, Multipart } from "effect/http";
 
 import { mcpServers } from "./mcp.config.ts";
 import { Agents } from "./src/agents/agents.ts";
+import { Attachments } from "./src/attachments/attachments.ts";
 import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
@@ -35,6 +36,13 @@ if (configured === undefined) {
 // creates the directory.
 const storage = await openNodeSqliteStorage(config.paths.db);
 
+// Attachments' metadata is a table of its own in the same SQLite file; their bytes are in ATTACHMENTS_DIR.
+const AttachmentsLive = Attachments.local({
+  directory: config.paths.attachments,
+  database: config.paths.db,
+  limits: config.attachments,
+});
+
 // One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
 const CapacityLive = Capacity.layer(config.capacity);
 
@@ -44,10 +52,12 @@ const AgentsLive = Agents.layer({
   saveScreenshot: saveScreenshotsTo(config.paths.screenshots),
   mcp: mcpServers,
   mcpConnectTimeoutMs: config.mcpConnectTimeoutMs,
+  traceAttachmentText: config.traceAttachmentText,
 }).pipe(
   Layer.provide(DockerVolumes.workspaces()),
   Layer.provide(Skills.directory(config.paths.skills)),
-  Layer.provide(CapacityLive)
+  Layer.provide(CapacityLive),
+  Layer.provideMerge(AttachmentsLive)
 );
 
 const ConversationsLive = Conversations.layer(config.server).pipe(
@@ -65,10 +75,19 @@ const NodeHttpServerLayer = NodeHttpServer.layer(createServer, {
 
 const LangfuseLayer = langfuseLayer(config.langfuse);
 
+// Uploads stream to temporary files; one bigger than the limit is cut off while it streams, not after.
+const UploadLimits = Layer.succeedContext(
+  Multipart.limitsServices({
+    maxFileSize: config.attachments.maxFileBytes,
+    maxTotalSize: config.attachments.maxFileBytes + 1024 * 1024,
+  })
+);
+
 const ServerLive = HttpRouter.serve(ApiLayer).pipe(
   Layer.provide(ConversationsLive),
   Layer.provide(AgentsLive),
   Layer.provide(NodeHttpServerLayer),
+  Layer.provide(UploadLimits),
   Layer.provide(LangfuseLayer)
 );
 

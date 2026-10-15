@@ -24,6 +24,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace";
 import { hasPendingApproval } from "@/lib/approval";
+import { splitAttachments } from "@/lib/attachments";
 import type { ConversationState } from "@/lib/conversation-state";
 import { settingsNote } from "@/lib/settings-note";
 import {
@@ -34,6 +35,7 @@ import {
 import { isNearBottom, userParts } from "@/lib/transcript";
 import { unansweredNote } from "@/lib/unanswered-note";
 
+import { SentChip } from "./attachment-chip";
 import { Markdown } from "./markdown";
 import { ToolCall } from "./tool-call";
 
@@ -222,10 +224,13 @@ const Entry = ({
   entry,
   state,
   showThinking,
+  conversation,
 }: {
   entry: EntryRecord;
   state: ConversationState;
   showThinking: boolean;
+  /** For the attachments' download links. */
+  conversation: number;
 }) => {
   const message = entry.model?.[0];
   const note =
@@ -264,8 +269,11 @@ const Entry = ({
   switch (message.role) {
     case "user": {
       const parsed = userParts(message);
-      const { text, hinted } = splitSkillHints(parsed.text);
-      const { images } = parsed;
+      // Attachment blocks come last, after any skill hints.
+      const files = splitAttachments(parsed.text);
+      const { text, hinted } = splitSkillHints(files.text);
+      // A message's images are its attached images, already shown as chips that open them.
+      const images = files.attachments.length > 0 ? [] : parsed.images;
       const skill = parseSkillMessage(text);
       const shown = skill === undefined ? text : skill.request;
       return (
@@ -287,6 +295,17 @@ const Entry = ({
                 )
               )}
             </p>
+          )}
+          {files.attachments.length === 0 ? null : (
+            <div className="flex flex-wrap gap-1.5">
+              {files.attachments.map((attachment) => (
+                <SentChip
+                  key={attachment.id}
+                  attachment={attachment}
+                  conversation={conversation}
+                />
+              ))}
+            </div>
           )}
           {images.map((image) => (
             // oxlint-disable-next-line next/no-img-element -- inline data URL, nothing for next/image to optimize
@@ -365,10 +384,12 @@ const Body = ({
   state,
   resuming,
   showThinking,
+  conversation,
 }: {
   state: ConversationState;
   resuming: boolean;
   showThinking: boolean;
+  conversation: number;
 }) => (
   <>
     {state.entries.map((entry) => {
@@ -377,7 +398,12 @@ const Body = ({
         unanswered === undefined ? undefined : unansweredNote(unanswered);
       return (
         <Fragment key={entry.id}>
-          <Entry entry={entry} state={state} showThinking={showThinking} />
+          <Entry
+            entry={entry}
+            state={state}
+            showThinking={showThinking}
+            conversation={conversation}
+          />
           {note === undefined ? null : <Failure>{note}</Failure>}
         </Fragment>
       );
@@ -399,10 +425,12 @@ const Body = ({
 
 export const Transcript = ({
   state,
+  conversation,
   resuming = false,
   showThinking = true,
 }: {
   state: ConversationState;
+  conversation: number;
   /** A resume is in flight; the run's "Working…" line reads "Resuming…" instead. */
   resuming?: boolean;
   /** The header's per-conversation switch: false drops thinking blocks, keeping text and tool calls. */
@@ -457,7 +485,12 @@ export const Transcript = ({
     <div className="relative min-h-0 flex-1">
       <ScrollArea ref={root} className="h-full">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6">
-          <Body state={state} resuming={resuming} showThinking={showThinking} />
+          <Body
+            state={state}
+            resuming={resuming}
+            showThinking={showThinking}
+            conversation={conversation}
+          />
         </div>
       </ScrollArea>
       {showJump ? (

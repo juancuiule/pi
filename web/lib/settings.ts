@@ -39,7 +39,7 @@ export const newConversationSettings = (
       return {
         name: extension.name,
         available,
-        locked: extension.name === "tracing",
+        locked: extension.locked,
         enabled:
           available && (overrides.extensions[extension.name] ?? byDefault),
         tools: extension.tools.map((tool) => ({

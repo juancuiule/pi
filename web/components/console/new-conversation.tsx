@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { RadioGroup } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
+import { canSend, sendable } from "@/lib/attachments";
 import { useTakeDraft } from "@/lib/draft";
 import { useCapabilities, useCreateConversation, useInfo } from "@/lib/queries";
 import {
@@ -19,6 +20,7 @@ import {
   settingsPayload,
 } from "@/lib/settings";
 import type { Overrides } from "@/lib/settings";
+import { useDraftAttachments } from "@/lib/use-draft-attachments";
 
 import { Composer } from "./composer";
 import { SANDBOX_INFO } from "./sandbox-badge";
@@ -60,6 +62,8 @@ export const NewConversation = ({
   // A skill picked in the capabilities sheet lands here.
   useTakeDraft(setPrompt, textarea);
   const create = useCreateConversation();
+  // Staged uploads: the create claims them.
+  const files = useDraftAttachments();
   const { data: info } = useInfo();
   const { data: capabilities } = useCapabilities();
   // Switches flipped in "Customize", kept across Level changes.
@@ -72,20 +76,24 @@ export const NewConversation = ({
     settings === undefined ? undefined : settingsPayload(overrides, settings);
 
   const submit = () => {
-    const text = prompt.trim();
-    if (text === "" || create.isPending) {
+    if (!canSend(prompt, files.items) || create.isPending) {
       return;
     }
+    const { ids, keys } = sendable(files.items);
     create.mutate(
       // Sent for chats too: the agent's upgrade_workspace is gated like commands.
       {
         sandbox,
-        prompt: text,
+        prompt: prompt.trim(),
+        attachments: ids,
         approvals: approvals ? ("ask" as const) : ("auto" as const),
         ...(customized === undefined ? {} : { settings: customized }),
       },
       {
-        onSuccess: (created) => onCreated(created.id),
+        onSuccess: (created) => {
+          files.take(keys);
+          onCreated(created.id);
+        },
         onError: (error) => toast.error(error.message),
       }
     );
@@ -196,6 +204,11 @@ export const NewConversation = ({
         pending={create.isPending}
         tall
         inputRef={textarea}
+        attachments={{
+          items: files.items,
+          onAdd: files.add,
+          onRemove: files.remove,
+        }}
         placeholder="Describe a task…"
         hint={
           <span className="inline-flex items-center gap-1">

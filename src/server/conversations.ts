@@ -19,12 +19,15 @@ import { Agents } from "../agents/agents.ts";
 import type { AgentError, ConversationAgent, Seat } from "../agents/agents.ts";
 import type { SettingsChange } from "../agents/settings.ts";
 import type { ApprovalChoice } from "../approvals.ts";
+import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
 import { ApprovalNotFound, ConversationArchived } from "../errors.ts";
 import type {
+  AttachmentNotFound,
+  AttachmentRefused,
   CapacityExhausted,
   ConversationNotFound,
   InvalidSetting,
@@ -55,7 +58,14 @@ export interface ConversationSummary {
 
 const TITLE_LENGTH = 60;
 
-export const titleOf = (prompt: string): string => {
+/** A title from the prompt as typed, or the attached files' names for a message of only files. */
+export const titleOf = (
+  prompt: string,
+  files: readonly string[] = []
+): string => {
+  if (prompt.trim() === "" && files.length > 0) {
+    return titleOf(files.join(", "));
+  }
   const line = prompt.trim().replaceAll(/\s+/gu, " ");
   return line.length <= TITLE_LENGTH
     ? line
@@ -102,6 +112,8 @@ const summaryOf = (
   };
 };
 
+type AttachmentError = AttachmentNotFound | AttachmentRefused;
+
 type SeatError =
   | AgentError
   | SandboxError
@@ -112,22 +124,30 @@ type SeatError =
 export class Conversations extends Context.Service<
   Conversations,
   {
-    /** Record a Conversation, give it a Seat and send its first prompt. */
+    /**
+     * Record a Conversation, give it a Seat and send its first message: the prompt and the staged uploads in
+     * `attachments`, which it claims, all or none.
+     */
     create(input: {
       readonly sandbox: SandboxChoice;
       readonly prompt: string;
+      readonly attachments?: readonly string[] | undefined;
       readonly approvals?: "ask" | "auto" | undefined;
       readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
     }): Effect.Effect<
       ConversationSummary,
-      SeatError | SkillNotFound | InvalidSetting
+      SeatError | SkillNotFound | InvalidSetting | AttachmentError
     >;
     readonly list: Effect.Effect<readonly ConversationSummary[], AgentError>;
-    /** Send a prompt, resuming a paused Conversation first; a pending Pause is cancelled. */
+    /**
+     * Send a prompt with the Conversation's unsent uploads in `attachments`, resuming a paused Conversation first; a
+     * pending Pause is cancelled.
+     */
     send(
       id: number,
-      prompt: string
-    ): Effect.Effect<void, SeatError | SkillNotFound>;
+      prompt: string,
+      attachments?: readonly string[]
+    ): Effect.Effect<void, SeatError | SkillNotFound | AttachmentError>;
     /** Give a paused Conversation a Seat; for one that has a Seat, cancel a Pause waiting for its Run. */
     resume(id: number): Effect.Effect<ConversationSummary, SeatError>;
     /** Free a Conversation's Seat: at once when idle, otherwise once the current Run ends. */
@@ -198,6 +218,7 @@ export class Conversations extends Context.Service<
       Conversations,
       Effect.gen(function* () {
         const agents = yield* Agents;
+        const attachments = yield* Attachments;
         const capacity = yield* Capacity;
         const live = new Map<number, Live>();
         const layerScope = yield* Scope.Scope;
@@ -232,13 +253,18 @@ export class Conversations extends Context.Service<
           );
 
         // Submit to a Seat unless `close` got to it first; `false` means it has no Seat any more.
-        const sendLive = (id: number, entry: Live, prompt: string) =>
+        const sendLive = (
+          id: number,
+          entry: Live,
+          prompt: string,
+          files: readonly string[]
+        ) =>
           Effect.suspend(() => {
             if (live.get(id) !== entry) {
               return Effect.succeed(false);
             }
             entry.pausing = false;
-            return entry.seat.send(prompt).pipe(
+            return entry.seat.send(prompt, files).pipe(
               // A submit starts a Run in the commit that admits it, or queues behind the one going.
               Effect.andThen(refresh(entry)),
               Effect.andThen(Clock.currentTimeMillis),
@@ -335,21 +361,30 @@ export class Conversations extends Context.Service<
         const create = Effect.fn("Conversations.create")(function* (input: {
           readonly sandbox: SandboxChoice;
           readonly prompt: string;
+          readonly attachments?: readonly string[] | undefined;
           readonly approvals?: "ask" | "auto" | undefined;
           readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
         }) {
+          const files = input.attachments ?? [];
+          // Reserved before anything is created, so two creates cannot both take an upload; staged again on failure.
+          const reservation =
+            files.length === 0 ? undefined : yield* attachments.reserve(files);
           const { id, entry } = yield* seatIn(input.sandbox, (claimed) =>
             Effect.gen(function* () {
               // Claimed first, so a create at a limit records nothing. The title is the prompt as typed.
               const created = yield* agents.create({
                 prompt: input.prompt,
-                title: titleOf(input.prompt),
+                title: titleOf(
+                  input.prompt,
+                  reservation?.records.map((record) => record.name)
+                ),
                 level: input.sandbox,
                 createdAt: yield* Clock.currentTimeMillis,
                 approvals: input.approvals,
                 settings: input.settings,
               });
               yield* claimed.assign(Number(created));
+              yield* reservation?.assign(Number(created)) ?? Effect.void;
               return {
                 id: Number(created),
                 seat: yield* agents.open(
@@ -360,9 +395,9 @@ export class Conversations extends Context.Service<
                 ),
               };
             })
-          );
+          ).pipe(Effect.onError(() => reservation?.release ?? Effect.void));
           // A Seat whose first prompt cannot be sent is paused: the Conversation stays, resumable.
-          yield* sendLive(id, entry, input.prompt).pipe(
+          yield* sendLive(id, entry, input.prompt, files).pipe(
             Effect.onError(() => close(id))
           );
           const stored = yield* agents.get(asId(id));
@@ -398,12 +433,13 @@ export class Conversations extends Context.Service<
 
         const send = Effect.fn("Conversations.send")(function* (
           id: number,
-          prompt: string
+          prompt: string,
+          files: readonly string[] = []
         ) {
           // A Seat that closes while this send waits for it is resumed again: the send is the newer intent.
           for (let tries = 0; tries < 3; tries += 1) {
             const entry = yield* seatOf(id);
-            if (yield* sendLive(id, entry, prompt)) {
+            if (yield* sendLive(id, entry, prompt, files)) {
               return;
             }
           }

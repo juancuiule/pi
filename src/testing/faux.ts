@@ -13,6 +13,8 @@ import { Effect, Layer } from "effect";
 import { Agents } from "../agents/agents.ts";
 import type { AgentModel } from "../agents/agents.ts";
 import type { ApprovalPolicy } from "../approvals.ts";
+import { Attachments } from "../attachments/attachments.ts";
+import type { AttachmentLimits } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import type { Limits } from "../capacity.ts";
 import type { McpServerConfig } from "../mcp.ts";
@@ -35,10 +37,18 @@ export const fauxAgents = (
     readonly limits?: Partial<Limits>;
     /** The configured model; the faux provider has only `faux/faux-1`, the default. */
     readonly model?: AgentModel;
+    /** Attachment limits; the layer provides those Attachments too (temporary), for tests to upload with. */
+    readonly attachmentLimits?: Partial<AttachmentLimits>;
+    /** Whether the faux model takes images; it does by default. */
+    readonly vision?: boolean;
   } = {}
 ) => {
   const models = createModels();
-  const faux = fauxProvider();
+  const faux = fauxProvider(
+    options.vision === false
+      ? { models: [{ id: "faux-1", input: ["text"] }] }
+      : {}
+  );
   models.setProvider(faux.provider);
   faux.setResponses(responses);
   const sandboxes = localSandboxes();
@@ -56,6 +66,7 @@ export const fauxAgents = (
     }).pipe(
       Layer.provide(sandboxes.layer),
       Layer.provide(options.skills ?? Skills.none),
+      Layer.provideMerge(Attachments.temporary(options.attachmentLimits)),
       Layer.provideMerge(
         Capacity.layer({ seats: 10, shells: 3, desktops: 1, ...options.limits })
       )

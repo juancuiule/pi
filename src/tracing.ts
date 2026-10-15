@@ -30,6 +30,54 @@ export const traceJson = (value: unknown): string =>
       : field
   );
 
+/** Tools whose results are attachment text. */
+const ATTACHMENT_TOOLS = new Set(["read_attachment", "search_attachment"]);
+
+const sizeOf = (text: string) =>
+  `[${text.length} characters of attachment text]`;
+
+/** Message text with each `<attachment>` block's contents replaced by their size. */
+export const redactAttachmentBlocks = (text: string): string =>
+  text.replaceAll(
+    /(?<open><attachment [^>\n]*>)\n(?<body>[\s\S]*?)\n<\/attachment>/gu,
+    (...match: unknown[]) => {
+      const { open, body } = match.at(-1) as { open: string; body: string };
+      return `${open}\n${sizeOf(body)}\n</attachment>`;
+    }
+  );
+
+/** Messages for a trace, with the files people attached left out: their blocks, and what the tools read of them. */
+export const redactAttachments = (
+  messages: readonly Message[]
+): readonly Message[] =>
+  messages.map((message): Message => {
+    if (message.role === "user") {
+      return {
+        ...message,
+        content:
+          typeof message.content === "string"
+            ? redactAttachmentBlocks(message.content)
+            : message.content.map((block) =>
+                block.type === "text"
+                  ? { ...block, text: redactAttachmentBlocks(block.text) }
+                  : block
+              ),
+      };
+    }
+    if (
+      message.role === "toolResult" &&
+      ATTACHMENT_TOOLS.has(message.toolName)
+    ) {
+      return {
+        ...message,
+        content: message.content.map((block) =>
+          block.type === "text" ? { ...block, text: sizeOf(block.text) } : block
+        ),
+      };
+    }
+    return message;
+  });
+
 /** Langfuse attributes for one model response. */
 export const generationAttributes = (
   message: AssistantMessage
@@ -72,8 +120,27 @@ export interface AgentTracing {
  * spans cost little and go nowhere.
  */
 export const makeAgentTracing = (
-  services: Context.Context<never>
+  services: Context.Context<never>,
+  options: {
+    /** Keep the text of attachments in traces; left out (only its size) by default. */
+    readonly attachmentText?: boolean;
+  } = {}
 ): AgentTracing => {
+  const forTrace = (messages: readonly Message[]) =>
+    options.attachmentText === true ? messages : redactAttachments(messages);
+  const redactsTool = (tool: string) =>
+    options.attachmentText !== true && ATTACHMENT_TOOLS.has(tool);
+  const forTraceResult = <B extends { readonly type: string }>(
+    tool: string,
+    content: readonly B[]
+  ) =>
+    redactsTool(tool)
+      ? content.map((block) =>
+          "text" in block && typeof block.text === "string"
+            ? { ...block, text: sizeOf(block.text) }
+            : block
+        )
+      : content;
   const run = Effect.runSyncWith(services);
   const parents = new Map<ConversationId, Tracer.AnySpan>();
   // Langfuse session per conversation. Conversation ids restart with every process (MemoryStorage), so a
@@ -132,7 +199,7 @@ export const makeAgentTracing = (
         ) => {
           start(api.taskId, api.conversationId, "generation", {
             "langfuse.observation.type": "generation",
-            "langfuse.observation.input": traceJson(request.messages),
+            "langfuse.observation.input": traceJson(forTrace(request.messages)),
           });
         },
         afterResponse: (message, api) => {
@@ -151,18 +218,23 @@ export const makeAgentTracing = (
             "langfuse.observation.input": traceJson(call.arguments),
           });
         },
-        afterTool: (_call, result, api) => {
+        afterTool: (call, result, api) => {
           // A tool that throws has no content; its message is in the diagnostics.
+          // An attachment tool's diagnostics may quote the file too; they get the same treatment as its results.
           const errors = (result.diagnostics ?? [])
             .filter((diagnostic) => diagnostic.severity === "error")
-            .map((diagnostic) => diagnostic.message);
+            .map((diagnostic) =>
+              redactsTool(call.name)
+                ? sizeOf(diagnostic.message)
+                : diagnostic.message
+            );
           end(
             api.taskId,
             {
               "langfuse.observation.output": traceJson(
                 result.content === undefined || result.content.length === 0
                   ? errors
-                  : result.content
+                  : forTraceResult(call.name, result.content)
               ),
               ...(result.isError
                 ? {

@@ -19,6 +19,7 @@ const capabilities: Capabilities = {
       tools: [tool("calculate")],
       sections: [],
       hooks: 0,
+      locked: false,
     },
     {
       name: "coding-tools",
@@ -26,6 +27,7 @@ const capabilities: Capabilities = {
       tools: [tool("read"), tool("bash")],
       sections: [],
       hooks: 0,
+      locked: false,
     },
     {
       name: "skills",
@@ -33,6 +35,7 @@ const capabilities: Capabilities = {
       tools: [tool("skill")],
       sections: ["skills"],
       hooks: 0,
+      locked: false,
     },
   ],
   skills: [

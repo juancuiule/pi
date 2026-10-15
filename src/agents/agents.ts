@@ -2,7 +2,7 @@
 // gives a Conversation a Seat (see GLOSSARY.md), with a Sandbox over its Workspace when its Level needs one. Which
 // Conversations have Seats, and when that changes, is the server's concern (src/server/conversations.ts).
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
 import type {
   Conversation,
@@ -14,6 +14,7 @@ import type {
   Storage,
   ToolRegistration,
   Tx,
+  UserInput,
   WatchHandle,
 } from "@earendil-works/pi-durable";
 import {
@@ -46,6 +47,13 @@ import {
   isGated,
   stopWaitingCalls,
 } from "../approvals.ts";
+import {
+  Attachments,
+  attachmentsExtension,
+  copyToSandbox,
+} from "../attachments/attachments.ts";
+import type { LoadedAttachment } from "../attachments/attachments.ts";
+import { escapeAttachmentTags, formatBlocks } from "../attachments/format.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, ClaimCancelled } from "../capacity.ts";
 import type {
@@ -54,7 +62,12 @@ import type {
 } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
 import { MetaDoc } from "../conversation-meta.ts";
-import type { CapacityExhausted, SkillNotFound } from "../errors.ts";
+import type {
+  AttachmentNotFound,
+  AttachmentRefused,
+  CapacityExhausted,
+  SkillNotFound,
+} from "../errors.ts";
 import {
   ApprovalNotFound,
   ConversationArchived,
@@ -134,6 +147,8 @@ export interface ExtensionInfo {
   readonly sections: readonly string[];
   /** How many task hooks it installs (tracing's spans, for example). */
   readonly hooks: number;
+  /** Always on: no conversation can switch it off. */
+  readonly locked: boolean;
 }
 
 /** A conversation's settings, with the model and the prompt sections it runs with now. */
@@ -310,11 +325,24 @@ export interface Seat {
   >;
   /**
    * Send a prompt without waiting for the answer; it is queued as a follow-up while a Run is going. `/skill:` is
-   * expanded against the conversation's skills first.
+   * expanded against the conversation's skills first, in the prompt only; then come the blocks of `attachments`,
+   * the conversation's unsent uploads, which are kept with it from then on.
    */
-  send(prompt: string): Effect.Effect<void, AgentError | SkillNotFound>;
-  /** Send a prompt and wait for the answer's text; the model requests and tool calls are traced under it. */
-  ask(prompt: string): Effect.Effect<string, AgentError>;
+  send(
+    prompt: string,
+    attachments?: readonly string[]
+  ): Effect.Effect<
+    void,
+    AgentError | SkillNotFound | AttachmentNotFound | AttachmentRefused
+  >;
+  /**
+   * Send a prompt, with the conversation's unsent uploads in `attachments`, and wait for the answer's text; the model
+   * requests and tool calls are traced under it.
+   */
+  ask(
+    prompt: string,
+    attachments?: readonly string[]
+  ): Effect.Effect<string, AgentError | AttachmentNotFound | AttachmentRefused>;
   /**
    * Abort the current Run and its queued inputs; a call waiting for approval reports that the user stopped it.
    * Completes once the conversation is idle.
@@ -452,6 +480,8 @@ export class Agents extends Context.Service<
     readonly mcp?: readonly McpServerConfig[];
     /** How long to wait for each MCP server when the layer is built; 10 seconds by default. */
     readonly mcpConnectTimeoutMs?: number | undefined;
+    /** Keep attachment text in traces; only its size by default. */
+    readonly traceAttachmentText?: boolean | undefined;
   }) =>
     Layer.effect(
       Agents,
@@ -460,8 +490,11 @@ export class Agents extends Context.Service<
         const capacity = yield* Capacity;
         const registry = createRegistry();
         // Spans for model requests and tool calls use the tracer this layer is built with.
-        const tracing = makeAgentTracing(yield* Effect.context<never>());
+        const tracing = makeAgentTracing(yield* Effect.context<never>(), {
+          attachmentText: options.traceAttachmentText === true,
+        });
         registry.install(tracing.extension);
+        const attachments = yield* Attachments;
         // Skills are read from their source for every new conversation; the extension reads the conversation's.
         const skills = yield* Skills;
         const skillsExt = skillsExtension(skills);
@@ -528,20 +561,34 @@ export class Agents extends Context.Service<
           );
         });
         registry.install(workspaceExt);
+        // Whether a model takes images, so an attachment's image is only sent to one that does.
+        const takesImages = (model: AgentModel | undefined) =>
+          model !== undefined &&
+          (options.models
+            .getModel(model.provider, model.modelId)
+            ?.input.includes("image") ??
+            false);
+        // Read and search over the conversation's attachments; always on, so a file once sent stays readable.
+        const attachmentsExt = attachmentsExtension(attachments);
+        registry.install(attachmentsExt);
         // Every installed extension, for the console; and those every conversation selects, whatever its Level.
         const installed = [
           ...extensionsFor("desktop", desktop),
           workspaceExt,
+          attachmentsExt,
           skillsExt,
           ...mcp.extensions,
           tracing.extension,
         ];
         const everyLevel = new Set<Extension>([
           workspaceExt,
+          attachmentsExt,
           skillsExt,
           ...mcp.extensions,
           tracing.extension,
         ]);
+        const isLocked = (extension: Extension) =>
+          extension === tracing.extension || extension === attachmentsExt;
         const levelsOf = (extension: Extension) =>
           LEVELS.filter(
             (level) =>
@@ -553,7 +600,7 @@ export class Agents extends Context.Service<
             name: extension.name,
             tools: (extension.tools ?? []).map(toolInfo),
             levels: levelsOf(extension),
-            locked: extension === tracing.extension,
+            locked: isLocked(extension),
           })
         );
         const extensionByName = new Map(
@@ -569,6 +616,7 @@ export class Agents extends Context.Service<
           [
             ...extensionsFor(level, desktop),
             workspaceExt,
+            attachmentsExt,
             ...(withSkills ? [skillsExt] : []),
             ...mcp.extensions,
             tracing.extension,
@@ -663,6 +711,18 @@ export class Agents extends Context.Service<
           );
         });
 
+        // Attachments claimed by a message when the server stopped: sent if the message was admitted, which its
+        // submission (carrying the claim's id) shows, and free to send again otherwise.
+        yield* attachments.settleClaims((conversationId, claim) =>
+          attempt(() =>
+            durableStorage.submissionByRequest(
+              conversationId as ConversationId,
+              claim,
+              context
+            )
+          ).pipe(Effect.map((submission) => submission !== undefined))
+        );
+
         // The inputs of a conversation whose runs ended without an answer, in paged scans; pages are sequential
         // because each needs the previous cursor.
         const unansweredInputs = async (
@@ -733,6 +793,47 @@ export class Agents extends Context.Service<
               )
             : Effect.succeed(prompt);
 
+        // A message: the person's text, then a block per attachment, then the images when the model takes them.
+        const messageContent = Effect.fnUntraced(function* (
+          id: ConversationId,
+          text: string,
+          loaded: readonly LoadedAttachment[]
+        ) {
+          if (loaded.length === 0) {
+            return text;
+          }
+          const agent = yield* attempt(() =>
+            harness.snapshot(AgentDoc, id, context)
+          );
+          const images = takesImages(agent?.model);
+          const blocks = formatBlocks(
+            loaded.map((each) => ({
+              info: each.record,
+              prepared: each.prepared,
+            })),
+            { budget: attachments.limits.inlineChars, images }
+          );
+          const joined = [text, ...blocks]
+            .filter((part) => part !== "")
+            .join("\n\n");
+          const imageParts = images
+            ? yield* Effect.forEach(
+                loaded.filter((each) => each.record.kind === "image"),
+                (each) =>
+                  attachments.file(each.record.id, Number(id), "model").pipe(
+                    Effect.map(({ bytes }): ImageContent => ({
+                      type: "image",
+                      data: Buffer.from(bytes).toString("base64"),
+                      mimeType: each.record.mediaType,
+                    }))
+                  )
+              )
+            : [];
+          return imageParts.length === 0
+            ? joined
+            : [{ type: "text" as const, text: joined }, ...imageParts];
+        });
+
         // Record a settings change in the conversation, where the console shows it; the model never sees it.
         const record = (id: ConversationId, entry: SettingsRecord) =>
           entry.changes.length === 0 && entry.reset !== true
@@ -767,12 +868,13 @@ export class Agents extends Context.Service<
               const current = Array.isArray(agent.extensions)
                 ? [...agent.extensions]
                 : [];
-              agent.extensions = [
-                ...current,
-                ...added
-                  .map((extension) => extension.name)
-                  .filter((name) => !current.includes(name)),
-              ];
+              const missing = added
+                .map((extension) => extension.name)
+                .filter((name) => !current.includes(name));
+              // Nothing is written when nothing is missing.
+              if (missing.length > 0) {
+                agent.extensions = [...current, ...missing];
+              }
             }, context)
           );
 
@@ -981,6 +1083,8 @@ export class Agents extends Context.Service<
             return yield* new ConversationArchived({ id: Number(id) });
           }
           yield* locked(id, ensureModel(id));
+          // A conversation from before attachments gets their always-on extension.
+          yield* locked(id, addExtensions(id, [attachmentsExt]));
           const workspace = yield* attempt(() =>
             harness.snapshot(WorkspaceDoc, id, context)
           );
@@ -1055,6 +1159,25 @@ export class Agents extends Context.Service<
                         )
                       );
                   }
+                  // Sent attachments, for the shell's tools; a file that cannot be copied stays readable with the
+                  // attachment tools.
+                  yield* attachments.sent(Number(id)).pipe(
+                    Effect.flatMap((sent) =>
+                      copyToSandbox(
+                        attachments,
+                        workspaces.env(made.sandbox),
+                        Number(id),
+                        sent,
+                        context
+                      )
+                    ),
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning(
+                        `Could not copy attachments into ${made.sandbox.id}`,
+                        cause
+                      )
+                    )
+                  );
                   // Recorded before anyone uses it, so no tool call of this Seat runs without its Sandbox.
                   yield* attempt(() =>
                     harness.commit(async (tx) => {
@@ -1136,37 +1259,102 @@ export class Agents extends Context.Service<
               "langfuse.session.id": tracing.sessionOf(id),
             });
 
-          const send = Effect.fn("Seat.send")(function* (prompt: string) {
+          // Admit a message: `text`, then the conversation's unsent uploads in `ids`. The uploads are claimed first, so no
+          // other message or removal takes them; the claim is committed exactly when the message is admitted (they are
+          // sent from then on, and copied into the Sandbox) and released when it is not, so they can be sent again. The
+          // admission and the commit cannot be interrupted apart; after a stop, the next start commits a claim whose
+          // message was admitted (its submission carries the claim's id) and releases the others.
+          const admit = Effect.fnUntraced(function* (
+            text: string,
+            ids: readonly string[],
+            whenBusy?: "followUp"
+          ) {
+            // What the person typed can never pass for a block the server appended.
+            const typed = escapeAttachmentTags(text);
+            // A message with attachments carries its claim's id, stored with the submission when it is admitted.
+            const submit = (content: UserInput, requestId?: string) =>
+              attempt(() =>
+                handle.submit(
+                  {
+                    type: "input",
+                    content,
+                    ...(whenBusy === undefined ? {} : { whenBusy }),
+                    ...(requestId === undefined ? {} : { requestId }),
+                  },
+                  context
+                )
+              );
+            if (ids.length === 0) {
+              return yield* submit(typed);
+            }
+            yield* Effect.annotateCurrentSpan(
+              "effect-pi.attachments",
+              ids.join(",")
+            );
+            const claim = yield* attachments.claimForMessage(Number(id), ids);
+            const content = yield* messageContent(id, typed, claim.loaded).pipe(
+              Effect.onError(() => claim.release)
+            );
+            const submission = yield* Effect.uninterruptible(
+              submit(content, claim.id).pipe(
+                Effect.onExit((exit) =>
+                  Exit.isSuccess(exit) ? claim.commit : claim.release
+                )
+              )
+            );
+            const sandbox = machine?.sandbox;
+            if (sandbox !== undefined) {
+              yield* copyToSandbox(
+                attachments,
+                workspaces.env(sandbox),
+                Number(id),
+                claim.loaded.map((each) => each.record),
+                context
+              ).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(
+                    `Could not copy attachments into ${sandbox.id}`,
+                    cause
+                  )
+                )
+              );
+            }
+            return submission;
+          });
+
+          const send = Effect.fn("Seat.send")(function* (
+            prompt: string,
+            attachmentIds: readonly string[] = []
+          ) {
+            // Skills read only what the person typed, never a file's text.
             const expanded = yield* expand(prompt, id);
             yield* annotate(expanded);
             // Admitted without waiting: a busy conversation queues it as a follow-up, and the answer arrives as
             // events.
             yield* tracing.traced(
               id,
-              attempt(() =>
-                handle.submit(
-                  { type: "input", content: expanded, whenBusy: "followUp" },
-                  context
-                )
-              )
+              admit(expanded, attachmentIds, "followUp")
             );
           });
 
-          const ask = Effect.fn("Seat.ask")(function* (prompt: string) {
+          const ask = Effect.fn("Seat.ask")(function* (
+            prompt: string,
+            attachmentIds: readonly string[] = []
+          ) {
             yield* annotate(prompt);
             const answer = yield* tracing.traced(
               id,
-              attempt(async () => {
-                const submission = await handle.submit(
-                  { type: "input", content: prompt },
-                  context
-                );
-                const settled = await submission.wait(context);
-                if (settled.status !== "done" || settled.type !== "input") {
-                  throw new Error(`Run failed: ${settled.status}`);
-                }
-                return answerText(handle, settled.answer);
-              })
+              admit(prompt, attachmentIds).pipe(
+                Effect.flatMap((submission) =>
+                  attempt(async () => {
+                    const settled = await submission.wait(context);
+                    if (settled.status !== "done" || settled.type !== "input") {
+                      throw new Error(`Run failed: ${settled.status}`);
+                    }
+                    return answerText(handle, settled.answer);
+                  })
+                )
+              )
             );
             yield* Effect.annotateCurrentSpan(
               "langfuse.observation.output",
@@ -1427,6 +1615,7 @@ export class Agents extends Context.Service<
                 (section) => section.key
               ),
               hooks: extension.hooks?.length ?? 0,
+              locked: isLocked(extension),
             })),
           })),
           Effect.orDie

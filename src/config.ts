@@ -45,12 +45,33 @@ export const capacity = {
   desktops: ENV.MAX_DESKTOPS,
 };
 
-/** Where the server keeps conversations, where skills are read from, and where desktop screenshots go. */
+/** Where the server keeps conversations and attachments, where skills are read from, and where desktop screenshots go. */
 export const paths = {
   db: ENV.EFFECT_PI_DB,
   skills: ENV.SKILLS_DIR,
   screenshots: ENV.SCREENSHOTS_DIR,
+  attachments: ENV.ATTACHMENTS_DIR,
 };
+
+const MB = 1024 * 1024;
+
+/** Limits on attachments; sizes in bytes, durations in milliseconds. */
+export const attachments = {
+  maxFileBytes: ENV.ATTACHMENT_MAX_FILE_MB * MB,
+  maxFilesPerMessage: ENV.ATTACHMENT_MAX_FILES,
+  maxUnsentBytes: ENV.ATTACHMENT_MAX_UNSENT_MB * MB,
+  maxPdfPages: ENV.ATTACHMENT_MAX_PDF_PAGES,
+  maxImagePixels: ENV.ATTACHMENT_MAX_IMAGE_MEGAPIXELS * 1_000_000,
+  extractTimeoutMs: ENV.ATTACHMENT_EXTRACT_TIMEOUT,
+  extractMemoryMb: ENV.ATTACHMENT_EXTRACT_MEMORY_MB,
+  extractConcurrency: ENV.ATTACHMENT_EXTRACT_CONCURRENCY,
+  unsentTtlMs: ENV.ATTACHMENT_UNSENT_TTL,
+  inlineChars: ENV.ATTACHMENT_INLINE_CHARS,
+  readChars: ENV.ATTACHMENT_READ_CHARS,
+};
+
+/** Keep attachment text in traces. */
+export const traceAttachmentText = ENV.TRACE_ATTACHMENT_TEXT;
 
 /** How long to wait for each MCP server when the agents start. */
 export const mcpConnectTimeoutMs = ENV.MCP_CONNECT_TIMEOUT;

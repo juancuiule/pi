@@ -65,3 +65,16 @@ export const relativeTime = (then: number, now: number): string => {
   }
   return dateFormat.format(new Date(then));
 };
+
+/** A file size for people: "820 B", "14 KB", "3.2 MB". */
+export const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  const kb = bytes / 1024;
+  if (kb < 1024) {
+    return `${Math.round(kb)} KB`;
+  }
+  const mb = kb / 1024;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+};

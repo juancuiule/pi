@@ -89,6 +89,8 @@ export const useCreateConversation = () => {
     mutationFn: (payload: {
       sandbox: SandboxChoice;
       prompt: string;
+      /** Ids of staged uploads; the create claims them. */
+      attachments?: readonly string[];
       approvals?: "ask" | "auto";
       settings?: Omit<SettingsChange, "approvals">;
     }) => guard(() => runApi((c) => c.conversations.create({ payload }))),
@@ -101,18 +103,19 @@ export const useCreateConversation = () => {
   });
 };
 
-/** Send a prompt; a paused Conversation is resumed first, which can take Capacity. */
+/** Send a prompt and the conversation's uploads; a paused Conversation is resumed first, which can take Capacity. */
 export const useSendMessage = (id: number) => {
   const queryClient = useQueryClient();
   const guard = useCapacityGuard();
   return useMutation({
-    mutationFn: (prompt: string) => {
+    mutationFn: (payload: {
+      prompt: string;
+      attachments?: readonly string[];
+    }) => {
       // Counts on live conversations too; the resuming view only shows while the summary still says paused.
       useConversationStore.getState().beginResume(id);
       return guard(() =>
-        runApi((c) =>
-          c.conversations.send({ params: { id }, payload: { prompt } })
-        )
+        runApi((c) => c.conversations.send({ params: { id }, payload }))
       );
     },
     // The flag outlives the request itself so the view never falls back to "paused" before the list catches up.

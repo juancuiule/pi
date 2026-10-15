@@ -2,6 +2,7 @@
 // a person can read. Pure, so both are unit-tested.
 import type { ConversationSummary } from "effect-pi/api";
 
+import { splitAttachments } from "./attachments";
 import type { ConversationState } from "./conversation-state";
 import { toolResultOf } from "./conversation-state";
 import { SANDBOX_LABEL } from "./sandbox-info";
@@ -77,10 +78,15 @@ export const toMarkdown = (
   for (const entry of state.entries) {
     for (const message of entry.model ?? []) {
       if (message.role === "user") {
-        const { text, images } = userParts(message);
+        const { text: full, images } = userParts(message);
+        // A file's text stays out of the export; its name and id say what was attached.
+        const { text, attachments } = splitAttachments(full);
         parts.push("## User", "");
         if (text !== "") {
           parts.push(text, "");
+        }
+        for (const attachment of attachments) {
+          parts.push(`> Attached: ${attachment.name} (${attachment.id})`, "");
         }
         for (const image of images) {
           parts.push(`![image](${image.src})`, "");

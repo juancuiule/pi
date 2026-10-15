@@ -1,11 +1,24 @@
 "use client";
 
-import { isValidElement } from "react";
+import { ImageIcon } from "lucide-react";
+import { isValidElement, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -136,15 +149,125 @@ const components: Components = {
   ),
 };
 
+/**
+ * A link in a file the reader did not write: show where it goes before opening
+ * it. A button, not an anchor, so no click opens the destination directly.
+ */
+const UntrustedLink = ({
+  href,
+  children,
+}: {
+  href?: string;
+  children?: ReactNode;
+}) => {
+  const [asking, setAsking] = useState(false);
+  if (href === undefined || href === "") {
+    return children;
+  }
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setAsking(true)}
+        className="inline cursor-pointer underline underline-offset-2"
+      >
+        {children}
+      </button>
+      <AlertDialog open={asking} onOpenChange={setAsking}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Open this link?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This link came from an uploaded file; its author chose the
+              destination. It opens in a new tab.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <p className="bg-muted rounded-md px-3 py-2 font-mono text-xs break-all select-all">
+            {href}
+          </p>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                window.open(href, "_blank", "noopener,noreferrer");
+                setAsking(false);
+              }}
+            >
+              Open link
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+};
+
+/**
+ * An image in a file the reader did not write: loading it fetches an address
+ * the file's author chose, so it loads only when the person asks for it.
+ */
+const UntrustedImage = ({
+  src,
+  alt,
+}: {
+  src?: string | Blob;
+  alt?: string;
+}) => {
+  const [shown, setShown] = useState(false);
+  const label = `[image${alt === undefined || alt === "" ? "" : `: ${alt}`}]`;
+  if (typeof src !== "string" || src === "") {
+    return <span className="text-muted-foreground">{label}</span>;
+  }
+  if (shown) {
+    return (
+      // oxlint-disable-next-line next/no-img-element -- fetched only on demand; the file does not load it on its own
+      <img
+        src={src}
+        alt={alt ?? ""}
+        referrerPolicy="no-referrer"
+        className="my-2 max-w-full rounded-lg outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+      />
+    );
+  }
+  return (
+    <span className="text-muted-foreground inline-flex items-baseline gap-1.5">
+      {label}
+      <button
+        type="button"
+        onClick={() => setShown(true)}
+        title={src}
+        className="bg-background text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 inline-flex items-center gap-1 rounded-md border px-1.5 align-baseline text-xs outline-none focus-visible:ring-2"
+      >
+        <ImageIcon aria-hidden className="size-3" />
+        Show image
+      </button>
+    </span>
+  );
+};
+
+/** For a document whose author is not the reader: raw HTML is parsed then sanitized (scripts, media, handlers die there), links ask before opening, images load only when asked. */
+const untrustedComponents: Components = {
+  ...components,
+  a: UntrustedLink,
+  img: UntrustedImage,
+};
+
 export const Markdown = ({
   children,
   className,
+  untrusted = false,
 }: {
   children: string;
   className?: string;
+  untrusted?: boolean;
 }) => (
   <div className={cn("text-prose", className)}>
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      // Without rehype-raw raw HTML shows as text; sanitize keeps <img>/<a> as elements for the overrides while killing scripts, media and handlers.
+      rehypePlugins={untrusted ? [rehypeRaw, rehypeSanitize] : []}
+      components={untrusted ? untrustedComponents : components}
+    >
       {children}
     </ReactMarkdown>
   </div>

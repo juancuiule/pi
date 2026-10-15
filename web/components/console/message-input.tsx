@@ -3,8 +3,10 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { canSend, sendable } from "@/lib/attachments";
 import { useTakeDraft } from "@/lib/draft";
 import { useSendMessage } from "@/lib/queries";
+import { useDraftAttachments } from "@/lib/use-draft-attachments";
 
 import { Composer } from "./composer";
 
@@ -42,19 +44,25 @@ export const MessageInput = ({
   // A skill picked in the capabilities sheet lands here.
   useTakeDraft(setPrompt, textarea);
   const send = useSendMessage(id);
+  const files = useDraftAttachments(id);
 
   const submit = () => {
-    const text = prompt.trim();
-    if (text === "") {
+    if (!canSend(prompt, files.items) || send.isPending) {
       return;
     }
-    send.mutate(text, {
-      onSuccess: () => {
-        setPrompt("");
-        textarea.current?.focus();
-      },
-      onError: (error) => toast.error(error.message),
-    });
+    // Files added while this sends are not part of it, and stay in the composer.
+    const { ids, keys } = sendable(files.items);
+    send.mutate(
+      { prompt: prompt.trim(), attachments: ids },
+      {
+        onSuccess: () => {
+          setPrompt("");
+          files.take(keys);
+          textarea.current?.focus();
+        },
+        onError: (error) => toast.error(error.message),
+      }
+    );
   };
 
   return (
@@ -68,6 +76,11 @@ export const MessageInput = ({
         placeholder="Message the agent"
         hint={hintFor(running, resuming, paused)}
         inputRef={textarea}
+        attachments={{
+          items: files.items,
+          onAdd: files.add,
+          onRemove: files.remove,
+        }}
       />
     </div>
   );

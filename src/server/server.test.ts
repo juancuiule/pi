@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
+import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import { Skills } from "../skills/skills.ts";
 import { fauxAgents } from "../testing/faux.ts";
@@ -21,7 +22,9 @@ import { Conversations } from "./conversations.ts";
 import { echoModel } from "./faux.ts";
 import { ApiLayer } from "./handlers.ts";
 
-const serverWith = (agents: Layer.Layer<Agents | Capacity, AgentError>) =>
+const serverWith = (
+  agents: Layer.Layer<Agents | Capacity | Attachments, AgentError>
+) =>
   HttpRouter.serve(ApiLayer, {
     disableListenLog: true,
     disableLogger: true,
@@ -38,6 +41,16 @@ const serverWith = (agents: Layer.Layer<Agents | Capacity, AgentError>) =>
 
 const server = (responses: FauxResponseStep[], shells = 3) =>
   serverWith(fauxAgents(responses, { limits: { shells } }).layer);
+
+/** A multipart upload of one text file, staged or to `conversation`. */
+const form = (name: string, body: string, conversation?: number) => {
+  const data = new FormData();
+  data.append("file", new Blob([body], { type: "text/plain" }), name);
+  if (conversation !== undefined) {
+    data.append("conversation", String(conversation));
+  }
+  return data;
+};
 
 describe("HTTP API", () => {
   it("lists skills and MCP servers", async () => {
@@ -110,7 +123,8 @@ describe("HTTP API", () => {
       ["edit", true],
       ["bash", true],
     ]);
-    // A chat runs with the calculator, the workspace tool and the locked tracing; nothing that needs a sandbox.
+    // A chat runs with the calculator, the workspace tool, the locked attachments and tracing; nothing that needs a
+    // sandbox.
     expect([
       agent.extensions.flatMap((each) =>
         each.enabled
@@ -122,9 +136,14 @@ describe("HTTP API", () => {
         .map((each) => each.name),
       agent.sections,
     ]).toStrictEqual([
-      ["calculate", "upgrade_workspace"],
+      [
+        "calculate",
+        "upgrade_workspace",
+        "read_attachment",
+        "search_attachment",
+      ],
       ["coding-tools", "desktop"],
-      ["workspace"],
+      ["workspace", "attachments"],
     ]);
   });
 
@@ -336,6 +355,7 @@ describe("HTTP API", () => {
     const agents = Agents.layer({ models, model }).pipe(
       Layer.provide(sandboxes.layer),
       Layer.provide(Skills.none),
+      Layer.provideMerge(Attachments.temporary()),
       Layer.provideMerge(Capacity.layer({ seats: 1, shells: 1, desktops: 1 }))
     );
 
@@ -366,5 +386,113 @@ describe("HTTP API", () => {
 
     expect(text).toContain("echo: ping");
     expect(text).toContain("echo: pong");
+  });
+
+  it("uploads files, sends them with a message, and serves them only in their scope", async () => {
+    const agents = fauxAgents([
+      fauxAssistantMessage([fauxText("one")]),
+      fauxAssistantMessage([fauxText("two")]),
+    ]);
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const http = yield* HttpClient.HttpClient;
+        const empty = yield* Effect.flip(
+          client.conversations.create({
+            payload: { sandbox: "none", prompt: "  " },
+          })
+        );
+        const unsupported = yield* Effect.flip(
+          client.attachments.upload({ payload: form("a.exe", "MZ") })
+        );
+        const staged = yield* client.attachments.upload({
+          payload: form("brief.md", "# Brief\n\nKeep it short."),
+        });
+        // A message of only files; the conversation is named after them.
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", attachments: [staged.id] },
+        });
+        const again = yield* Effect.flip(
+          client.conversations.create({
+            payload: { sandbox: "none", attachments: [staged.id] },
+          })
+        );
+        const later = yield* client.attachments.upload({
+          payload: form("later.txt", "more", created.id),
+        });
+        yield* client.conversations.send({
+          params: { id: created.id },
+          payload: { prompt: "and this", attachments: [later.id] },
+        });
+        const download = (id: string, conversation?: number) =>
+          http
+            .get(
+              `/api/attachments/${id}/original${conversation === undefined ? "" : `?conversation=${conversation}`}`
+            )
+            .pipe(
+              Effect.flatMap((response) =>
+                response.text.pipe(
+                  Effect.map((body) => ({
+                    status: response.status,
+                    body,
+                    disposition: response.headers["content-disposition"],
+                    nosniff: response.headers["x-content-type-options"],
+                  }))
+                )
+              )
+            );
+        const stream = yield* client.conversations.events({
+          params: { id: created.id },
+        });
+        const events = yield* stream.pipe(
+          Stream.takeUntil((event) => JSON.stringify(event).includes('"two"')),
+          Stream.runCollect
+        );
+        return {
+          empty,
+          unsupported,
+          staged,
+          created,
+          again,
+          owned: yield* download(staged.id, created.id),
+          viewed: yield* client.attachments.view({
+            params: { id: staged.id },
+            query: { conversation: created.id },
+          }),
+          viewedElsewhere: yield* Effect.flip(
+            client.attachments.view({
+              params: { id: staged.id },
+              query: { conversation: created.id + 1 },
+            })
+          ),
+          unscoped: yield* download(staged.id),
+          elsewhere: yield* download(staged.id, created.id + 1),
+          events: JSON.stringify([...events]),
+        };
+      }).pipe(Effect.provide(serverWith(agents.layer)))
+    );
+    expect(result).toMatchObject({
+      empty: { _tag: "EmptyMessage" },
+      unsupported: { _tag: "AttachmentRefused", reason: "unsupported" },
+      staged: { name: "brief.md", status: "ready" },
+      // A message of only files; the conversation is named after them.
+      created: { title: "brief.md" },
+      again: { _tag: "AttachmentNotFound" },
+      owned: {
+        status: 200,
+        body: "# Brief\n\nKeep it short.",
+        nosniff: "nosniff",
+      },
+      viewed: {
+        info: { name: "brief.md", kind: "text" },
+        prepared: { kind: "text", pages: ["# Brief\n\nKeep it short."] },
+      },
+      viewedElsewhere: { _tag: "AttachmentNotFound" },
+      unscoped: { status: 404 },
+      elsewhere: { status: 404 },
+    });
+    expect(result.owned.disposition).toContain("attachment;");
+    expect(result.events).toContain("Keep it short.");
+    expect(result.events).toContain("and this");
   });
 });

@@ -119,7 +119,7 @@ describe("conversation settings", () => {
     ).toBeFalsy();
   });
 
-  it("refuses what the Level does not allow and the locked tracing, changing nothing", async () => {
+  it("refuses what the Level does not allow and the locked extensions, changing nothing", async () => {
     const { layer } = fauxAgents([]);
 
     const result = await Effect.runPromise(
@@ -127,8 +127,13 @@ describe("conversation settings", () => {
         const agents = yield* Agents;
         const id = yield* create();
         const exits = yield* Effect.forEach(
-          [{ "coding-tools": true }, { tracing: false }],
-          (extensions) => Effect.exit(agents.configure(id, { extensions }))
+          [
+            { extensions: { "coding-tools": true } },
+            { extensions: { tracing: false } },
+            { extensions: { attachments: false } },
+            { tools: { read_attachment: false } },
+          ],
+          (change) => Effect.exit(agents.configure(id, change))
         );
         return { exits, settings: yield* agents.agent(id) };
       }).pipe(Effect.provide(layer))
@@ -137,13 +142,16 @@ describe("conversation settings", () => {
     expect(result.exits.map((exit) => Exit.isFailure(exit))).toStrictEqual([
       true,
       true,
+      true,
+      true,
     ]);
     expect(JSON.stringify(result.exits)).toContain("needs a shell");
+    expect(JSON.stringify(result.exits)).toContain("always on");
     expect(
       result.settings.extensions
         .filter((each) => each.enabled)
         .map((each) => each.name)
-    ).toStrictEqual(["calculator", "workspace", "tracing"]);
+    ).toStrictEqual(["calculator", "workspace", "attachments", "tracing"]);
   });
 
   it("approves the calls waiting for approval when the policy turns to auto", async () => {

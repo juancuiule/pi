@@ -46,7 +46,12 @@ const transcript = (
   showThinking = true
 ) =>
   renderToStaticMarkup(
-    createElement(Transcript, { state, resuming, showThinking })
+    createElement(Transcript, {
+      state,
+      conversation: 1,
+      resuming,
+      showThinking,
+    })
   );
 const toolCall = (state: ConversationState) =>
   renderToStaticMarkup(createElement(ToolCall, { call, state }));
@@ -450,5 +455,45 @@ describe("Markdown code blocks", () => {
     expect(html).toContain(">pwd</code>");
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("attachments in the transcript", () => {
+  it("shows sent files as chips that open them, instead of their text", () => {
+    const id = `att_${"c".repeat(32)}`;
+    const html = transcript({
+      ...initialState,
+      entries: [
+        entry({
+          role: "user",
+          content: `Read it.\n\n<attachment id="${id}" name="plan.md" type="text" status="ready" size="1 lines">\n1: secret plan\n</attachment>`,
+          timestamp: 0,
+        } as Message),
+      ],
+    });
+    expect(html).toContain('title="View plan.md"');
+    expect(html).not.toContain("secret plan");
+  });
+
+  it("does not repeat an attached image in full under its chip", () => {
+    const id = `att_${"d".repeat(32)}`;
+    const html = transcript({
+      ...initialState,
+      entries: [
+        entry({
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `What is this?\n\n<attachment id="${id}" name="factura.png" type="image" status="ready" width="10" height="10">\n[The image follows this message's text.]\n</attachment>`,
+            },
+            { type: "image", data: "AAAA", mimeType: "image/png" },
+          ],
+          timestamp: 0,
+        } as Message),
+      ],
+    });
+    expect(html).toContain(`/api/attachments/${id}/thumbnail?conversation=1`);
+    expect(html).not.toContain("data:image/png;base64,AAAA");
   });
 });
