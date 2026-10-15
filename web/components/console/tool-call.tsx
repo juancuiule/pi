@@ -32,11 +32,13 @@ import type { ConversationState, ToolRun } from "@/lib/conversation-state";
 import type { ToolDiagnostic } from "@/lib/diagnostics";
 import { diagnosticsOf, visibleResultContent } from "@/lib/diagnostics";
 import { formatDuration } from "@/lib/format";
+import { questionsOf } from "@/lib/questions";
 import { editHunksOf, isEditConfirmation, patchOf } from "@/lib/tool-input";
 import { toolSummary } from "@/lib/tool-summary";
 import { cn } from "@/lib/utils";
 
 import { EditPreview, FilePreview, PatchPreview } from "./file-blocks";
+import { AnsweredQuestions, QuestionForm } from "./question-form";
 import { toolIcon } from "./tool-icon";
 
 type AssistantMessage = Extract<Message, { role: "assistant" }>;
@@ -204,11 +206,13 @@ const approvalFor = (
     awaiting: approval?.state === "pending" && toolResult === undefined,
     denied: approval?.state === "denied",
     stopped: approval?.state === "stopped",
+    skipped: approval?.state === "skipped",
   };
 };
 
 /** What the call is doing now, decided once — drives the line's status, label and icon. */
 type CallState =
+  | "skipped"
   | "denied"
   | "stopped"
   | "awaiting"
@@ -223,6 +227,9 @@ const callState = (
   finished: boolean,
   running: boolean
 ): CallState => {
+  if (approval.skipped) {
+    return "skipped";
+  }
   if (approval.denied) {
     return "denied";
   }
@@ -252,6 +259,7 @@ const stateIcon = (step: CallState, icon: LucideIcon): ReactNode => {
 };
 
 const LABELS: Record<CallState, string | undefined> = {
+  skipped: "Skipped",
   denied: "Denied",
   stopped: "Stopped",
   awaiting: "Needs approval",
@@ -265,6 +273,7 @@ const LINE_STATUS: Record<
   CallState,
   "running" | "error" | "pending" | undefined
 > = {
+  skipped: undefined,
   denied: undefined,
   stopped: undefined,
   awaiting: "pending",
@@ -381,6 +390,99 @@ const CallOutput = ({
   );
 };
 
+/**
+ * Execution time from the committed result: pi's durationMs less the approval wait. Nothing while the call runs —
+ * the wire carries no live timer — and nothing for denied, stopped or skipped calls, which never executed.
+ */
+const elapsedOf = (
+  step: CallState,
+  toolResult: ToolResult | undefined
+): string | undefined => {
+  const durationMs = toolResult?.durationMs;
+  return durationMs === undefined ||
+    step === "denied" ||
+    step === "stopped" ||
+    step === "skipped"
+    ? undefined
+    : formatDuration(
+        Math.max(0, durationMs - (approvalWaitMsOf(toolResult?.details) ?? 0))
+      );
+};
+
+/** `ask_user` waits for answers, not a go-ahead: its form, then the answers, replace the raw input and output. */
+const QuestionsBody = ({
+  call,
+  toolResult,
+  pendingKey,
+  step,
+}: {
+  readonly call: ToolCallBlock;
+  readonly toolResult: ToolResult | undefined;
+  readonly pendingKey: string | undefined;
+  readonly step: CallState;
+}) => {
+  const questions = questionsOf(call.arguments);
+  if (pendingKey !== undefined) {
+    return <QuestionForm questions={questions} answerKey={pendingKey} />;
+  }
+  if (step === "done") {
+    return (
+      <AnsweredQuestions questions={questions} details={toolResult?.details} />
+    );
+  }
+  return null;
+};
+
+const CallBody = ({
+  call,
+  tool,
+  toolResult,
+  diagnostics,
+  pendingKey,
+  step,
+}: {
+  readonly call: ToolCallBlock;
+  readonly tool: ToolRun | undefined;
+  readonly toolResult: ToolResult | undefined;
+  readonly diagnostics: readonly ToolDiagnostic[];
+  readonly pendingKey: string | undefined;
+  readonly step: CallState;
+}) => {
+  const asking =
+    call.name === "ask_user" && questionsOf(call.arguments).length > 0;
+  return (
+    <div className="flex flex-col gap-3">
+      {asking ? (
+        <QuestionsBody
+          call={call}
+          toolResult={toolResult}
+          pendingKey={pendingKey}
+          step={step}
+        />
+      ) : (
+        <>
+          {hasInput(call) ? (
+            <Section label="Input">
+              <Arguments call={call} toolResult={toolResult} />
+            </Section>
+          ) : null}
+          {pendingKey === undefined ? null : (
+            <ApprovalActions approvalKey={pendingKey} />
+          )}
+        </>
+      )}
+      {asking && step !== "failed" ? null : (
+        <CallOutput
+          call={call}
+          tool={tool}
+          toolResult={toolResult}
+          diagnostics={diagnostics}
+        />
+      )}
+    </div>
+  );
+};
+
 export const ToolCall = ({
   call,
   state,
@@ -398,7 +500,10 @@ export const ToolCall = ({
   const Icon = toolIcon(call.name);
   const approval = approvalFor(toolResult, tool);
   const step = callState(approval, isError, finished, state.running);
-  const label = LABELS[step];
+  const label =
+    call.name === "ask_user" && step === "awaiting"
+      ? "Needs answers"
+      : LABELS[step];
   const labelNode =
     step === "awaiting" ? <span className="text-warning">{label}</span> : label;
 
@@ -407,15 +512,7 @@ export const ToolCall = ({
     approval.awaiting
   );
 
-  // Execution time from the committed result: pi's durationMs less the approval wait. Nothing while the call
-  // runs — the wire carries no live timer — and nothing for denied or stopped calls, which never executed.
-  const durationMs = toolResult?.durationMs;
-  const elapsed =
-    durationMs === undefined || step === "denied" || step === "stopped"
-      ? undefined
-      : formatDuration(
-          Math.max(0, durationMs - (approvalWaitMsOf(toolResult?.details) ?? 0))
-        );
+  const elapsed = elapsedOf(step, toolResult);
 
   return (
     <TraceCollapsible open={open} onOpenChange={setOpen}>
@@ -440,22 +537,14 @@ export const ToolCall = ({
         </TraceLine>
       </TraceCollapsibleTrigger>
       <TraceCollapsibleContent>
-        <div className="flex flex-col gap-3">
-          {hasInput(call) ? (
-            <Section label="Input">
-              <Arguments call={call} toolResult={toolResult} />
-            </Section>
-          ) : null}
-          {approval.awaiting && approval.key !== undefined ? (
-            <ApprovalActions approvalKey={approval.key} />
-          ) : null}
-          <CallOutput
-            call={call}
-            tool={tool}
-            toolResult={toolResult}
-            diagnostics={diagnostics}
-          />
-        </div>
+        <CallBody
+          call={call}
+          tool={tool}
+          toolResult={toolResult}
+          diagnostics={diagnostics}
+          pendingKey={approval.awaiting ? approval.key : undefined}
+          step={step}
+        />
       </TraceCollapsibleContent>
     </TraceCollapsible>
   );

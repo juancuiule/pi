@@ -141,6 +141,7 @@ describe("HTTP API", () => {
         "upgrade_workspace",
         "read_attachment",
         "search_attachment",
+        "ask_user",
       ],
       ["coding-tools", "desktop"],
       ["workspace", "attachments"],

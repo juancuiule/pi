@@ -87,6 +87,12 @@ const fallback = (args: Args): string => {
   }
 };
 
+const askUser = (args: Args): string => {
+  const questions = Array.isArray(args.questions) ? args.questions : [];
+  const first = text(asArgs(questions[0]).question) ?? "";
+  return questions.length > 1 ? `${first} (+${questions.length - 1})` : first;
+};
+
 const SUMMARIES: Record<string, (args: Args) => string> = {
   bash: (args) => text(args.command) ?? "",
   read: (args) => text(args.path) ?? "",
@@ -103,6 +109,7 @@ const SUMMARIES: Record<string, (args: Args) => string> = {
   desktop_drag: drag,
   desktop_screenshot: () => "",
   calculate,
+  ask_user: askUser,
 };
 
 /** A compact one-line description of a call's arguments; "" when there is nothing meaningful to show. */

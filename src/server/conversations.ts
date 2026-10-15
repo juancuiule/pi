@@ -18,7 +18,7 @@ import {
 import { Agents } from "../agents/agents.ts";
 import type { AgentError, ConversationAgent, Seat } from "../agents/agents.ts";
 import type { SettingsChange } from "../agents/settings.ts";
-import type { ApprovalChoice } from "../approvals.ts";
+import type { AnswerInput, ApprovalChoice } from "../approvals.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
@@ -202,6 +202,15 @@ export class Conversations extends Context.Service<
       id: number,
       key: string,
       decision: ApprovalChoice
+    ): Effect.Effect<
+      void,
+      AgentError | ConversationNotFound | ApprovalNotFound
+    >;
+    /** Answer an `ask_user` call, or skip it without `answers`; like `decide`, only a Seat has any. */
+    answer(
+      id: number,
+      key: string,
+      answers?: readonly AnswerInput[]
     ): Effect.Effect<
       void,
       AgentError | ConversationNotFound | ApprovalNotFound
@@ -533,6 +542,19 @@ export class Conversations extends Context.Service<
           yield* entry.seat.decide(key, decision);
         });
 
+        const answer = Effect.fn("Conversations.answer")(function* (
+          id: number,
+          key: string,
+          answers?: readonly AnswerInput[]
+        ) {
+          const entry = live.get(id);
+          if (entry === undefined) {
+            yield* agents.get(asId(id));
+            return yield* new ApprovalNotFound({ key });
+          }
+          yield* entry.seat.answer(key, answers);
+        });
+
         const list = Effect.gen(function* () {
           const stored = yield* agents.list;
           const listed: ConversationSummary[] = [];
@@ -575,6 +597,7 @@ export class Conversations extends Context.Service<
           configure: (id, change) => agents.configure(asId(id), change),
           reset: (id) => agents.reset(asId(id)),
           decide,
+          answer,
           capacity: capacity.usage,
         });
       })

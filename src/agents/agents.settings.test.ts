@@ -151,7 +151,13 @@ describe("conversation settings", () => {
       result.settings.extensions
         .filter((each) => each.enabled)
         .map((each) => each.name)
-    ).toStrictEqual(["calculator", "workspace", "attachments", "tracing"]);
+    ).toStrictEqual([
+      "calculator",
+      "workspace",
+      "attachments",
+      "questions",
+      "tracing",
+    ]);
   });
 
   it("approves the calls waiting for approval when the policy turns to auto", async () => {

@@ -7,6 +7,20 @@ const cases = (inputs: [string, unknown][]): { got: string[] } => ({
 });
 
 describe(toolSummary, () => {
+  it("summarizes ask_user by its first question", () => {
+    expect(
+      cases([
+        ["ask_user", { questions: [{ question: "Which database?" }] }],
+        [
+          "ask_user",
+          {
+            questions: [{ question: "Which database?" }, { question: "Auth?" }],
+          },
+        ],
+      ]).got
+    ).toStrictEqual(["Which database?", "Which database? (+1)"]);
+  });
+
   it("summarizes shell and file tools", () => {
     expect(
       cases([
