@@ -48,3 +48,27 @@ export class InvalidSetting extends Schema.TaggedError<InvalidSetting>()(
   "InvalidSetting",
   { name: Schema.String, reason: Schema.String }
 ) {}
+
+/** No attachment with this id in the scope it was asked for: another conversation's, sent already, or expired. */
+export class AttachmentNotFound extends Schema.TaggedError<AttachmentNotFound>()(
+  "AttachmentNotFound",
+  { id: Schema.String }
+) {}
+
+/**
+ * An upload or message that cannot take a file: not a format we read (`unsupported`), over a limit (`too_large`), or
+ * a file that could not be read (`failed`). Nothing is kept.
+ */
+export class AttachmentRefused extends Schema.TaggedError<AttachmentRefused>()(
+  "AttachmentRefused",
+  {
+    reason: Schema.Literals(["unsupported", "too_large", "failed"]),
+    message: Schema.String,
+  }
+) {}
+
+/** A message needs text, attachments, or both. */
+export class EmptyMessage extends Schema.TaggedError<EmptyMessage>()(
+  "EmptyMessage",
+  {}
+) {}

@@ -147,6 +147,21 @@ const toggleKnown = (
   return undefined;
 };
 
+/** A locked extension's tools stay on with it. */
+const lockedTool = (
+  installed: readonly InstalledExtension[],
+  change: Readonly<Record<string, boolean>>
+): SettingsProblem | undefined => {
+  const name = Object.keys(change).find(
+    (tool) =>
+      change[tool] === false &&
+      installed.some(
+        (each) => each.locked && each.tools.some((info) => info.name === tool)
+      )
+  );
+  return name === undefined ? undefined : { name, reason: "always on" };
+};
+
 /** The state after `change`, or the first problem with it. */
 export const applyChange = (
   installed: readonly InstalledExtension[],
@@ -172,6 +187,7 @@ export const applyChange = (
       extensions,
       change.extensions ?? {}
     ) ??
+    lockedTool(installed, change.tools ?? {}) ??
     toggleKnown(allTools, enabledTools, change.tools ?? {}, "tool") ??
     toggleKnown(
       new Set(catalog.map((skill) => skill.name)),
