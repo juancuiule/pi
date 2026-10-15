@@ -87,6 +87,13 @@ export interface LoadedAttachment {
   readonly prepared: Prepared;
 }
 
+/** Uploads claimed for a message being sent. */
+export interface MessageClaim {
+  readonly loaded: readonly LoadedAttachment[];
+  readonly commit: Effect.Effect<void>;
+  readonly release: Effect.Effect<void>;
+}
+
 /** Staged uploads reserved for a conversation being created. */
 export interface Reservation {
   readonly records: readonly AttachmentRecord[];
@@ -177,19 +184,15 @@ export class Attachments extends Context.Service<
     reserve(
       ids: readonly string[]
     ): Effect.Effect<Reservation, AttachmentNotFound | AttachmentRefused>;
-    /** A conversation's unsent uploads for its next message, in order, with their prepared contents. */
-    forMessage(
+    /**
+     * Claim a conversation's unsent uploads for its next message, all or none, with their prepared contents in
+     * order. Nothing else can take or remove them until the claim is committed (the message was admitted: they are
+     * sent from then on) or released (it was not: they can be sent again).
+     */
+    claimForMessage(
       conversationId: number,
       ids: readonly string[]
-    ): Effect.Effect<
-      readonly LoadedAttachment[],
-      AttachmentNotFound | AttachmentRefused
-    >;
-    /** Record that a message took these uploads; from then on they are kept with the conversation. */
-    markSent(
-      conversationId: number,
-      ids: readonly string[]
-    ): Effect.Effect<void, AttachmentNotFound>;
+    ): Effect.Effect<MessageClaim, AttachmentNotFound | AttachmentRefused>;
     /** A conversation's sent attachments, oldest first. */
     sent(conversationId: number): Effect.Effect<readonly AttachmentRecord[]>;
     /** One of a conversation's sent attachments, for the agent's tools. */
@@ -226,6 +229,33 @@ export class Attachments extends Context.Service<
         const limits = { ...DEFAULT_LIMITS, ...options.limits };
         const { blobs, records } = options;
         const extracting = yield* Semaphore.make(limits.extractConcurrency);
+        // Nothing is in flight when the service starts: claims left by a stop are settled.
+        records.settleClaims(yield* Clock.currentTimeMillis);
+        // Bytes of uploads being checked, counted against the unsent total before they have a record, so
+        // simultaneous uploads cannot all pass the same check.
+        let pendingBytes = 0;
+        const holdBytes = (size: number) =>
+          Effect.acquireRelease(
+            Effect.suspend(() => {
+              if (
+                records.unsentBytes() + pendingBytes + size >
+                limits.maxUnsentBytes
+              ) {
+                return Effect.fail(
+                  refused(
+                    "too_large",
+                    `Unsent files can take at most ${megabytes(limits.maxUnsentBytes)} in all; send or remove some first.`
+                  )
+                );
+              }
+              pendingBytes += size;
+              return Effect.void;
+            }),
+            () =>
+              Effect.sync(() => {
+                pendingBytes -= size;
+              })
+          );
 
         const store = (id: string, file: string, extracted: Extracted) =>
           Effect.promise(async () => {
@@ -255,12 +285,8 @@ export class Attachments extends Context.Service<
               `The file is larger than ${megabytes(limits.maxFileBytes)}.`
             );
           }
-          if (records.unsentBytes() + size > limits.maxUnsentBytes) {
-            return yield* refused(
-              "too_large",
-              `Unsent files can take at most ${megabytes(limits.maxUnsentBytes)} in all; send or remove some first.`
-            );
-          }
+          // Held until the record is written (then it counts itself) or the upload is refused.
+          yield* holdBytes(size);
           const kind = classify(
             file.name,
             file.contentType,
@@ -331,7 +357,7 @@ export class Attachments extends Context.Service<
             )
           );
           return infoOf(record);
-        });
+        }, Effect.scoped);
 
         const remove = Effect.fn("Attachments.remove")(function* (id: string) {
           if (!records.removeUnsent(id)) {
@@ -381,39 +407,37 @@ export class Attachments extends Context.Service<
             )
           );
 
-        const forMessage = Effect.fn("Attachments.forMessage")(function* (
-          conversationId: number,
-          ids: readonly string[]
-        ) {
-          yield* tooMany(ids.length);
-          const found = records.ofConversation(conversationId, ids);
-          const missing = ids.find(
-            (id) =>
-              !found.some(
-                (record) => record.id === id && record.sentAt === undefined
-              )
-          );
-          if (missing !== undefined) {
-            return yield* new AttachmentNotFound({ id: missing });
+        const claimForMessage = Effect.fn("Attachments.claimForMessage")(
+          function* (conversationId: number, ids: readonly string[]) {
+            yield* tooMany(ids.length);
+            const claim = randomUUID();
+            const refusedIds = records.claimForMessage(
+              conversationId,
+              ids,
+              claim
+            );
+            if (refusedIds[0] !== undefined) {
+              return yield* new AttachmentNotFound({ id: refusedIds[0] });
+            }
+            const release = Effect.sync(() => records.release(claim));
+            const loaded = yield* Effect.all(
+              records
+                .ofConversation(conversationId, ids)
+                .map((record) =>
+                  preparedOf(record).pipe(
+                    Effect.map((prepared) => ({ record, prepared }))
+                  )
+                )
+            ).pipe(Effect.onError(() => release));
+            return {
+              loaded,
+              commit: Clock.currentTimeMillis.pipe(
+                Effect.map((at) => records.commitClaim(claim, at))
+              ),
+              release,
+            } satisfies MessageClaim;
           }
-          return yield* Effect.all(
-            found.map((record) =>
-              preparedOf(record).pipe(
-                Effect.map((prepared) => ({ record, prepared }))
-              )
-            )
-          );
-        });
-
-        const markSent = Effect.fn("Attachments.markSent")(function* (
-          conversationId: number,
-          ids: readonly string[]
-        ) {
-          const at = yield* Clock.currentTimeMillis;
-          if (!records.markSent(conversationId, ids, at)) {
-            return yield* new AttachmentNotFound({ id: ids.join(", ") });
-          }
-        });
+        );
 
         const openSent = Effect.fn("Attachments.open")(function* (
           conversationId: number,
@@ -475,8 +499,7 @@ export class Attachments extends Context.Service<
           upload,
           remove,
           reserve,
-          forMessage,
-          markSent,
+          claimForMessage,
           sent: (conversationId) =>
             Effect.sync(() => records.sent(conversationId)),
           open: openSent,

@@ -48,6 +48,28 @@ const sessionOfRun = async () => {
 };
 
 describe("agent tracing", () => {
+  it("leaves an attachment tool's error out of the trace, as it does its results", async () => {
+    const { spans, tracer } = recordingTracer();
+    const { layer } = fauxAgents([
+      callTool("read_attachment", { id: "att_missing" }),
+      fauxAssistantMessage([fauxText("done")]),
+    ]);
+    await Effect.runPromise(
+      ask("Read it.").pipe(
+        Effect.provide(layer),
+        Effect.provideService(Tracer.Tracer, tracer)
+      )
+    );
+    const call = spans.find((span) => span.name === "tool read_attachment");
+    expect([
+      call?.attributes.get("langfuse.observation.level"),
+      String(call?.attributes.get("langfuse.observation.status_message")),
+    ]).toStrictEqual([
+      "ERROR",
+      expect.stringMatching(/^\[\d+ characters of attachment text\]$/u),
+    ]);
+  });
+
   it("nests model requests and tool calls under the ask", async () => {
     const { spans, tracer } = recordingTracer();
     const { layer } = fauxAgents([

@@ -125,7 +125,7 @@ const toRecord = (row: Row): AttachmentRecord => {
 export interface AttachmentRecords {
   insert(record: AttachmentRecord): void;
   get(id: string): AttachmentRecord | undefined;
-  /** Delete an unsent record; false when there is none. */
+  /** Delete an unsent record that no message is taking; false when there is none. */
   removeUnsent(id: string): boolean;
   /** The bytes of every unsent upload. */
   unsentBytes(): number;
@@ -143,11 +143,25 @@ export interface AttachmentRecords {
     conversationId: number,
     ids: readonly string[]
   ): readonly AttachmentRecord[];
-  /** Mark a conversation's uploads as sent; false (and nothing changed) unless every one was unsent. */
-  markSent(conversationId: number, ids: readonly string[], at: number): boolean;
+  /**
+   * Claim a conversation's uploads for a message under `claim`, all or none: each must be the conversation's, unsent
+   * and unclaimed. Returns the ids that could not be claimed (empty when all were).
+   */
+  claimForMessage(
+    conversationId: number,
+    ids: readonly string[],
+    claim: string
+  ): readonly string[];
+  /** The message was admitted: its claimed uploads are sent. */
+  commitClaim(claim: string, at: number): void;
+  /**
+   * After a restart nothing is in flight: a message's claim may have been admitted, so its uploads are kept as sent
+   * (losing a file the transcript names is worse than keeping one); a staged reservation is released.
+   */
+  settleClaims(at: number): void;
   /** Every sent attachment of a conversation, oldest first. */
   sent(conversationId: number): readonly AttachmentRecord[];
-  /** Delete unsent records created before `before`, returning their ids. */
+  /** Delete unsent, unclaimed records created before `before`, returning their ids. */
   expire(before: number): readonly string[];
 }
 
@@ -223,7 +237,9 @@ export const sqliteRecords = (
     },
     removeUnsent: (id) =>
       db
-        .prepare("DELETE FROM attachments WHERE id = ? AND sent_at IS NULL")
+        .prepare(
+          "DELETE FROM attachments WHERE id = ? AND sent_at IS NULL AND claim IS NULL"
+        )
         .run(id).changes > 0,
     unsentBytes: () =>
       Number(
@@ -273,23 +289,39 @@ export const sqliteRecords = (
         const row = one(id);
         return row?.conversation_id === conversationId ? [toRecord(row)] : [];
       }),
-    markSent: (conversationId, ids, at) =>
+    claimForMessage: (conversationId, ids, claim) =>
       transaction(() => {
-        const ready = ids.every((id) => {
+        const refused = ids.filter((id) => {
           const row = one(id);
           return (
-            row?.conversation_id === conversationId && row.sent_at === null
+            row?.conversation_id !== conversationId ||
+            row.sent_at !== null ||
+            row.claim !== null
           );
         });
-        if (ready) {
+        if (refused.length === 0) {
           const update = db.prepare(
-            "UPDATE attachments SET sent_at = ? WHERE id = ?"
+            "UPDATE attachments SET claim = ? WHERE id = ?"
           );
           for (const id of ids) {
-            update.run(at, id);
+            update.run(claim, id);
           }
         }
-        return ready;
+        return refused;
+      }),
+    commitClaim: (claim, at) => {
+      db.prepare(
+        "UPDATE attachments SET sent_at = ?, claim = NULL WHERE claim = ?"
+      ).run(at, claim);
+    },
+    settleClaims: (at) =>
+      transaction(() => {
+        db.prepare(
+          "UPDATE attachments SET sent_at = ?, claim = NULL WHERE claim IS NOT NULL AND conversation_id IS NOT NULL"
+        ).run(at);
+        db.prepare(
+          "UPDATE attachments SET claim = NULL WHERE claim IS NOT NULL"
+        ).run();
       }),
     sent: (conversationId) =>
       (
@@ -303,11 +335,11 @@ export const sqliteRecords = (
       transaction(() => {
         const rows = db
           .prepare(
-            "SELECT id FROM attachments WHERE sent_at IS NULL AND created_at < ?"
+            "SELECT id FROM attachments WHERE sent_at IS NULL AND claim IS NULL AND created_at < ?"
           )
           .all(before) as unknown as { id: string }[];
         db.prepare(
-          "DELETE FROM attachments WHERE sent_at IS NULL AND created_at < ?"
+          "DELETE FROM attachments WHERE sent_at IS NULL AND claim IS NULL AND created_at < ?"
         ).run(before);
         return rows.map((row) => row.id);
       }),

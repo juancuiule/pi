@@ -14,6 +14,7 @@ import type {
   Storage,
   ToolRegistration,
   Tx,
+  UserInput,
   WatchHandle,
 } from "@earendil-works/pi-durable";
 import {
@@ -52,7 +53,7 @@ import {
   copyToSandbox,
 } from "../attachments/attachments.ts";
 import type { LoadedAttachment } from "../attachments/attachments.ts";
-import { formatBlocks } from "../attachments/format.ts";
+import { escapeAttachmentTags, formatBlocks } from "../attachments/format.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, ClaimCancelled } from "../capacity.ts";
 import type {
@@ -1246,29 +1247,53 @@ export class Agents extends Context.Service<
               "langfuse.session.id": tracing.sessionOf(id),
             });
 
-          // The message for `text` and the conversation's unsent uploads in `ids`; the uploads are sent from then on
-          // (kept with the conversation, and copied into its Sandbox).
-          const withAttachments = Effect.fnUntraced(function* (
+          // Admit a message: `text`, then the conversation's unsent uploads in `ids`. The uploads are claimed first, so no
+          // other message or removal takes them; the claim is committed exactly when the message is admitted (they are
+          // sent from then on, and copied into the Sandbox) and released when it is not, so they can be sent again. The
+          // admission and the commit cannot be interrupted apart; a crash between them is settled at the next start.
+          const admit = Effect.fnUntraced(function* (
             text: string,
-            ids: readonly string[]
+            ids: readonly string[],
+            whenBusy?: "followUp"
           ) {
+            // What the person typed can never pass for a block the server appended.
+            const typed = escapeAttachmentTags(text);
+            const submit = (content: UserInput) =>
+              attempt(() =>
+                handle.submit(
+                  {
+                    type: "input",
+                    content,
+                    ...(whenBusy === undefined ? {} : { whenBusy }),
+                  },
+                  context
+                )
+              );
             if (ids.length === 0) {
-              return text;
+              return yield* submit(typed);
             }
-            const loaded = yield* attachments.forMessage(Number(id), ids);
             yield* Effect.annotateCurrentSpan(
               "effect-pi.attachments",
               ids.join(",")
             );
-            const content = yield* messageContent(id, text, loaded);
-            yield* attachments.markSent(Number(id), ids);
+            const claim = yield* attachments.claimForMessage(Number(id), ids);
+            const content = yield* messageContent(id, typed, claim.loaded).pipe(
+              Effect.onError(() => claim.release)
+            );
+            const submission = yield* Effect.uninterruptible(
+              submit(content).pipe(
+                Effect.onExit((exit) =>
+                  Exit.isSuccess(exit) ? claim.commit : claim.release
+                )
+              )
+            );
             const sandbox = machine?.sandbox;
             if (sandbox !== undefined) {
               yield* copyToSandbox(
                 attachments,
                 workspaces.env(sandbox),
                 Number(id),
-                loaded.map((each) => each.record),
+                claim.loaded.map((each) => each.record),
                 context
               ).pipe(
                 Effect.catchCause((cause) =>
@@ -1279,7 +1304,7 @@ export class Agents extends Context.Service<
                 )
               );
             }
-            return content;
+            return submission;
           });
 
           const send = Effect.fn("Seat.send")(function* (
@@ -1289,17 +1314,11 @@ export class Agents extends Context.Service<
             // Skills read only what the person typed, never a file's text.
             const expanded = yield* expand(prompt, id);
             yield* annotate(expanded);
-            const content = yield* withAttachments(expanded, attachmentIds);
             // Admitted without waiting: a busy conversation queues it as a follow-up, and the answer arrives as
             // events.
             yield* tracing.traced(
               id,
-              attempt(() =>
-                handle.submit(
-                  { type: "input", content, whenBusy: "followUp" },
-                  context
-                )
-              )
+              admit(expanded, attachmentIds, "followUp")
             );
           });
 
@@ -1308,20 +1327,19 @@ export class Agents extends Context.Service<
             attachmentIds: readonly string[] = []
           ) {
             yield* annotate(prompt);
-            const content = yield* withAttachments(prompt, attachmentIds);
             const answer = yield* tracing.traced(
               id,
-              attempt(async () => {
-                const submission = await handle.submit(
-                  { type: "input", content },
-                  context
-                );
-                const settled = await submission.wait(context);
-                if (settled.status !== "done" || settled.type !== "input") {
-                  throw new Error(`Run failed: ${settled.status}`);
-                }
-                return answerText(handle, settled.answer);
-              })
+              admit(prompt, attachmentIds).pipe(
+                Effect.flatMap((submission) =>
+                  attempt(async () => {
+                    const settled = await submission.wait(context);
+                    if (settled.status !== "done" || settled.type !== "input") {
+                      throw new Error(`Run failed: ${settled.status}`);
+                    }
+                    return answerText(handle, settled.answer);
+                  })
+                )
+              )
             );
             yield* Effect.annotateCurrentSpan(
               "langfuse.observation.output",

@@ -128,17 +128,19 @@ export const makeAgentTracing = (
 ): AgentTracing => {
   const forTrace = (messages: readonly Message[]) =>
     options.attachmentText === true ? messages : redactAttachments(messages);
+  const redactsTool = (tool: string) =>
+    options.attachmentText !== true && ATTACHMENT_TOOLS.has(tool);
   const forTraceResult = <B extends { readonly type: string }>(
     tool: string,
     content: readonly B[]
   ) =>
-    options.attachmentText === true || !ATTACHMENT_TOOLS.has(tool)
-      ? content
-      : content.map((block) =>
+    redactsTool(tool)
+      ? content.map((block) =>
           "text" in block && typeof block.text === "string"
             ? { ...block, text: sizeOf(block.text) }
             : block
-        );
+        )
+      : content;
   const run = Effect.runSyncWith(services);
   const parents = new Map<ConversationId, Tracer.AnySpan>();
   // Langfuse session per conversation. Conversation ids restart with every process (MemoryStorage), so a
@@ -218,9 +220,14 @@ export const makeAgentTracing = (
         },
         afterTool: (call, result, api) => {
           // A tool that throws has no content; its message is in the diagnostics.
+          // An attachment tool's diagnostics may quote the file too; they get the same treatment as its results.
           const errors = (result.diagnostics ?? [])
             .filter((diagnostic) => diagnostic.severity === "error")
-            .map((diagnostic) => diagnostic.message);
+            .map((diagnostic) =>
+              redactsTool(call.name)
+                ? sizeOf(diagnostic.message)
+                : diagnostic.message
+            );
           end(
             api.taskId,
             {
