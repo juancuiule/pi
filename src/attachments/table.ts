@@ -29,11 +29,14 @@ export const parseDelimited = (text: string, delimiter: string): Parsed => {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
+  // Whether the current field began, even if it is still empty: `""` is a field.
+  let started = false;
   let quoted = false;
   let index = 0;
   const endField = () => {
     row.push(field);
     field = "";
+    started = false;
   };
   const endRow = () => {
     endField();
@@ -58,6 +61,7 @@ export const parseDelimited = (text: string, delimiter: string): Parsed => {
     }
     if (char === '"' && field === "") {
       quoted = true;
+      started = true;
     } else if (char === delimiter) {
       endField();
     } else if (char === "\n" || char === "\r") {
@@ -70,7 +74,7 @@ export const parseDelimited = (text: string, delimiter: string): Parsed => {
     }
     index += 1;
   }
-  if (quoted || field !== "" || row.length > 0) {
+  if (quoted || started || field !== "" || row.length > 0) {
     endRow();
   }
   return { rows, unterminated: quoted };
@@ -94,26 +98,57 @@ const consistency = (rows: readonly (readonly string[])[]) => {
   return best;
 };
 
+/** The share of a row's later fields that start with a space: high for a comma in prose ("Albany, NY"). */
+const proseLike = (rows: readonly (readonly string[])[]) => {
+  let later = 0;
+  let spaced = 0;
+  for (const row of rows) {
+    for (const cell of row.slice(1)) {
+      later += 1;
+      if (cell.startsWith(" ")) {
+        spaced += 1;
+      }
+    }
+  }
+  return later === 0 ? 0 : spaced / later;
+};
+
+export interface Detected {
+  readonly delimiter: Delimiter;
+  /** Other delimiters that split the sample just as well: the choice is a guess. */
+  readonly alternatives: readonly Delimiter[];
+}
+
 /**
  * The delimiter of a CSV file: the candidate that splits the most sampled rows into the same number (more than one)
- * of columns. Spreadsheets in many locales save "CSV" with semicolons. Commas when nothing splits.
+ * of columns. Spreadsheets in many locales save "CSV" with semicolons. On a tie, a candidate whose later fields
+ * mostly start with a space loses (that is a comma in text, not between columns); a tie that remains is reported in
+ * `alternatives`. Commas when nothing splits.
  */
-export const detectDelimiter = (text: string): Delimiter => {
+export const detectDelimiter = (text: string): Detected => {
   const sample = text.slice(0, SAMPLE);
   // A sample cut mid-file ends in a partial row; it is left out.
   const cut = sample.length < text.length;
-  let best: { delimiter: Delimiter; score: number } = {
-    delimiter: ",",
-    score: 0,
-  };
-  for (const delimiter of CANDIDATES) {
+  const scored = CANDIDATES.map((delimiter) => {
     const { rows } = parseDelimited(sample, delimiter);
-    const score = consistency(cut ? rows.slice(0, -1) : rows);
-    if (score > best.score) {
-      best = { delimiter, score };
-    }
+    const sampled = cut ? rows.slice(0, -1) : rows;
+    return {
+      delimiter,
+      score: consistency(sampled),
+      prose: proseLike(sampled),
+    };
+  });
+  const top = Math.max(...scored.map((each) => each.score));
+  if (top === 0) {
+    return { delimiter: ",", alternatives: [] };
   }
-  return best.delimiter;
+  const tied = scored.filter((each) => each.score === top);
+  const cleanest = Math.min(...tied.map((each) => each.prose));
+  const [chosen, ...others] = tied.filter((each) => each.prose === cleanest);
+  return {
+    delimiter: chosen?.delimiter ?? ",",
+    alternatives: others.map((each) => each.delimiter),
+  };
 };
 
 /** A row as one line for the model: cells between ` | `, with pipes and line breaks inside cells escaped. */

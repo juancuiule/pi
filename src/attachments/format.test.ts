@@ -293,4 +293,16 @@ describe("tables", () => {
     expect(block).toContain("the file separates them with semicolons");
     expect(block).toContain("2: 2026-01-03 | Norte | 42");
   });
+
+  it("cuts a header longer than its share of a read, so the rows asked for still fit", () => {
+    const wide: Prepared = {
+      ...doc([["h".repeat(2000), "row two", "row three"].join("\n")], "table"),
+      table: { rows: 2, columns: 1, delimiter: "," },
+    };
+    const range = renderRange(wide, { page: 1, line: 3 }, 400);
+    expect(range.text).toBe(
+      `1: ${"h".repeat(100)}… [header cut; read row 1 for all of it]\n…\n3: row three`
+    );
+    expect(range.next).toBeUndefined();
+  });
 });

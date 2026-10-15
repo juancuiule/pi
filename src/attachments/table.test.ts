@@ -24,6 +24,14 @@ describe(parseDelimited, () => {
     });
   });
 
+  it("keeps a final row of one quoted empty value", () => {
+    expect(parseDelimited('name\n""', ",").rows).toStrictEqual([
+      ["name"],
+      [""],
+    ]);
+    expect(parseDelimited("", ",").rows).toStrictEqual([]);
+  });
+
   it("keeps empty lines as rows, and reports a quote that never closes", () => {
     expect(parseDelimited('a\n\nb\n"open', ",")).toStrictEqual({
       rows: [["a"], [""], ["b"], ["open"]],
@@ -34,13 +42,29 @@ describe(parseDelimited, () => {
 
 describe(detectDelimiter, () => {
   it("finds the delimiter that splits rows consistently", () => {
-    expect([
-      detectDelimiter("a,b,c\n1,2,3\n4,5,6"),
-      // A spreadsheet in a comma-decimal locale: the commas are in the numbers.
-      detectDelimiter("producto;precio\nA;3,50\nB;12,00"),
-      detectDelimiter("a\tb\n1\t2"),
-      detectDelimiter("just one column\nper row"),
-    ]).toStrictEqual([",", ";", "\t", ","]);
+    expect(
+      [
+        detectDelimiter("a,b,c\n1,2,3\n4,5,6"),
+        // A spreadsheet in a comma-decimal locale: the commas are in the numbers.
+        detectDelimiter("producto;precio\nA;3,50\nB;12,00"),
+        detectDelimiter("a\tb\n1\t2"),
+        detectDelimiter("just one column\nper row"),
+      ].map((detected) => detected.delimiter)
+    ).toStrictEqual([",", ";", "\t", ","]);
+  });
+
+  it("does not take a comma in text for a column break", () => {
+    // Both split every row in two; the commas are followed by spaces, as in prose.
+    expect(
+      detectDelimiter("city, state;value\nAlbany, NY;10\nBoston, MA;20")
+    ).toStrictEqual({ delimiter: ";", alternatives: [] });
+  });
+
+  it("reports a tie it cannot settle", () => {
+    expect(detectDelimiter("a,b;c\n1,2;3")).toStrictEqual({
+      delimiter: ",",
+      alternatives: [";"],
+    });
   });
 });
 

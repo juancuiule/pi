@@ -14,11 +14,13 @@ import type { AttachmentKind, Prepared } from "./format.ts";
 import { decodeText, normalizeText } from "./format.ts";
 import { htmlToText } from "./html.ts";
 import {
+  DELIMITER_NAMES,
   detectDelimiter,
   parseDelimited,
   raggedRows,
   renderRow,
 } from "./table.ts";
+import type { Detected } from "./table.ts";
 
 export interface ExtractLimits {
   readonly maxPdfPages: number;
@@ -127,8 +129,11 @@ const listRows = (rows: readonly number[]) =>
 /** CSV or TSV: one line per row, cells as written; not normalized, so line numbers stay row numbers. */
 const extractTable = (bytes: Uint8Array, mediaType: string): Extracted => {
   const { text, warnings } = decoded(bytes);
-  const delimiter =
-    mediaType === "text/tab-separated-values" ? "\t" : detectDelimiter(text);
+  const detected: Detected =
+    mediaType === "text/tab-separated-values"
+      ? { delimiter: "\t", alternatives: [] }
+      : detectDelimiter(text);
+  const { delimiter } = detected;
   const { rows, unterminated } = parseDelimited(text, delimiter);
   const ragged = raggedRows(rows);
   const columns = rows[0]?.length ?? 0;
@@ -140,6 +145,11 @@ const extractTable = (bytes: Uint8Array, mediaType: string): Extracted => {
       warnings: [
         ...warnings,
         ...(rows.length === 0 ? ["The file has no rows."] : []),
+        ...(detected.alternatives.length === 0
+          ? []
+          : [
+              `The separator is a guess: ${DELIMITER_NAMES[delimiter]} and ${detected.alternatives.map((each) => DELIMITER_NAMES[each]).join(" or ")} split every row the same way. It was read with ${DELIMITER_NAMES[delimiter]}; if the columns look wrong, read the original file.`,
+            ]),
         ...(unterminated
           ? [
               "A quoted value is never closed: the last row holds the rest of the file.",

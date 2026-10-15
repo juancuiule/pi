@@ -345,16 +345,29 @@ const lineStep = (
       };
 };
 
-/** A table read from further down starts with its header, so every range says what its columns are. */
+/** At most this share of a range repeats the header, so the rows asked for always get most of it. */
+const HEADER_SHARE = 4;
+
+/**
+ * A table read from further down starts with its header, so every range says what its columns are. A header longer
+ * than its share of `budget` is cut, and says so.
+ */
 const headerLines = (
   prepared: Prepared,
   lines: readonly string[],
-  line: number
+  line: number,
+  budget: number
 ): string[] => {
   if (!tabular(prepared) || line <= 1 || line > lines.length) {
     return [];
   }
-  return [`1: ${lines[0] ?? ""}`, ...(line > 2 ? ["…"] : [])];
+  const header = lines[0] ?? "";
+  const room = Math.floor(budget / HEADER_SHARE);
+  const shown =
+    header.length <= room
+      ? header
+      : `${header.slice(0, room)}… [header cut; read row 1 for all of it]`;
+  return [`1: ${shown}`, ...(line > 2 ? ["…"] : [])];
 };
 
 /**
@@ -397,7 +410,7 @@ export const renderRange = (
       }
     }
     const lines = linesOf(prepared.pages[page - 1] ?? "");
-    const header = headerLines(prepared, lines, line);
+    const header = headerLines(prepared, lines, line, budget);
     for (const text of header) {
       push(text);
     }
@@ -546,8 +559,11 @@ const attribute = (value: string) =>
     .replaceAll('"', "&quot;")
     .replaceAll(/[\n\r<>]/gu, " ");
 
-/** Text from a file cannot close its block early. */
-const escapeContent = (text: string) =>
+/**
+ * Text that cannot open or close an attachment block: a file's text cannot close its block early, and what a person
+ * types cannot pass for a block the server appended.
+ */
+export const escapeAttachmentTags = (text: string): string =>
   text.replaceAll(/<(?<slash>\/?)attachment/giu, "<$<slash>\u200Battachment");
 
 export interface MessageAttachment {
@@ -602,6 +618,10 @@ export const formatBlocks = (
         `[A table: one row per line, cells between " | " (the file separates them with ${DELIMITER_NAMES[prepared.table.delimiter as Delimiter] ?? `"${prepared.table.delimiter}"`}). Values are as written in the file.]`
       );
     }
+    // What the extraction could not be sure of, e.g. a guessed separator or rows that do not fit the header.
+    for (const warning of prepared.warnings) {
+      notes.push(`[Note: ${warning}]`);
+    }
     if (prepared.ocrPages.length > 0) {
       notes.push(
         prepared.ocrPages.length === prepared.pages.length
@@ -622,7 +642,7 @@ export const formatBlocks = (
       return [
         openTag(info, extra),
         ...notes,
-        escapeContent(range.text),
+        escapeAttachmentTags(range.text),
         CLOSE_TAG,
       ].join("\n");
     }
@@ -633,7 +653,7 @@ export const formatBlocks = (
       );
       return [
         openTag(info, { ...extra, included: "part" }),
-        escapeContent(range.text),
+        escapeAttachmentTags(range.text),
         ...notes,
         CLOSE_TAG,
       ].join("\n");
