@@ -4,6 +4,7 @@ import {
   attachmentUrl,
   canSend,
   sendableIds,
+  sizeText,
   splitAttachments,
   statusText,
 } from "./attachments";
@@ -116,5 +117,25 @@ describe(attachmentUrl, () => {
     expect(attachmentUrl(ID, "thumbnail")).toBe(
       `/api/attachments/${ID}/thumbnail`
     );
+  });
+});
+
+describe(sizeText, () => {
+  it("gives a table's size, and nothing for other files", () => {
+    expect([
+      sizeText({ rows: 4812, columns: 6 }),
+      sizeText({ rows: 1, columns: 1 }),
+      sizeText({}),
+    ]).toStrictEqual(["4,812 rows × 6 columns", "1 row × 1 column", ""]);
+  });
+
+  it("reads table blocks in the transcript", () => {
+    expect(
+      splitAttachments(
+        `<attachment id="${ID}" name="v.csv" type="table" status="ready" size="3 rows">\n1: a | b\n</attachment>`
+      ).attachments
+    ).toStrictEqual([
+      { id: ID, name: "v.csv", kind: "table", status: "ready" },
+    ]);
   });
 });

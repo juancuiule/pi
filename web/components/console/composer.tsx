@@ -121,7 +121,7 @@ const AttachButton = ({
         variant="ghost"
         size="icon-sm"
         aria-label="Attach files"
-        title="Attach text, Markdown, HTML, PDF or image files"
+        title="Attach text, Markdown, HTML, CSV, TSV, PDF or image files"
         onClick={() => picker.current?.click()}
       >
         <Paperclip />

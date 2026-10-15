@@ -23,6 +23,7 @@ signature) → extract in a worker (time and memory limits) → ready | partial 
 | text | `.txt`, `.md`, `.markdown` | Decoded text (UTF-8, UTF-16 with BOM, else Windows-1252 if it has no control bytes) |
 | html | `.html`, `.htm` | Readable text from `htmlparser2` (headings, lists, tables, link targets); no scripts, styles or fetching; the source stays readable with `view: "source"` |
 | pdf | `.pdf` with a `%PDF-` signature | Text per page (`unpdf`); pages without text are listed as needing OCR |
+| table | `.csv`, `.tsv` | One line per row, cells between `\|` exactly as written (no number or date parsing); quoted fields may hold delimiters and line breaks; a CSV's delimiter is detected (commas, semicolons, tabs or pipes), a TSV's is a tab. Row 1 is the header, and every read from further down repeats it |
 | image | PNG, JPEG, WebP by signature | Validated and bounded (`sharp`); downscaled to 1568px for the model, plus a thumbnail |
 
 Statuses: `ready`; `partial` (a PDF with some pages that need OCR); `needs_ocr` (no page has text). No OCR runs in v1. Anything else is refused as unsupported.
@@ -40,4 +41,4 @@ Statuses: `ready`; `partial` (a PDF with some pages that need OCR); `needs_ocr` 
 
 ## Later
 
-OCR as its own action (a server-side OCR worker storing `source: "ocr"` text; page images for vision models as a fallback); CSV/TSV/JSON; XLSX/DOCX/PPTX; previews; semantic search; conversation deletion and its derivatives.
+OCR as its own action (a server-side OCR worker storing `source: "ocr"` text; page images for vision models as a fallback); XLSX (sheets as tables, cached formula values without recalculation, zip size checks); a host-side `query_attachment` (read-only SQL over a table in an in-memory SQLite) for totals and groupings at Level none; JSON; DOCX/PPTX; previews; semantic search; conversation deletion and its derivatives.

@@ -5,7 +5,7 @@ import type { AttachmentInfo } from "effect-pi/api";
 
 /** What the picker offers; the server checks every file again. */
 export const ACCEPTED_FILES =
-  ".txt,.md,.markdown,.html,.htm,.pdf,.png,.jpg,.jpeg,.webp";
+  ".txt,.md,.markdown,.html,.htm,.csv,.tsv,.pdf,.png,.jpg,.jpeg,.webp";
 
 export type AttachmentKind = AttachmentInfo["kind"];
 
@@ -22,7 +22,7 @@ export interface AttachmentRef {
 const BLOCK_START = /(?:^|\n\n)<attachment id="att_[0-9a-f]{32}"/u;
 const OPEN_TAG = "<attachment ";
 const ATTRIBUTE = /[a-z]+="[^"]*"/gu;
-const KINDS = new Set<string>(["text", "html", "pdf", "image"]);
+const KINDS = new Set<string>(["text", "html", "pdf", "table", "image"]);
 const STATUSES = new Set<string>(["ready", "partial", "needs_ocr"]);
 
 const unescape = (value: string) =>
@@ -132,7 +132,16 @@ export const statusText = (info: {
   }
 };
 
-/** The short status a chip shows; empty for a file that is ready. */
+/** A ready table's size, so the person sees it was read as one: "4,812 rows × 6 columns". */
+export const sizeText = (info: {
+  readonly rows?: number;
+  readonly columns?: number;
+}): string =>
+  info.rows === undefined || info.columns === undefined
+    ? ""
+    : `${info.rows.toLocaleString("en-US")} row${info.rows === 1 ? "" : "s"} × ${info.columns} column${info.columns === 1 ? "" : "s"}`;
+
+/** The short status a chip shows: what the model cannot read, a table's size, or nothing. */
 export const attachmentStatus = (draft: DraftAttachment): string => {
   switch (draft.state) {
     case "uploading": {
@@ -142,7 +151,7 @@ export const attachmentStatus = (draft: DraftAttachment): string => {
       return draft.error;
     }
     case "uploaded": {
-      return statusText(draft.info);
+      return statusText(draft.info) || sizeText(draft.info);
     }
     default: {
       throw new TypeError(`Unknown state: ${draft satisfies never}`);

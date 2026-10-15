@@ -4,6 +4,7 @@ import {
   CircleAlert,
   FileCode,
   FileImage,
+  FileSpreadsheet,
   FileText,
   LoaderCircle,
   ScanText,
@@ -23,6 +24,7 @@ const KIND_ICON: Record<AttachmentKind, typeof FileText> = {
   text: FileText,
   html: FileCode,
   pdf: FileText,
+  table: FileSpreadsheet,
   image: FileImage,
 };
 
@@ -88,7 +90,11 @@ export const DraftChip = ({
         icon={icon}
         name={draft.name}
         status={status}
-        warning={failed || (draft.state === "uploaded" && status !== "")}
+        // A table's size is information; only an unreadable part is a warning.
+        warning={
+          failed ||
+          (draft.state === "uploaded" && draft.info.status !== "ready")
+        }
       />
       <button
         type="button"
