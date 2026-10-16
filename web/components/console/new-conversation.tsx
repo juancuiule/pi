@@ -15,6 +15,8 @@ import { initialState } from "@/lib/conversation-state";
 import type { PendingInput } from "@/lib/conversation-state";
 import { useTakeDraft } from "@/lib/draft";
 import { useCapabilities, useCreateConversation, useInfo } from "@/lib/queries";
+import { requestIdForSend } from "@/lib/send-request";
+import type { FailedSend } from "@/lib/send-request";
 import {
   flip,
   newConversationSettings,
@@ -81,6 +83,8 @@ export const NewConversation = ({
 
   // Set while the create runs: the view ahead already shows the message.
   const [creating, setCreating] = useState<PendingInput>();
+  // A failed create kept for its requestId: resending the same message resolves to the same submission.
+  const failed = useRef<FailedSend | null>(null);
 
   const submit = () => {
     if (!canSend(prompt, files.items) || create.isPending) {
@@ -89,7 +93,7 @@ export const NewConversation = ({
     const { ids, keys, drafts } = sendable(files.items);
     const text = prompt.trim();
     // Names the first message's submission; its `submission` event and the create's answer carry it back.
-    const requestId = crypto.randomUUID();
+    const requestId = requestIdForSend(failed.current, text, ids);
     const pending: PendingInput = {
       requestId,
       prompt: text,
@@ -111,6 +115,9 @@ export const NewConversation = ({
       },
       {
         onSuccess: (created) => {
+          if (failed.current?.requestId === requestId) {
+            failed.current = null;
+          }
           // Hand the pending message to the new conversation's transcript before navigating to it.
           const store = useConversationStore.getState();
           store.addPending(created.id, pending);
@@ -118,9 +125,13 @@ export const NewConversation = ({
           onCreated(created.id);
         },
         onError: (error) => {
-          // Back to the form exactly as it was: the bubble goes, the draft and its files return.
+          failed.current = { requestId, text, attachments: ids };
+          // Back to the form exactly as it was: the bubble goes, the draft and its files return — ahead of
+          // anything typed while it was sending.
           setCreating(undefined);
-          setPrompt(text);
+          setPrompt((current) =>
+            current.trim() === "" ? text : `${text}\n\n${current}`
+          );
           files.restore(drafts);
           toast.error(error.message);
         },
@@ -132,6 +143,15 @@ export const NewConversation = ({
     // The conversation view already, minus what needs its id: its transcript, and no composer to send with yet.
     return (
       <div className="flex h-full min-h-0 flex-col">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Conversations"
+          className="absolute top-3 left-3 md:hidden"
+          onClick={onMenu}
+        >
+          <Menu />
+        </Button>
         <Transcript state={{ ...initialState, pending: [creating] }} />
         <p className="text-muted-foreground px-6 pb-6 text-center text-sm">
           Creating the conversation…

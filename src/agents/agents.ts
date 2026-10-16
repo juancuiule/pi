@@ -740,7 +740,10 @@ export class Agents extends Context.Service<
           attempt(() =>
             durableStorage.submissionByRequest(
               conversationId as ConversationId,
-              claim,
+              // A requestId-named claim is scoped to its conversation; the submission keeps the bare id.
+              claim.startsWith(`${conversationId}:`)
+                ? claim.slice(`${conversationId}:`.length)
+                : claim,
               context
             )
           ).pipe(Effect.map((submission) => submission !== undefined))
@@ -1311,6 +1314,21 @@ export class Agents extends Context.Service<
             if (ids.length === 0) {
               return yield* submit(typed, requestId);
             }
+            // A requestId already naming a submission is this send retried: answer with it instead of claiming
+            // again — the claim would refuse the sent files, or commit new files no message references.
+            if (requestId !== undefined) {
+              const existing = yield* attempt(() =>
+                durableStorage.submissionByRequest(id, requestId, context)
+              );
+              if (existing?.type === "input") {
+                const known = yield* attempt(() =>
+                  harness.submission(existing.id, context)
+                );
+                if (known !== undefined) {
+                  return known;
+                }
+              }
+            }
             yield* Effect.annotateCurrentSpan(
               "effect-pi.attachments",
               ids.join(",")
@@ -1325,7 +1343,8 @@ export class Agents extends Context.Service<
               Effect.onError(() => claim.release)
             );
             const submission = yield* Effect.uninterruptible(
-              submit(content, claim.id).pipe(
+              // The submission names the request's own id; the claim's is scoped, and settles through it.
+              submit(content, requestId ?? claim.id).pipe(
                 Effect.onExit((exit) =>
                   Exit.isSuccess(exit) ? claim.commit : claim.release
                 )

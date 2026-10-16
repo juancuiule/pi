@@ -22,8 +22,15 @@ const asJson = (event: ConversationEvent) => event as unknown as Schema.Json;
 /** The wire shape of an admitted input: its submission's id, and its entry's once placed. */
 const ackOf = (record: SubmissionRecord) => ({
   id: Number(record.id),
+  status: record.status,
   ...(record.status === "placed" || record.status === "done"
     ? { entry: Number(record.entry) }
+    : {}),
+  ...(record.status === "unanswered"
+    ? {
+        reason: record.reason,
+        ...(typeof record.detail === "string" ? { detail: record.detail } : {}),
+      }
     : {}),
 });
 

@@ -26,6 +26,8 @@ interface Store {
   /** Conversations whose thinking steps the person chose to hide in the transcript. */
   readonly hiddenThinking: Readonly<Record<number, true>>;
   apply(id: number, event: ConversationEvent): void;
+  /** One stream chunk's events in a single update: a commit's events land together or not at all. */
+  applyAll(id: number, events: Iterable<ConversationEvent>): void;
   markEnded(id: number): void;
   /** Show a message being sent; the submission carrying its requestId resolves it. */
   addPending(id: number, pending: PendingInput): void;
@@ -46,24 +48,33 @@ const update =
     return next === state ? {} : { byId: { ...store.byId, [id]: next } };
   };
 
+const applyBatch = (
+  store: Store,
+  id: number,
+  events: Iterable<ConversationEvent>
+) => {
+  let state = store.byId[id] ?? initialState;
+  let snapshot = false;
+  for (const event of events) {
+    state = applyEvent(state, event);
+    snapshot ||= event.type === "snapshot";
+  }
+  const byId = { ...store.byId, [id]: state };
+  // A snapshot means the server knows this id again: after a restart it can be a new conversation.
+  if (!snapshot || store.ended[id] === undefined) {
+    return { byId };
+  }
+  const { [id]: _cleared, ...ended } = store.ended;
+  return { byId, ended };
+};
+
 export const useConversationStore = create<Store>()((set) => ({
   byId: {},
   ended: {},
   resuming: {},
   hiddenThinking: {},
-  apply: (id, event) =>
-    set((store) => {
-      const byId = {
-        ...store.byId,
-        [id]: applyEvent(store.byId[id] ?? initialState, event),
-      };
-      // A snapshot means the server knows this id again: after a restart it can be a new conversation.
-      if (event.type !== "snapshot" || store.ended[id] === undefined) {
-        return { byId };
-      }
-      const { [id]: _cleared, ...ended } = store.ended;
-      return { byId, ended };
-    }),
+  apply: (id, event) => set((store) => applyBatch(store, id, [event])),
+  applyAll: (id, events) => set((store) => applyBatch(store, id, events)),
   markEnded: (id) =>
     set((store) => ({ ended: { ...store.ended, [id]: true } })),
   addPending: (id, pending) =>

@@ -12,6 +12,7 @@ import type {
 } from "effect-pi/api";
 
 import type { AttachmentRef } from "./attachments";
+import { unansweredNote } from "./unanswered-note";
 
 export interface ToolRun {
   readonly callId: string;
@@ -137,18 +138,59 @@ const withSubmission = (
   };
 };
 
+const withdrawnNote = (record: {
+  readonly reason?: string | undefined;
+  readonly detail?: UnansweredInput["detail"];
+}): string =>
+  record.reason === "aborted" || record.reason === undefined
+    ? "Not sent: the run was stopped"
+    : (unansweredNote({ reason: record.reason, detail: record.detail }) ??
+      `Not answered: ${record.reason}`);
+
+/**
+ * A queued input withdrawn before it was placed (the run stopped, the conversation aborted) leaves no entry and no
+ * transcript trace: its pending would vanish unexplained. The settled note names it.
+ */
+const withWithdrawn = (
+  before: ConversationState,
+  after: ConversationState,
+  record: {
+    readonly requestId?: string | undefined;
+    readonly status: string;
+    readonly entry?: number | undefined;
+    readonly reason?: string | undefined;
+    readonly detail?: UnansweredInput["detail"];
+  }
+): ConversationState =>
+  record.status === "unanswered" &&
+  record.entry === undefined &&
+  record.requestId !== undefined &&
+  before.pending.some((pending) => pending.requestId === record.requestId)
+    ? { ...after, failures: [...after.failures, withdrawnNote(record)] }
+    : after;
+
 /** The send's answer names a pending's submission — the same fact its `submission` event may already have carried. */
 export const withAck = (
   state: ConversationState,
   requestId: string,
-  ack: { readonly id: number; readonly entry?: number | undefined }
+  ack: {
+    readonly id: number;
+    readonly status: string;
+    readonly entry?: number | undefined;
+    readonly reason?: string | undefined;
+    readonly detail?: string | undefined;
+  }
 ): ConversationState =>
-  withSubmission(state, {
-    requestId,
-    id: ack.id,
-    status: ack.entry === undefined ? "queued" : "placed",
-    entry: ack.entry,
-  });
+  withWithdrawn(
+    state,
+    withSubmission(state, {
+      requestId,
+      id: ack.id,
+      status: ack.status,
+      entry: ack.entry,
+    }),
+    { ...ack, requestId }
+  );
 
 /** Pending whose placed entry just arrived are dropped — the real entry shows instead. */
 const withoutEntry = (
@@ -305,7 +347,7 @@ const applySubmission = (
   event: Extract<ConversationEvent, { type: "submission" }>
 ): ConversationState => {
   const { record } = event;
-  return withSubmission(withSettled(state, record), {
+  const next = withSubmission(withSettled(state, record), {
     requestId: record.requestId,
     id: record.id,
     status: record.status,
@@ -314,6 +356,7 @@ const applySubmission = (
         ? record.entry
         : undefined,
   });
+  return record.type === "input" ? withWithdrawn(state, next, record) : next;
 };
 
 export const applyEvent = (

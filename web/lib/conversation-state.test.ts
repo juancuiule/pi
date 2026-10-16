@@ -293,17 +293,51 @@ describe("pending inputs", () => {
   });
 
   it("the send's answer confirms a pending its event has not carried yet", () => {
-    const acked = withAck(withPending(initialState, pending), "r1", { id: 7 });
+    const acked = withAck(withPending(initialState, pending), "r1", {
+      id: 7,
+      status: "queued",
+    });
     expect(acked.pending).toStrictEqual([{ ...pending, submission: 7 }]);
     // A placed ack whose entry is already committed drops it at once.
-    const placed = withAck(acked, "r1", { id: 7, entry: 12 });
+    const placed = withAck(acked, "r1", { id: 7, status: "placed", entry: 12 });
     expect(placed.pending[0]?.entry).toBe(12);
     const gone = withAck(
       { ...initialState, entries: [userEntry], pending: [pending] },
       "r1",
-      { id: 7, entry: 12 }
+      { id: 7, status: "placed", entry: 12 }
     );
     expect(gone.pending).toStrictEqual([]);
+  });
+
+  it("an ack for a submission that already settled unanswered drops the pending with its note", () => {
+    // The send's answer can carry an `unanswered` record when a retried request names one.
+    const next = withAck(withPending(initialState, pending), "r1", {
+      id: 7,
+      status: "unanswered",
+      reason: "aborted",
+    });
+    expect(next.pending).toStrictEqual([]);
+    expect(next.failures).toStrictEqual(["Not sent: the run was stopped"]);
+  });
+
+  it("says why a queued send's bubble vanished when the run stopped before placing it", () => {
+    const state = foldFrom(withPending(initialState, pending), [
+      submission("queued"),
+      // Stopped while queued: settles unanswered with no entry — nothing shows why the bubble is gone.
+      {
+        type: "submission",
+        record: {
+          id: 7,
+          conversationId: 1,
+          type: "input",
+          requestId: "r1",
+          status: "unanswered",
+          reason: "aborted",
+        },
+      } as unknown as ConversationEvent,
+    ]);
+    expect(state.pending).toStrictEqual([]);
+    expect(state.failures).toStrictEqual(["Not sent: the run was stopped"]);
   });
 
   it("a failed send drops the pending so the composer can restore it", () => {

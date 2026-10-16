@@ -45,6 +45,21 @@ describe(useConversationStore, () => {
     expect(useConversationStore.getState().resuming[6]).toBe(1);
   });
 
+  it("applies one stream chunk's events in a single update, so a commit lands atomically", () => {
+    const store = useConversationStore.getState();
+    let notifications = 0;
+    const unsubscribe = useConversationStore.subscribe(() => {
+      notifications += 1;
+    });
+    store.applyAll(9, [
+      { type: "run_start" } as ConversationEvent,
+      { type: "run_end" } as ConversationEvent,
+    ]);
+    unsubscribe();
+    expect(notifications).toBe(1);
+    expect(useConversationStore.getState().byId[9]?.running).toBeFalsy();
+  });
+
   it("toggles a conversation's thinking visibility, per conversation", () => {
     const store = useConversationStore.getState();
     store.toggleThinking(7);

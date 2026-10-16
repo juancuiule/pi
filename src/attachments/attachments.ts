@@ -448,7 +448,12 @@ export class Attachments extends Context.Service<
             claimId?: string
           ) {
             yield* tooMany(ids.length);
-            const claim = claimId ?? randomUUID();
+            // A caller-named id only dedupes within its conversation: the claim carries which, or a requestId
+            // reused in another conversation's send would release and commit this one's files.
+            const claim =
+              claimId === undefined
+                ? randomUUID()
+                : `${conversationId}:${claimId}`;
             const refusedIds = records.claimForMessage(
               conversationId,
               ids,

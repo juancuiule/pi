@@ -399,21 +399,29 @@ export class Conversations extends Context.Service<
             if (existing !== undefined) {
               return Effect.succeed(existing);
             }
-            return Effect.gen(function* () {
-              const stored = yield* agents.get(asId(id));
-              if (stored.meta.archivedAt !== undefined) {
-                return yield* new ConversationArchived({ id });
+            // Only a real resume waits: a live Seat, or a send racing one, never queues behind another
+            // Conversation's open.
+            return Effect.suspend(() => {
+              const arrived = live.get(id);
+              if (arrived !== undefined) {
+                return Effect.succeed(arrived);
               }
-              // `open` claims the Level's resource itself.
-              const { entry } = yield* seatIn("none", (claimed) =>
-                Effect.gen(function* () {
-                  yield* claimed.assign(id);
-                  return { id, seat: yield* agents.open(asId(id)) };
-                })
-              );
-              return entry;
-            });
-          }).pipe(resuming.withPermit);
+              return Effect.gen(function* () {
+                const stored = yield* agents.get(asId(id));
+                if (stored.meta.archivedAt !== undefined) {
+                  return yield* new ConversationArchived({ id });
+                }
+                // `open` claims the Level's resource itself.
+                const { entry } = yield* seatIn("none", (claimed) =>
+                  Effect.gen(function* () {
+                    yield* claimed.assign(id);
+                    return { id, seat: yield* agents.open(asId(id)) };
+                  })
+                );
+                return entry;
+              });
+            }).pipe(resuming.withPermit);
+          });
 
         const send = Effect.fn("Conversations.send")(function* (
           id: number,

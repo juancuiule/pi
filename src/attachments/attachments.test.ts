@@ -506,6 +506,40 @@ describe("claims and quotas", WORKERS, () => {
     expect(result.sent).toStrictEqual([result.id]);
   });
 
+  it("scopes a caller-named claim to its conversation, so another's same-named claim is untouched", async () => {
+    const { layer } = fauxAgents([]);
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const attachments = yield* Attachments;
+          const first = yield* upload("a.txt", "a", 1);
+          const second = yield* upload("b.txt", "b", 2);
+          const own = yield* attachments.claimForMessage(1, [first.id], "key");
+          const other = yield* attachments.claimForMessage(
+            2,
+            [second.id],
+            "key"
+          );
+          // The first message's send failed: releasing its claim must not free the other's files.
+          yield* own.release;
+          yield* other.commit;
+          return {
+            first: first.id,
+            second: second.id,
+            sentOne: (yield* attachments.sent(1)).map((record) => record.id),
+            sentTwo: (yield* attachments.sent(2)).map((record) => record.id),
+            reclaim: yield* Effect.exit(
+              attachments.claimForMessage(1, [first.id])
+            ),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect(result.sentOne).toStrictEqual([]);
+    expect(result.sentTwo).toStrictEqual([result.second]);
+    expect(Exit.isSuccess(result.reclaim)).toBeTruthy();
+  });
+
   it("counts uploads still being checked against the unsent total", async () => {
     const { layer } = fauxAgents([], {
       attachmentLimits: { maxUnsentBytes: 150 },

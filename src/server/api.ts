@@ -225,13 +225,17 @@ const MessageFields = {
   prompt: Schema.optionalKey(Schema.String),
   attachments: Schema.optionalKey(Schema.Array(Schema.String)),
   /** The sender's deduplication key: the admitted submission carries it, and resubmitting it is a no-op. */
-  requestId: Schema.optionalKey(Schema.String),
+  requestId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
 };
 
 /** The input a message was admitted as: its submission, and the entry once it is placed. */
 export const SubmissionAck = Schema.Struct({
   id: Schema.Number,
+  /** A retried request can answer with an already-settled submission. */
+  status: Schema.Literals(["queued", "placed", "done", "unanswered"]),
   entry: Schema.optionalKey(Schema.Number),
+  reason: Schema.optionalKey(Schema.String),
+  detail: Schema.optionalKey(Schema.String),
 });
 export type SubmissionAck = typeof SubmissionAck.Type;
 
