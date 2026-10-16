@@ -43,6 +43,7 @@ const capabilities: Capabilities = {
     { name: "notes", description: "", modelInvocable: true },
   ],
   mcp: [],
+  software: [],
 };
 
 const enabledOf = (settings: ReturnType<typeof newConversationSettings>) =>

@@ -38,9 +38,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { upgradesFrom } from "@/lib/capacity";
-import { useConversationAction, useUpgrade } from "@/lib/queries";
+import {
+  useCapabilities,
+  useConversationAction,
+  useUpgrade,
+} from "@/lib/queries";
 import type { ConversationAction } from "@/lib/queries";
+import { canAddSoftware } from "@/lib/software";
 import { useResuming } from "@/lib/store";
+
+import { AddSoftwareDialog } from "./software-checklist";
 
 export const ConversationActions = ({
   conversation,
@@ -52,6 +59,13 @@ export const ConversationActions = ({
   const resuming = useResuming(conversation);
   const upgrade = useUpgrade();
   const higher = upgradesFrom(conversation.sandbox);
+  const { data: capabilities } = useCapabilities();
+  const [addingSoftware, setAddingSoftware] = useState(false);
+  const addable = canAddSoftware(
+    capabilities?.software ?? [],
+    conversation.sandbox,
+    conversation.software
+  );
   const { status } = conversation;
   const hasSeat = status === "running" || status === "idle";
   const hasSandbox = conversation.sandbox !== "none";
@@ -116,7 +130,7 @@ export const ConversationActions = ({
           {resuming ? "Resuming…" : "Resume"}
         </Button>
       ) : null}
-      {status === "archived" || higher.length === 0 ? null : (
+      {status === "archived" || (higher.length === 0 && !addable) ? null : (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -140,6 +154,11 @@ export const ConversationActions = ({
                 {level === "shell" ? "Shell" : "Desktop"}
               </DropdownMenuItem>
             ))}
+            {addable ? (
+              <DropdownMenuItem onClick={() => setAddingSoftware(true)}>
+                Add software…
+              </DropdownMenuItem>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       )}
@@ -171,6 +190,11 @@ export const ConversationActions = ({
           <TooltipContent>Archive conversation</TooltipContent>
         </Tooltip>
       )}
+      <AddSoftwareDialog
+        conversation={conversation}
+        open={addingSoftware}
+        onOpenChange={setAddingSoftware}
+      />
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>

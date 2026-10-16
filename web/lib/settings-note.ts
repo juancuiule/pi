@@ -1,4 +1,6 @@
 // The line the transcript shows for a settings record (an `app.settings` entry): who changed what.
+import { SOFTWARE } from "effect-pi/api";
+
 const LEVEL: Readonly<Record<string, string>> = {
   none: "a chat",
   shell: "a shell",
@@ -13,7 +15,15 @@ interface Change {
   /** A Level, or `provider/modelId` for a model change. */
   readonly from?: string;
   readonly to?: string;
+  readonly added?: readonly string[];
 }
+
+const softwareLabel = (id: string) =>
+  Object.hasOwn(SOFTWARE, id)
+    ? SOFTWARE[id as keyof typeof SOFTWARE].label
+    : id;
+
+const UPGRADE = new Set(["level", "software"]);
 
 const describe = (change: Change): string => {
   switch (change.type) {
@@ -25,6 +35,9 @@ const describe = (change: Change): string => {
     case "level": {
       const to = change.to ?? "none";
       return `upgraded to ${LEVEL[to] ?? to}`;
+    }
+    case "software": {
+      return `added ${(change.added ?? []).map(softwareLabel).join(", ")}`;
     }
     case "model": {
       return `model ${change.to ?? "?"}`;
@@ -56,8 +69,11 @@ export const settingsNote = (data: unknown): string | undefined => {
   if (record.reset === true) {
     return `${who} reset the settings to their defaults`;
   }
-  if (record.changes.length === 1 && only?.type === "level") {
-    return `${who} ${describe(only)}`;
+  if (
+    record.changes.length > 0 &&
+    record.changes.every((change) => UPGRADE.has(change.type))
+  ) {
+    return `${who} ${record.changes.map(describe).join(" and ")}`;
   }
   return `${who} changed settings: ${record.changes.map(describe).join(", ")}`;
 };

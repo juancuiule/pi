@@ -13,6 +13,7 @@ const entry = (id: number, model: unknown[]): EntryRecord =>
 const summary: ConversationSummary = {
   id: 42,
   sandbox: "shell",
+  software: [],
   sandboxId: "effect-pi-shell-abcd1234",
   title: "List files & count",
   status: "idle",
