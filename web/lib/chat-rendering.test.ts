@@ -444,6 +444,18 @@ describe("Markdown code blocks", () => {
     }
   );
 
+  it("renders a mermaid fence as a diagram with a source toggle, source hidden until drawn", () => {
+    const html = renderToStaticMarkup(
+      createElement(Markdown, null, "```mermaid\na --> b\n```")
+    );
+    expect(html).toContain('aria-label="Show source"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain('data-slot="code-block-copy-button"');
+    // The diagram draws on the client; the source stays out until asked for.
+    expect(html).toContain("Drawing the diagram…");
+    expect(html).not.toContain("a --&gt; b");
+  });
+
   it("keeps inline code inline and escapes HTML", () => {
     const html = renderToStaticMarkup(
       createElement(

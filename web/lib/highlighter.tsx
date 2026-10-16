@@ -21,6 +21,7 @@ const languages = {
   jsx: () => import("shiki/langs/jsx.mjs"),
   kotlin: () => import("shiki/langs/kotlin.mjs"),
   markdown: () => import("shiki/langs/markdown.mjs"),
+  mermaid: () => import("shiki/langs/mermaid.mjs"),
   php: () => import("shiki/langs/php.mjs"),
   python: () => import("shiki/langs/python.mjs"),
   ruby: () => import("shiki/langs/ruby.mjs"),
