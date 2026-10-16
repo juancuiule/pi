@@ -13,6 +13,7 @@ import { Effect, Layer } from "effect";
 import { Agents } from "../agents/agents.ts";
 import type { AgentModel } from "../agents/agents.ts";
 import type { ApprovalPolicy } from "../approvals.ts";
+import { Artifacts } from "../artifacts/artifacts.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import type { AttachmentLimits } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
@@ -67,6 +68,7 @@ export const fauxAgents = (
       Layer.provide(sandboxes.layer),
       Layer.provide(options.skills ?? Skills.none),
       Layer.provideMerge(Attachments.temporary(options.attachmentLimits)),
+      Layer.provideMerge(Artifacts.temporary()),
       Layer.provideMerge(
         Capacity.layer({ seats: 10, shells: 3, desktops: 1, ...options.limits })
       )

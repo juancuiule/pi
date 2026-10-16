@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
+import { Artifacts } from "../artifacts/artifacts.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import { Skills } from "../skills/skills.ts";
@@ -102,13 +103,19 @@ describe("HTTP API", () => {
 
     const byName = new Map(extensions.map((each) => [each.name, each]));
     expect(
-      ["calculator", "coding-tools", "desktop", "workspace", "tracing"].map(
-        (name) => byName.get(name)?.levels
-      )
+      [
+        "calculator",
+        "coding-tools",
+        "desktop",
+        "workspace",
+        "artifacts",
+        "tracing",
+      ].map((name) => byName.get(name)?.levels)
     ).toStrictEqual([
       ["none", "shell", "desktop"],
       ["shell", "desktop"],
       ["desktop"],
+      ["none", "shell", "desktop"],
       ["none", "shell", "desktop"],
       ["none", "shell", "desktop"],
     ]);
@@ -123,8 +130,8 @@ describe("HTTP API", () => {
       ["edit", true],
       ["bash", true],
     ]);
-    // A chat runs with the calculator, the workspace tool, the locked attachments and tracing; nothing that needs a
-    // sandbox.
+    // A chat runs with the calculator, the workspace tool, the locked attachments and artifacts, and tracing;
+    // nothing that needs a sandbox.
     expect([
       agent.extensions.flatMap((each) =>
         each.enabled
@@ -141,10 +148,12 @@ describe("HTTP API", () => {
         "upgrade_workspace",
         "read_attachment",
         "search_attachment",
+        "artifact_create",
+        "artifact_update",
         "ask_user",
       ],
       ["coding-tools", "desktop"],
-      ["workspace", "attachments"],
+      ["workspace", "attachments", "artifacts"],
     ]);
   });
 
@@ -469,6 +478,7 @@ describe("HTTP API", () => {
       Layer.provide(sandboxes.layer),
       Layer.provide(Skills.none),
       Layer.provideMerge(Attachments.temporary()),
+      Layer.provideMerge(Artifacts.temporary()),
       Layer.provideMerge(Capacity.layer({ seats: 1, shells: 1, desktops: 1 }))
     );
 

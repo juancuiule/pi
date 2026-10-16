@@ -1,6 +1,17 @@
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Ref, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { Agents } from "../agents/agents.ts";
+import type { ConversationEvent } from "../conversation-events.ts";
+import {
+  ask,
+  callTool,
+  echoToolResult,
+  fauxAgents,
+  offered,
+  offeredIn,
+  openSeat,
+} from "../testing/faux.ts";
 import { ARTIFACT_MAX_EDITS, Artifacts } from "./artifacts.ts";
 
 /** Run `program` against a temporary Artifacts. */
@@ -237,5 +248,138 @@ describe("artifacts", () => {
       count: 1,
       view: { versions: [{ version: 1 }, { version: 2 }] },
     });
+  });
+});
+
+/** The settled tool results among a conversation's events. */
+const toolResults = (events: readonly ConversationEvent[]) =>
+  events.flatMap((event) =>
+    event.type === "tool_execution_end" && event.entry !== undefined
+      ? (event.entry.model ?? []).flatMap((m) =>
+          m.role === "toolResult" ? [m] : []
+        )
+      : []
+  );
+
+const waitUntil = (check: Effect.Effect<boolean, unknown>) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      if (yield* check) {
+        return;
+      }
+      yield* Effect.sleep("10 millis");
+    }
+    return yield* Effect.die(new Error("timed out waiting"));
+  });
+
+describe("the artifact tools", () => {
+  it("writes and revises a page, and carries its reference in the result's details", async () => {
+    const { layer, faux } = fauxAgents([]);
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const artifacts = yield* Artifacts;
+          const seat = yield* openSeat();
+          const seen = yield* Ref.make<ConversationEvent[]>([]);
+          const events = yield* agents.events(seat.id);
+          const scope = yield* Scope.Scope;
+          yield* Stream.runForEach(events, (event) =>
+            Ref.update(seen, (all) => [...all, event])
+          ).pipe(Effect.forkIn(scope));
+          faux.setResponses([
+            callTool("artifact_create", {
+              title: "Report",
+              html: "<h1>Hi</h1>",
+            }),
+            echoToolResult,
+          ]);
+          const created = yield* seat.ask("Make a page.");
+          const [listed] = yield* artifacts.list(Number(seat.id));
+          faux.setResponses([
+            callTool("artifact_update", {
+              id: listed?.id ?? "",
+              edits: [{ find: "Hi", replace: "There" }],
+              title: "Renamed",
+            }),
+            echoToolResult,
+          ]);
+          const updated = yield* seat.ask("Change it.");
+          yield* waitUntil(
+            Ref.get(seen).pipe(
+              Effect.map((all) => toolResults(all).length === 2)
+            )
+          );
+          return {
+            created,
+            updated,
+            id: listed?.id ?? "",
+            details: toolResults(yield* Ref.get(seen)).map(
+              (message) => message.details
+            ),
+            view:
+              listed === undefined
+                ? undefined
+                : yield* artifacts.view(Number(seat.id), listed.id),
+            latest:
+              listed === undefined
+                ? undefined
+                : yield* artifacts.html(Number(seat.id), listed.id),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect(result.created).toContain("the person already sees the page");
+    expect(result.updated).toContain("do not paste the HTML");
+    expect(result.details).toStrictEqual([
+      { id: result.id, version: 1, title: "Report" },
+      { id: result.id, version: 2, title: "Renamed" },
+    ]);
+    expect(result.view?.versions).toHaveLength(2);
+    expect(result.latest?.html).toBe("<h1>There</h1>");
+  });
+
+  it("offers the tools and tells the agent what a page is and which libraries it serves", async () => {
+    const { layer } = fauxAgents([offered]);
+    const answer = await Effect.runPromise(
+      ask("What can you do?").pipe(Effect.provide(layer))
+    );
+    const { tools, system } = offeredIn(answer);
+    expect(tools).toContain("artifact_create");
+    expect(tools).toContain("artifact_update");
+    expect(system).toContain("/api/artifact-libs/chart.umd.js");
+    expect(system).toContain("/api/artifact-libs/mermaid.min.js");
+    expect(system).toContain("300 KB");
+  });
+
+  it("reads a missing artifact or a refused change as a normal error", async () => {
+    const { layer, faux } = fauxAgents([]);
+    const answers = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat();
+          faux.setResponses([
+            callTool("artifact_update", {
+              id: "art_missing",
+              html: "<p>x</p>",
+            }),
+            echoToolResult,
+          ]);
+          const missing = yield* seat.ask("Change it.");
+          faux.setResponses([
+            callTool("artifact_create", {
+              title: "Big",
+              html: `<p>${"x".repeat(300 * 1024)}</p>`,
+            }),
+            echoToolResult,
+          ]);
+          const big = yield* seat.ask("Bigger.");
+          return [missing, big];
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect(answers[0]).toContain("error: ");
+    expect(answers[0]).toContain("No artifact art_missing");
+    expect(answers[1]).toContain("300 KB");
   });
 });

@@ -17,6 +17,7 @@ import { Effect, Layer } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
+import { Artifacts } from "../artifacts/artifacts.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import { saveScreenshotsTo } from "../screenshots.ts";
@@ -69,6 +70,7 @@ const dockerAgents = (
     Layer.provide(testWorkspaces()),
     Layer.provide(Skills.none),
     Layer.provide(Attachments.temporary()),
+    Layer.provide(Artifacts.temporary()),
     Layer.provide(Capacity.layer({ seats: 2, shells: 1, desktops: 1 }))
   );
 };

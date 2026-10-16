@@ -52,6 +52,7 @@ import {
   isGated,
   stopWaitingCalls,
 } from "../approvals.ts";
+import { Artifacts, artifactsExtension } from "../artifacts/artifacts.ts";
 import {
   Attachments,
   attachmentsExtension,
@@ -511,6 +512,7 @@ export class Agents extends Context.Service<
         });
         registry.install(tracing.extension);
         const attachments = yield* Attachments;
+        const artifacts = yield* Artifacts;
         // Skills are read from their source for every new conversation; the extension reads the conversation's.
         const skills = yield* Skills;
         const skillsExt = skillsExtension(skills);
@@ -587,6 +589,9 @@ export class Agents extends Context.Service<
         // Read and search over the conversation's attachments; always on, so a file once sent stays readable.
         const attachmentsExt = attachmentsExtension(attachments);
         registry.install(attachmentsExt);
+        // The pages the agent writes for the person; always on, at every Level.
+        const artifactsExt = artifactsExtension(artifacts);
+        registry.install(artifactsExt);
         // `ask_user`: questions as a form in the console.
         const questionsExt = questionsExtension();
         registry.install(questionsExt);
@@ -595,6 +600,7 @@ export class Agents extends Context.Service<
           ...extensionsFor("desktop", desktop),
           workspaceExt,
           attachmentsExt,
+          artifactsExt,
           questionsExt,
           skillsExt,
           ...mcp.extensions,
@@ -603,13 +609,16 @@ export class Agents extends Context.Service<
         const everyLevel = new Set<Extension>([
           workspaceExt,
           attachmentsExt,
+          artifactsExt,
           questionsExt,
           skillsExt,
           ...mcp.extensions,
           tracing.extension,
         ]);
         const isLocked = (extension: Extension) =>
-          extension === tracing.extension || extension === attachmentsExt;
+          extension === tracing.extension ||
+          extension === attachmentsExt ||
+          extension === artifactsExt;
         const levelsOf = (extension: Extension) =>
           LEVELS.filter(
             (level) =>
@@ -638,6 +647,7 @@ export class Agents extends Context.Service<
             ...extensionsFor(level, desktop),
             workspaceExt,
             attachmentsExt,
+            artifactsExt,
             questionsExt,
             ...(withSkills ? [skillsExt] : []),
             ...mcp.extensions,
@@ -1109,8 +1119,8 @@ export class Agents extends Context.Service<
             return yield* new ConversationArchived({ id: Number(id) });
           }
           yield* locked(id, ensureModel(id));
-          // A conversation from before attachments gets their always-on extension.
-          yield* locked(id, addExtensions(id, [attachmentsExt]));
+          // A conversation from before attachments or artifacts gets their always-on extensions.
+          yield* locked(id, addExtensions(id, [attachmentsExt, artifactsExt]));
           const workspace = yield* attempt(() =>
             harness.snapshot(WorkspaceDoc, id, context)
           );
