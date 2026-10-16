@@ -3,11 +3,12 @@
 import type { ConversationSummary } from "effect-pi/api";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { toast } from "sonner";
 
+import { ArtifactPanel } from "@/components/console/artifact-panel";
 import { CapacityGuardProvider } from "@/components/console/capacity-dialog";
 import { ConversationHeader } from "@/components/console/conversation-header";
 import { DesktopPanel } from "@/components/console/desktop-panel";
@@ -23,6 +24,10 @@ import {
 } from "@/components/ui/resizable";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { AnswersContext, ApprovalContext } from "@/lib/approval-context";
+import { OpenArtifactContext } from "@/lib/artifact-context";
+import { latestArtifactCall } from "@/lib/artifacts";
+import type { OpenArtifact } from "@/lib/artifacts";
+import type { ConversationState } from "@/lib/conversation-state";
 import {
   useConversationAction,
   useConversations,
@@ -115,6 +120,122 @@ const Composer = ({
     />
   );
 
+/**
+ * The artifact open beside the chat, independent of the sandbox panel (a Level-none conversation has pages but
+ * no machine). A just-committed `artifact_*` result opens it on its own; the calls already committed when the
+ * first snapshot landed are the baseline, so a reload never pops the panel.
+ */
+const useArtifactPanel = (
+  selectedId: number | undefined,
+  state: ConversationState
+): [OpenArtifact | undefined, (artifact: OpenArtifact | undefined) => void] => {
+  const [artifact, setArtifact] = useState<OpenArtifact | undefined>();
+  const [artifactConversation, setArtifactConversation] = useState(selectedId);
+  if (artifactConversation !== selectedId) {
+    setArtifactConversation(selectedId);
+    setArtifact(undefined);
+  }
+  const seen = useRef<{ conversation?: number; callId?: string }>({});
+  useEffect(() => {
+    if (selectedId === undefined || !state.hydrated) {
+      seen.current = {};
+      return;
+    }
+    if (seen.current.conversation !== selectedId) {
+      seen.current = {
+        conversation: selectedId,
+        callId: latestArtifactCall(state.entries)?.callId,
+      };
+      return;
+    }
+    const latest = latestArtifactCall(state.entries);
+    if (latest !== undefined && latest.callId !== seen.current.callId) {
+      seen.current.callId = latest.callId;
+      setArtifact({ id: latest.id, version: latest.version });
+    }
+  }, [selectedId, state]);
+  return [artifact, setArtifact];
+};
+
+/** On desktop an artifact is a third pane after the main one; dragging it shut closes it. */
+const ArtifactResizablePanel = ({
+  artifact,
+  conversation,
+  onClose,
+}: {
+  artifact: OpenArtifact | undefined;
+  conversation: number | undefined;
+  onClose: () => void;
+}) => {
+  if (artifact === undefined || conversation === undefined) {
+    return null;
+  }
+  return (
+    <>
+      <ResizableHandle />
+      <ResizablePanel
+        defaultSize="30%"
+        minSize="15%"
+        collapsible
+        onResize={(size) => {
+          if (size.asPercentage === 0) {
+            onClose();
+          }
+        }}
+      >
+        <ArtifactPanel
+          key={`${conversation}:${artifact.id}`}
+          artifact={artifact}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      </ResizablePanel>
+    </>
+  );
+};
+
+/** Below the desktop breakpoint the same panel is a Sheet instead. */
+const ArtifactSheet = ({
+  artifact,
+  conversation,
+  isDesktop,
+  onClose,
+}: {
+  artifact: OpenArtifact | undefined;
+  conversation: number | undefined;
+  isDesktop: boolean | null;
+  onClose: () => void;
+}) => (
+  <Sheet
+    open={
+      isDesktop === false &&
+      artifact !== undefined &&
+      conversation !== undefined
+    }
+    onOpenChange={(open) => {
+      if (!open) {
+        onClose();
+      }
+    }}
+  >
+    <SheetContent
+      side="right"
+      showCloseButton={false}
+      className="w-full sm:max-w-2xl"
+    >
+      <SheetTitle className="sr-only">Artifact page</SheetTitle>
+      {artifact === undefined || conversation === undefined ? null : (
+        <ArtifactPanel
+          key={`${conversation}:${artifact.id}`}
+          artifact={artifact}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      )}
+    </SheetContent>
+  </Sheet>
+);
+
 const NotFound = ({ onNew }: { onNew: () => void }) => (
   <div className="flex h-full flex-col items-center justify-center gap-2 p-6">
     <h1 className="text-base font-medium">Conversation not found</h1>
@@ -178,6 +299,8 @@ const Console = () => {
     data !== undefined &&
     conversation === undefined &&
     !(readOnly && state.entries.length > 0);
+
+  const [artifact, setArtifact] = useArtifactPanel(selectedId, state);
 
   const toggleSidePanel = () => {
     const panel = sidePanel.current;
@@ -243,7 +366,7 @@ const Console = () => {
   }
 
   return (
-    <>
+    <OpenArtifactContext.Provider value={setArtifact}>
       <title>{pageTitle(conversation)}</title>
       <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
         <SheetContent side="left" className="w-72">
@@ -268,6 +391,11 @@ const Console = () => {
           </ResizablePanel>
           <ResizableHandle />
           <ResizablePanel minSize="30%">{main}</ResizablePanel>
+          <ArtifactResizablePanel
+            artifact={artifact}
+            conversation={selectedId}
+            onClose={() => setArtifact(undefined)}
+          />
           {showSandbox ? (
             <>
               <ResizableHandle />
@@ -297,7 +425,13 @@ const Console = () => {
       {isDesktop === false ? (
         <div className="flex h-dvh flex-col">{main}</div>
       ) : null}
-    </>
+      <ArtifactSheet
+        artifact={artifact}
+        conversation={selectedId}
+        isDesktop={isDesktop}
+        onClose={() => setArtifact(undefined)}
+      />
+    </OpenArtifactContext.Provider>
   );
 };
 

@@ -11,10 +11,11 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
+import { Artifacts } from "../artifacts/artifacts.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import { Skills } from "../skills/skills.ts";
-import { fauxAgents } from "../testing/faux.ts";
+import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
 import { Api } from "./api.ts";
@@ -23,7 +24,7 @@ import { echoModel } from "./faux.ts";
 import { ApiLayer } from "./handlers.ts";
 
 const serverWith = (
-  agents: Layer.Layer<Agents | Capacity | Attachments, AgentError>
+  agents: Layer.Layer<Agents | Capacity | Attachments | Artifacts, AgentError>
 ) =>
   HttpRouter.serve(ApiLayer, {
     disableListenLog: true,
@@ -102,13 +103,19 @@ describe("HTTP API", () => {
 
     const byName = new Map(extensions.map((each) => [each.name, each]));
     expect(
-      ["calculator", "coding-tools", "desktop", "workspace", "tracing"].map(
-        (name) => byName.get(name)?.levels
-      )
+      [
+        "calculator",
+        "coding-tools",
+        "desktop",
+        "workspace",
+        "artifacts",
+        "tracing",
+      ].map((name) => byName.get(name)?.levels)
     ).toStrictEqual([
       ["none", "shell", "desktop"],
       ["shell", "desktop"],
       ["desktop"],
+      ["none", "shell", "desktop"],
       ["none", "shell", "desktop"],
       ["none", "shell", "desktop"],
     ]);
@@ -123,8 +130,6 @@ describe("HTTP API", () => {
       ["edit", true],
       ["bash", true],
     ]);
-    // A chat runs with the calculator, the workspace tool, the locked attachments and tracing; nothing that needs a
-    // sandbox.
     expect([
       agent.extensions.flatMap((each) =>
         each.enabled
@@ -141,10 +146,12 @@ describe("HTTP API", () => {
         "upgrade_workspace",
         "read_attachment",
         "search_attachment",
+        "artifact_create",
+        "artifact_update",
         "ask_user",
       ],
       ["coding-tools", "desktop"],
-      ["workspace", "attachments"],
+      ["workspace", "attachments", "artifacts"],
     ]);
   });
 
@@ -469,6 +476,7 @@ describe("HTTP API", () => {
       Layer.provide(sandboxes.layer),
       Layer.provide(Skills.none),
       Layer.provideMerge(Attachments.temporary()),
+      Layer.provideMerge(Artifacts.temporary()),
       Layer.provideMerge(Capacity.layer({ seats: 1, shells: 1, desktops: 1 }))
     );
 
@@ -607,5 +615,97 @@ describe("HTTP API", () => {
     expect(result.owned.disposition).toContain("attachment;");
     expect(result.events).toContain("Keep it short.");
     expect(result.events).toContain("and this");
+  });
+
+  it("serves a conversation's pages sandboxed, and the libraries they may load", async () => {
+    const html =
+      '<pre class="mermaid">graph TD; A-->B</pre><script src="/api/artifact-libs/mermaid.min.js"></script>';
+    const agents = fauxAgents([
+      callTool("artifact_create", { title: "Diagram", html }),
+      echoToolResult,
+    ]);
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const http = yield* HttpClient.HttpClient;
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "draw it" },
+        });
+        const list = () =>
+          client.artifacts.list({ query: { conversation: created.id } });
+        let views = yield* list();
+        while (views.length === 0) {
+          yield* Effect.sleep("10 millis");
+          views = yield* list();
+        }
+        const [artifact] = views;
+        if (artifact === undefined) {
+          return yield* Effect.die(new Error("no artifact created"));
+        }
+        const render = yield* http.get(
+          `/api/artifacts/${artifact.id}/render?conversation=${created.id}`
+        );
+        const lib = yield* http.get("/api/artifact-libs/mermaid.min.js");
+        const missingLib = yield* http.get("/api/artifact-libs/evil.js");
+        const source = yield* client.artifacts.source({
+          params: { id: artifact.id },
+          query: { conversation: created.id, v: 1 },
+        });
+        const view = yield* client.artifacts.view({
+          params: { id: artifact.id },
+          query: { conversation: created.id },
+        });
+        yield* client.artifacts.remove({
+          params: { id: artifact.id },
+          query: { conversation: created.id },
+        });
+        const removed = yield* Effect.flip(
+          client.artifacts.view({
+            params: { id: artifact.id },
+            query: { conversation: created.id },
+          })
+        );
+        return {
+          render: {
+            status: render.status,
+            csp: render.headers["content-security-policy"],
+            type: render.headers["content-type"],
+            nosniff: render.headers["x-content-type-options"],
+            body: yield* render.text,
+          },
+          lib: {
+            status: lib.status,
+            type: lib.headers["content-type"],
+            nosniff: lib.headers["x-content-type-options"],
+            body: yield* lib.text,
+          },
+          missingLib: missingLib.status,
+          source,
+          view,
+          removed,
+        };
+      }).pipe(Effect.provide(serverWith(agents.layer)))
+    );
+    expect(result).toMatchObject({
+      render: {
+        status: 200,
+        csp: "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'",
+        type: expect.stringContaining("text/html"),
+        nosniff: "nosniff",
+        body: expect.stringContaining("/api/artifact-libs/mermaid.min.js"),
+      },
+      lib: {
+        status: 200,
+        type: expect.stringContaining("javascript"),
+        nosniff: "nosniff",
+        body: expect.stringContaining("mermaid"),
+      },
+      missingLib: 404,
+      source: { version: 1, html: expect.stringContaining("graph TD") },
+      view: { id: result.view.id, title: "Diagram" },
+      removed: { _tag: "ArtifactNotFound" },
+    });
+    expect(result.lib.body.length).toBeGreaterThan(100_000);
+    expect(result.view.versions).toHaveLength(1);
   });
 });

@@ -23,6 +23,17 @@ const nextConfig: NextConfig = {
     Promise.resolve([
       { source: "/api/:path*", destination: `${ENV.API_URL}/api/:path*` },
     ]),
+  // The artifact iframe can only load pages from this origin. The pattern excludes /api, which is a rewrite:
+  // those responses carry the server's own headers (the render endpoint's stricter CSP).
+  headers: () =>
+    Promise.resolve([
+      {
+        source: "/:path((?!api(?:/|$)).*)",
+        headers: [
+          { key: "content-security-policy", value: "frame-src 'self'" },
+        ],
+      },
+    ]),
 };
 
 export default nextConfig;

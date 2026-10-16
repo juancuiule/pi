@@ -131,7 +131,9 @@ describe("conversation settings", () => {
             { extensions: { "coding-tools": true } },
             { extensions: { tracing: false } },
             { extensions: { attachments: false } },
+            { extensions: { artifacts: false } },
             { tools: { read_attachment: false } },
+            { tools: { artifact_create: false } },
           ],
           (change) => Effect.exit(agents.configure(id, change))
         );
@@ -140,6 +142,8 @@ describe("conversation settings", () => {
     );
 
     expect(result.exits.map((exit) => Exit.isFailure(exit))).toStrictEqual([
+      true,
+      true,
       true,
       true,
       true,
@@ -155,6 +159,7 @@ describe("conversation settings", () => {
       "calculator",
       "workspace",
       "attachments",
+      "artifacts",
       "questions",
       "tracing",
     ]);

@@ -75,6 +75,8 @@ export interface ConversationState {
   readonly failures: readonly string[];
   /** User messages whose run ended without an answer, by entry id. */
   readonly unanswered: Readonly<Record<number, UnansweredInput>>;
+  /** True once the stream's snapshot has landed: entries before it are history, after it they are new commits. */
+  readonly hydrated: boolean;
 }
 
 export const initialState: ConversationState = {
@@ -94,6 +96,7 @@ export const initialState: ConversationState = {
   usage: undefined,
   failures: [],
   unanswered: {},
+  hydrated: false,
 };
 
 /** The entry id is in the transcript — the active view, or paged-in earlier history. */
@@ -389,6 +392,7 @@ const applySnapshot = (
     running: event.run !== undefined,
     queued: event.inbox.length,
     usage: event.usage,
+    hydrated: true,
     unanswered: Object.fromEntries(
       event.unanswered.map((input) => [input.entry, input])
     ),

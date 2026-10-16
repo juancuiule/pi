@@ -22,6 +22,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Attachment**: A file a person sends with a message: its original, kept privately on the server, and the text or image prepared from it once. Before a message takes it, it is an upload: staged (no Conversation yet) or a Conversation's, and it expires unsent. _Avoid_: document, file upload, asset
 
+**Artifact**: A sandboxed HTML page the agent writes for the person, kept privately on the server with every version of it. _Avoid_: file, document, page
+
 ## Workspaces
 
 **Workspace**: The durable machine side of a Conversation: its Level and its files. _Avoid_: volume, environment

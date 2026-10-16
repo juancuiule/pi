@@ -14,6 +14,7 @@ import { HttpRouter, Multipart } from "effect/http";
 
 import { mcpServers } from "./mcp.config.ts";
 import { Agents } from "./src/agents/agents.ts";
+import { Artifacts } from "./src/artifacts/artifacts.ts";
 import { Attachments } from "./src/attachments/attachments.ts";
 import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
@@ -43,6 +44,8 @@ const AttachmentsLive = Attachments.local({
   limits: config.attachments,
 });
 
+const ArtifactsLive = Artifacts.local({ database: config.paths.db });
+
 // One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
 const CapacityLive = Capacity.layer(config.capacity);
 
@@ -57,7 +60,8 @@ const AgentsLive = Agents.layer({
   Layer.provide(DockerVolumes.workspaces()),
   Layer.provide(Skills.directory(config.paths.skills)),
   Layer.provide(CapacityLive),
-  Layer.provideMerge(AttachmentsLive)
+  Layer.provideMerge(AttachmentsLive),
+  Layer.provideMerge(ArtifactsLive)
 );
 
 const ConversationsLive = Conversations.layer(config.server).pipe(
