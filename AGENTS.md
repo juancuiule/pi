@@ -156,3 +156,8 @@ Agents are traced with Effect spans, exported to Langfuse over OTLP.
   - Fonts come from the shadcn preset: IBM Plex Sans, IBM Plex Mono and Montserrat headings (`layout.tsx`, `--font-*` in `globals.css`).
   - The shell panel uses wterm (`@wterm/react`), output-only (no-op `onData`); the first write happens in `onReady` (earlier writes are dropped), and colors/font come from `.console-terminal` CSS variables; `html`/`body` are `h-dvh overflow-hidden` and only inner regions scroll.
 - `web/next.config.ts` rewrites `/api/*` to `API_URL` with compression off, so SSE isn't buffered, and `experimental.proxyTimeout` at a day: the proxy otherwise cuts any stream silent for 30s, and the server sends no heartbeat.
+
+## Pull requests
+
+- After opening a PR, generate an explain-diff walkthrough of the branch's diff against its base (the `explain-diff` skill writes a self-contained HTML file at `/tmp/YYYY-MM-DD-explanation-<slug>.html`) and report the file's path, so the reviewer can read the explanation beside the PR.
+- When the diff changes runtime behavior a static explanation can't make intuitive — lifecycles, concurrency, protocols, migrations, multi-step flows — also build a micro-world (Geoffrey Litt, "Understanding is the new bottleneck"): a throwaway interactive page or script the reviewer drives, triggering events and watching state move, saved next to the explainer. It is a review artifact, not shipped code; skip it for diffs a reader can fully get from prose.
