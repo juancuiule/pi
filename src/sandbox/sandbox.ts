@@ -5,6 +5,8 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Context, Schema } from "effect";
 import type { Effect } from "effect";
 
+import type { SoftwareId } from "./software.ts";
+
 /**
  * `shell`: a Linux userland for bash and file tools.
  * `desktop`: the same plus a graphical desktop.
@@ -51,11 +53,15 @@ export class SandboxError extends Schema.TaggedError<SandboxError>()(
 export class Sandboxes extends Context.Service<
   Sandboxes,
   {
-    /** Create and start a sandbox over a Workspace's files. `name` is unique per sandbox. */
+    /**
+     * Create and start a sandbox over a Workspace's files, with `software` installed on top of the Level's image.
+     * `name` is unique per sandbox.
+     */
     create(
       kind: SandboxKind,
       name: string,
-      files: WorkspaceMount
+      files: WorkspaceMount,
+      software: readonly SoftwareId[]
     ): Effect.Effect<SandboxInfo, SandboxError>;
     /** Stop and delete a sandbox, ignoring one that is already gone; the Workspace's files stay. */
     remove(sandbox: SandboxInfo): Effect.Effect<void, SandboxError>;

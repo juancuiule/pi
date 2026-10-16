@@ -19,7 +19,12 @@ import {
 } from "effect";
 
 import { Agents } from "../agents/agents.ts";
-import type { AgentError, ConversationAgent, Seat } from "../agents/agents.ts";
+import type {
+  AgentError,
+  ConversationAgent,
+  Seat,
+  UpgradeRequest,
+} from "../agents/agents.ts";
 import type { SettingsChange } from "../agents/settings.ts";
 import type { AnswerInput, ApprovalChoice } from "../approvals.ts";
 import { Attachments } from "../attachments/attachments.ts";
@@ -37,17 +42,15 @@ import type {
   InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
-import type {
-  SandboxChoice,
-  SandboxError,
-  SandboxKind,
-} from "../sandbox/sandbox.ts";
+import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
+import type { SoftwareId } from "../sandbox/software.ts";
 
 export type ConversationStatus = "running" | "idle" | "paused" | "archived";
 
 export interface ConversationSummary {
   readonly id: number;
   readonly sandbox: SandboxChoice;
+  readonly software: readonly SoftwareId[];
   readonly sandboxId?: string;
   readonly vncUrl?: string;
   readonly title: string;
@@ -105,6 +108,7 @@ const summaryOf = (
   return {
     id: Number(stored.id),
     sandbox: stored.level,
+    software: stored.software,
     ...(sandbox === undefined ? {} : { sandboxId: sandbox.id }),
     ...(sandbox?.vncUrl === undefined ? {} : { vncUrl: sandbox.vncUrl }),
     title: stored.meta.title,
@@ -134,6 +138,7 @@ export class Conversations extends Context.Service<
      */
     create(input: {
       readonly sandbox: SandboxChoice;
+      readonly software?: readonly SoftwareId[] | undefined;
       readonly prompt: string;
       readonly attachments?: readonly string[] | undefined;
       readonly requestId?: string | undefined;
@@ -164,12 +169,12 @@ export class Conversations extends Context.Service<
     /** Abort the current Run; the Seat stays, unless a Pause was waiting for the Run to end. */
     stop(id: number): Effect.Effect<void, AgentError | ConversationNotFound>;
     /**
-     * Raise a Conversation's Level. With a Seat its Sandbox is replaced now, if there is room; without one its next
-     * Seat gets it.
+     * Raise a Conversation's Level, add Software, or both. With a Seat its Sandbox is replaced now, if there is room
+     * for another of its Level; without one its next Seat gets it.
      */
     upgrade(
       id: number,
-      level: SandboxKind
+      request: UpgradeRequest
     ): Effect.Effect<ConversationSummary, SeatError | InvalidUpgrade>;
     /** Withdraw an Upgrade waiting for room (the agent's); true when one was waiting. */
     cancelWait(id: number): Effect.Effect<boolean>;
@@ -450,6 +455,7 @@ export class Conversations extends Context.Service<
 
         const create = Effect.fn("Conversations.create")(function* (input: {
           readonly sandbox: SandboxChoice;
+          readonly software?: readonly SoftwareId[] | undefined;
           readonly prompt: string;
           readonly attachments?: readonly string[] | undefined;
           readonly requestId?: string | undefined;
@@ -470,6 +476,7 @@ export class Conversations extends Context.Service<
                   reservation?.records.map((record) => record.name)
                 ),
                 level: input.sandbox,
+                software: input.software,
                 createdAt: yield* Clock.currentTimeMillis,
                 approvals: input.approvals,
                 settings: input.settings,
@@ -537,7 +544,7 @@ export class Conversations extends Context.Service<
 
         const upgrade = Effect.fn("Conversations.upgrade")(function* (
           id: number,
-          level: SandboxKind
+          request: UpgradeRequest
         ) {
           const entry = live.get(id);
           if (entry === undefined) {
@@ -545,10 +552,10 @@ export class Conversations extends Context.Service<
             if (stored.meta.archivedAt !== undefined) {
               return yield* new ConversationArchived({ id });
             }
-            yield* agents.upgrade(asId(id), level);
+            yield* agents.upgrade(asId(id), request);
           } else {
             yield* entry.seat
-              .upgrade(level)
+              .upgrade(request)
               .pipe(Effect.catchTag("ClaimCancelled", Effect.die));
           }
           const stored = yield* agents.get(asId(id));

@@ -310,6 +310,44 @@ describe("HTTP API", () => {
     );
   });
 
+  it("offers Software, creates a conversation with it and adds more with an Upgrade", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const capabilities = yield* client.info.capabilities();
+        expect(
+          capabilities.software.map((each) => [each.id, each.level])
+        ).toStrictEqual([
+          ["node", "shell"],
+          ["uv", "shell"],
+          ["python-data", "shell"],
+          ["imagemagick", "shell"],
+          ["ffmpeg", "shell"],
+          ...(process.arch === "x64" ? [["chrome", "desktop"]] : []),
+        ]);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "shell", software: ["node"], prompt: "hello" },
+        });
+        const upgraded = yield* client.conversations.upgrade({
+          params: { id: created.id },
+          payload: { software: ["uv"] },
+        });
+        const nothing = yield* Effect.flip(
+          client.conversations.upgrade({
+            params: { id: created.id },
+            payload: {},
+          })
+        );
+        expect([
+          created.software,
+          upgraded.software,
+          upgraded.sandbox,
+          nothing._tag,
+        ]).toStrictEqual([["node"], ["node", "uv"], "shell", "InvalidUpgrade"]);
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("a")])])))
+    );
+  });
+
   // Issue #16: the send's answer names its submission so the console's pending message can resolve; a retried
   // requestId is the same submission again, not a second message.
   it("answers sends with the submission a requestId deduplicates", async () => {

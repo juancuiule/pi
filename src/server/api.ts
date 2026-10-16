@@ -21,6 +21,9 @@ import {
   InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
+import { SOFTWARE_IDS } from "../sandbox/software.ts";
+
+export { SOFTWARE } from "../sandbox/software.ts";
 
 export type { AssistantMessage, Message, Usage } from "@earendil-works/pi-ai";
 export type {
@@ -51,6 +54,9 @@ export {
 export const SandboxChoice = Schema.Literals(["none", "shell", "desktop"]);
 export type SandboxChoice = typeof SandboxChoice.Type;
 
+export const SoftwareId = Schema.Literals(SOFTWARE_IDS);
+export type SoftwareId = typeof SoftwareId.Type;
+
 export const ApprovalChoice = Schema.Literals(["approve", "deny", "always"]);
 export type ApprovalChoice = typeof ApprovalChoice.Type;
 
@@ -65,6 +71,8 @@ export type QuestionAnswer = typeof QuestionAnswer.Type;
 export const ConversationSummary = Schema.Struct({
   id: Schema.Number,
   sandbox: SandboxChoice,
+  /** Installed in its Sandboxes on top of the Level's image, in catalog order. */
+  software: Schema.Array(SoftwareId),
   sandboxId: Schema.optionalKey(Schema.String),
   vncUrl: Schema.optionalKey(Schema.String),
   title: Schema.String,
@@ -199,6 +207,15 @@ export const Capabilities = Schema.Struct({
       ),
     })
   ),
+  /** The Software this host offers, in catalog order; `level` is the lowest Level that offers each. */
+  software: Schema.Array(
+    Schema.Struct({
+      id: SoftwareId,
+      label: Schema.String,
+      description: Schema.String,
+      level: Schema.Literals(["shell", "desktop"]),
+    })
+  ),
 });
 export type Capabilities = typeof Capabilities.Type;
 
@@ -246,6 +263,7 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
   HttpApiEndpoint.post("create", "/conversations", {
     payload: Schema.Struct({
       sandbox: SandboxChoice,
+      software: Schema.optionalKey(Schema.Array(SoftwareId)),
       ...MessageFields,
       approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
       /** Changes to what a conversation at this Level gets by default. */
@@ -320,10 +338,13 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     success: HttpApiSchema.NoContent,
     error: NotFound,
   }),
-  // Raise the Level; with a Seat, now, if there is room.
+  // Raise the Level, add Software, or both; with a Seat, now, if there is room.
   HttpApiEndpoint.post("upgrade", "/conversations/:id/upgrade", {
     params: ById,
-    payload: Schema.Struct({ level: Schema.Literals(["shell", "desktop"]) }),
+    payload: Schema.Struct({
+      level: Schema.optionalKey(Schema.Literals(["shell", "desktop"])),
+      software: Schema.optionalKey(Schema.Array(SoftwareId)),
+    }),
     success: ConversationSummary,
     error: [
       NotFound,

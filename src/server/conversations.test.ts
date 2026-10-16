@@ -435,10 +435,14 @@ describe("Upgrade", () => {
           Effect.map((all) => all[0]?.status === "idle")
         );
         yield* waitUntil(idle);
-        const shell = yield* conversations.upgrade(created.id, "shell");
+        const shell = yield* conversations.upgrade(created.id, {
+          level: "shell",
+        });
         yield* conversations.send(created.id, "leave a note");
         yield* waitUntil(idle, 10_000);
-        const desktop = yield* conversations.upgrade(created.id, "desktop");
+        const desktop = yield* conversations.upgrade(created.id, {
+          level: "desktop",
+        });
         const usage = yield* conversations.capacity;
         const stream = yield* conversations.events(created.id);
         yield* conversations.send(created.id, "read it");
@@ -451,7 +455,7 @@ describe("Upgrade", () => {
           Stream.runHead
         );
         const lower = yield* Effect.exit(
-          conversations.upgrade(created.id, "shell")
+          conversations.upgrade(created.id, { level: "shell" })
         );
         return { shell, desktop, usage, reply, lower };
       }).pipe(Effect.provide(layer))
@@ -489,11 +493,13 @@ describe("Upgrade", () => {
           prompt: "chat",
         });
         const refused = yield* Effect.exit(
-          conversations.upgrade(chat.id, "shell")
+          conversations.upgrade(chat.id, { level: "shell" })
         );
         yield* conversations.stop(chat.id);
         yield* conversations.pause(chat.id);
-        const recorded = yield* conversations.upgrade(chat.id, "shell");
+        const recorded = yield* conversations.upgrade(chat.id, {
+          level: "shell",
+        });
         return { refused, recorded };
       }).pipe(Effect.provide(layer))
     );

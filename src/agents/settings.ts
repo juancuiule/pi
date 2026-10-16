@@ -2,6 +2,7 @@
 // reads the state from the conversation's documents, and applies what `applyChange` returns.
 import type { ApprovalPolicy } from "../approvals.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
+import type { SoftwareId } from "../sandbox/software.ts";
 
 export interface InstalledTool {
   readonly name: string;
@@ -230,6 +231,7 @@ export const isProblem = (
 export type SettingsEvent =
   | { type: "approvals"; policy: ApprovalPolicy }
   | { type: "level"; from: SandboxChoice; to: SandboxChoice }
+  | { type: "software"; added: SoftwareId[] }
   // `provider/modelId`; `from` is "" for a conversation that had no model.
   | { type: "model"; from: string; to: string }
   | { type: "extension" | "tool" | "skill"; name: string; on: boolean };
