@@ -26,6 +26,7 @@ export type { AssistantMessage, Message, Usage } from "@earendil-works/pi-ai";
 export type {
   ConversationEvent,
   ConversationSnapshot,
+  HistoryPage,
   UnansweredInput,
 } from "../conversation-events.ts";
 export type {
@@ -300,6 +301,20 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
   HttpApiEndpoint.get("events", "/conversations/:id/events", {
     params: ById,
     success: HttpApiSchema.StreamSse({ data: Schema.Json }),
+    error: NotFound,
+  }),
+  // Entries a head marker (a compaction or reset) hides from the active context, oldest first; `before` pages back
+  // from an entry id. Entries are storage records, typed for clients as `HistoryPage`.
+  HttpApiEndpoint.get("history", "/conversations/:id/history", {
+    params: ById,
+    query: {
+      before: Schema.optionalKey(Schema.FiniteFromString),
+      limit: Schema.optionalKey(Schema.FiniteFromString),
+    },
+    success: Schema.Struct({
+      entries: Schema.Array(Schema.Unknown),
+      earlier: Schema.Boolean,
+    }),
     error: NotFound,
   }),
   // Give a paused Conversation a Seat, or cancel a Pause waiting for the Run of one that has a Seat.

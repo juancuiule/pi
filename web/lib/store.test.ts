@@ -1,4 +1,4 @@
-import type { ConversationEvent } from "effect-pi/api";
+import type { ConversationEvent, EntryRecord } from "effect-pi/api";
 import { describe, expect, it } from "vitest";
 
 import { useConversationStore } from "./store";
@@ -6,6 +6,7 @@ import { useConversationStore } from "./store";
 const snapshot = {
   type: "snapshot",
   entries: [],
+  earlier: false,
   tools: [],
   compactions: [],
   inbox: [],
@@ -58,6 +59,21 @@ describe(useConversationStore, () => {
     unsubscribe();
     expect(notifications).toBe(1);
     expect(useConversationStore.getState().byId[9]?.running).toBeFalsy();
+  });
+
+  it("folds a fetched history page into a conversation's earlier slice", () => {
+    const store = useConversationStore.getState();
+    store.setEarlierLoading(11, true);
+    expect(
+      useConversationStore.getState().byId[11]?.earlier.loading
+    ).toBeTruthy();
+
+    const entry = { id: 3, conversationId: 1, kind: "pi.user" } as EntryRecord;
+    store.addEarlierPage(11, { entries: [entry], earlier: false });
+    const earlier = useConversationStore.getState().byId[11]?.earlier;
+    expect(earlier?.entries.map((e) => e.id)).toStrictEqual([3]);
+    expect(earlier?.hasMore).toBeFalsy();
+    expect(earlier?.loading).toBeFalsy();
   });
 
   it("toggles a conversation's thinking visibility, per conversation", () => {
