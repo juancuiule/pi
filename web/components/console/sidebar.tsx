@@ -10,6 +10,7 @@ import {
   Sun,
 } from "lucide-react";
 import { useTheme } from "next-themes";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -22,6 +23,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { parseConversationId } from "@/lib/conversation-id";
 import { relativeTime } from "@/lib/format";
 import { useConversations, useInfo } from "@/lib/queries";
 import { useConversationStore } from "@/lib/store";
@@ -105,15 +107,12 @@ const ThemeToggle = () => {
   );
 };
 
-export const Sidebar = ({
-  selectedId,
-  onSelect,
-  onNew,
-}: {
-  selectedId: number | undefined;
-  onSelect: (id: number) => void;
-  onNew: () => void;
-}) => {
+export const Sidebar = () => {
+  const router = useRouter();
+  const pathname = usePathname();
+  const param = useSearchParams().get("c");
+  // A conversation is current only on the chat route.
+  const selectedId = pathname === "/" ? parseConversationId(param) : undefined;
   const { data } = useConversations();
   const { data: info } = useInfo();
   const resuming = useConversationStore((store) => store.resuming);
@@ -164,7 +163,7 @@ export const Sidebar = ({
                 <button
                   type="button"
                   aria-current={selected ? "page" : undefined}
-                  onClick={() => onSelect(conversation.id)}
+                  onClick={() => router.push(`/?c=${conversation.id}`)}
                   className={cn(
                     "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2",
                     selected && "bg-accent text-accent-foreground font-medium"
@@ -225,7 +224,7 @@ export const Sidebar = ({
       <div className="px-2">
         <Button
           variant="outline"
-          onClick={onNew}
+          onClick={() => router.push("/")}
           className="w-full justify-start"
         >
           <Plus />

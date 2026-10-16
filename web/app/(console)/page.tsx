@@ -3,18 +3,16 @@
 import type { ConversationSummary } from "effect-pi/api";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { toast } from "sonner";
 
 import { ArtifactPanel } from "@/components/console/artifact-panel";
-import { CapacityGuardProvider } from "@/components/console/capacity-dialog";
 import { ConversationHeader } from "@/components/console/conversation-header";
 import { DesktopPanel } from "@/components/console/desktop-panel";
 import { MessageInput } from "@/components/console/message-input";
 import { NewConversation } from "@/components/console/new-conversation";
-import { Sidebar } from "@/components/console/sidebar";
 import { Transcript } from "@/components/console/transcript";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +25,7 @@ import { AnswersContext, ApprovalContext } from "@/lib/approval-context";
 import { OpenArtifactContext } from "@/lib/artifact-context";
 import { latestArtifactCall } from "@/lib/artifacts";
 import type { OpenArtifact } from "@/lib/artifacts";
+import { parseConversationId } from "@/lib/conversation-id";
 import type { ConversationState } from "@/lib/conversation-state";
 import {
   useConversationAction,
@@ -36,7 +35,7 @@ import {
 } from "@/lib/queries";
 import { useConversationStore, useResuming } from "@/lib/store";
 import { useConversationEvents } from "@/lib/use-conversation-events";
-import { useMediaQuery } from "@/lib/use-media-query";
+import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
 
 // wterm loads its WASM at runtime, so the terminal never renders on the server.
 const TerminalPanel = dynamic(
@@ -61,11 +60,6 @@ const readOnlyOf = (
   gone: boolean,
   conversation: ConversationSummary | undefined
 ) => gone || conversation?.status === "archived";
-
-const parseId = (value: string | null): number | undefined => {
-  const id = value === null ? Number.NaN : Number(value);
-  return Number.isInteger(id) ? id : undefined;
-};
 
 const ArchivedNotice = ({ id, onNew }: { id: number; onNew: () => void }) => {
   const act = useConversationAction();
@@ -269,15 +263,13 @@ const ConversationMutations = ({
 
 const Console = () => {
   const router = useRouter();
-  const selectedId = parseId(useSearchParams().get("c"));
+  const selectedId = parseConversationId(useSearchParams().get("c"));
   const select = (id: number) => router.push(`/?c=${id}`);
   const clear = () => router.push("/");
 
-  // Tailwind's md breakpoint: below it the sidebar is a Sheet and the side panel is hidden.
-  const isDesktop = useMediaQuery("(min-width: 48rem)");
+  const isDesktop = useMediaQuery(DESKTOP_MEDIA);
   const sidePanel = usePanelRef();
   const [sideCollapsed, setSideCollapsed] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
 
   const state = useConversationEvents(selectedId);
   const thinkingHidden = useConversationStore(
@@ -317,9 +309,7 @@ const Console = () => {
   // While the list loads, show nothing: flashing a composer for a conversation that may not exist is worse.
   let main: ReactNode = null;
   if (selectedId === undefined) {
-    main = (
-      <NewConversation onCreated={select} onMenu={() => setMenuOpen(true)} />
-    );
+    main = <NewConversation onCreated={select} />;
   } else if (data !== undefined) {
     main = notFound ? (
       <NotFound onNew={clear} />
@@ -331,7 +321,6 @@ const Console = () => {
             <ConversationHeader
               conversation={conversation}
               state={state}
-              onMenu={() => setMenuOpen(true)}
               sidePanel={
                 showSandbox && isDesktop
                   ? {
@@ -368,28 +357,9 @@ const Console = () => {
   return (
     <OpenArtifactContext.Provider value={setArtifact}>
       <title>{pageTitle(conversation)}</title>
-      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-        <SheetContent side="left" className="w-72">
-          <SheetTitle className="sr-only">Conversations</SheetTitle>
-          <Sidebar
-            selectedId={selectedId}
-            onSelect={(id) => {
-              setMenuOpen(false);
-              select(id);
-            }}
-            onNew={() => {
-              setMenuOpen(false);
-              clear();
-            }}
-          />
-        </SheetContent>
-      </Sheet>
       {isDesktop === true ? (
-        <ResizablePanelGroup orientation="horizontal" className="h-dvh">
-          <ResizablePanel defaultSize="260px" minSize="220px" maxSize="420px">
-            <Sidebar selectedId={selectedId} onSelect={select} onNew={clear} />
-          </ResizablePanel>
-          <ResizableHandle />
+        // Nested inside the console shell's page panel: main, then an open artifact, then the sandbox.
+        <ResizablePanelGroup orientation="horizontal" className="h-full">
           <ResizablePanel minSize="30%">{main}</ResizablePanel>
           <ArtifactResizablePanel
             artifact={artifact}
@@ -422,9 +392,7 @@ const Console = () => {
           ) : null}
         </ResizablePanelGroup>
       ) : null}
-      {isDesktop === false ? (
-        <div className="flex h-dvh flex-col">{main}</div>
-      ) : null}
+      {isDesktop === false ? main : null}
       <ArtifactSheet
         artifact={artifact}
         conversation={selectedId}
@@ -435,12 +403,4 @@ const Console = () => {
   );
 };
 
-const Home = () => (
-  <Suspense>
-    <CapacityGuardProvider>
-      <Console />
-    </CapacityGuardProvider>
-  </Suspense>
-);
-
-export default Home;
+export default Console;

@@ -36,6 +36,7 @@ import {
   useThinkingHidden,
 } from "@/lib/store";
 
+import { useOpenMenu } from "./console-shell";
 import { ConversationActions } from "./conversation-actions";
 import { ResumingNotice } from "./resuming-notice";
 import { SandboxBadge } from "./sandbox-badge";
@@ -44,13 +45,10 @@ import { WaitingNotice } from "./waiting-notice";
 export const ConversationHeader = ({
   conversation,
   state,
-  onMenu,
   sidePanel,
 }: {
   conversation: ConversationSummary;
   state: ConversationState;
-  /** Opens the mobile navigation sheet. */
-  onMenu: () => void;
   /** Present when a sandbox side panel can be shown. */
   sidePanel?: {
     label: string;
@@ -58,6 +56,7 @@ export const ConversationHeader = ({
     toggle: () => void;
   };
 }) => {
+  const openMenu = useOpenMenu();
   const act = useConversationAction();
   const resuming = useResuming(conversation);
   const thinkingHidden = useThinkingHidden(conversation.id);
@@ -100,7 +99,7 @@ export const ConversationHeader = ({
           size="icon-sm"
           aria-label="Conversations"
           className="md:hidden"
-          onClick={onMenu}
+          onClick={openMenu}
         >
           <Menu />
         </Button>

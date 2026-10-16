@@ -28,6 +28,7 @@ import { useConversationStore } from "@/lib/store";
 import { useDraftAttachments } from "@/lib/use-draft-attachments";
 
 import { Composer } from "./composer";
+import { useOpenMenu } from "./console-shell";
 import { SANDBOX_INFO } from "./sandbox-badge";
 import { SettingsPanel } from "./settings-panel";
 import { Transcript } from "./transcript";
@@ -55,12 +56,10 @@ const Kbd = ({ children }: { children: string }) => (
 
 export const NewConversation = ({
   onCreated,
-  onMenu,
 }: {
   onCreated: (id: number) => void;
-  /** Opens the mobile navigation sheet; mobile only. */
-  onMenu: () => void;
 }) => {
+  const openMenu = useOpenMenu();
   const [sandbox, setSandbox] = useState<SandboxChoice>("none");
   const [approvals, setApprovals] = useState(true);
   const [prompt, setPrompt] = useState("");
@@ -148,7 +147,7 @@ export const NewConversation = ({
           size="icon-sm"
           aria-label="Conversations"
           className="absolute top-3 left-3 md:hidden"
-          onClick={onMenu}
+          onClick={openMenu}
         >
           <Menu />
         </Button>
@@ -167,7 +166,7 @@ export const NewConversation = ({
         size="icon-sm"
         aria-label="Conversations"
         className="absolute top-3 left-3 md:hidden"
-        onClick={onMenu}
+        onClick={openMenu}
       >
         <Menu />
       </Button>
