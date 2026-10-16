@@ -70,6 +70,12 @@ export const apiError = (error: unknown): string => {
             : "";
         return `No skill named ${name}. Available: ${available}.`;
       }
+      case "InvalidUpgrade":
+      case "InvalidSetting": {
+        return "reason" in error && error.reason !== undefined
+          ? String(error.reason)
+          : "That change isn't allowed.";
+      }
       case "ConversationNotFound": {
         return "This conversation no longer exists.";
       }

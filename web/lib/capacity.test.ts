@@ -15,6 +15,7 @@ const summary = (
 ): ConversationSummary => ({
   id,
   sandbox: "shell",
+  software: [],
   title: `#${id}`,
   status,
   pausing,

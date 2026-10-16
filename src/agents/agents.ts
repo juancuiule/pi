@@ -92,6 +92,14 @@ import type {
   SandboxShell,
 } from "../sandbox/sandbox.ts";
 import { SandboxDoc, SandboxError } from "../sandbox/sandbox.ts";
+import {
+  checkSoftware,
+  LEVEL_RANK,
+  normalize,
+  offered,
+  SOFTWARE,
+} from "../sandbox/software.ts";
+import type { SoftwareId } from "../sandbox/software.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
 import type { Skill } from "../skills/format.ts";
 import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
@@ -197,6 +205,19 @@ export interface Capabilities {
   /** Skill folders the catalog skipped and why. */
   readonly skillProblems: readonly string[];
   readonly mcp: readonly McpServerState[];
+  /** The Software this host offers, in catalog order, with the lowest Level that offers each. */
+  readonly software: readonly {
+    readonly id: SoftwareId;
+    readonly label: string;
+    readonly description: string;
+    readonly level: SandboxKind;
+  }[];
+}
+
+/** What an Upgrade asks for: a higher Level, more Software, or both. */
+export interface UpgradeRequest {
+  readonly level?: SandboxKind | undefined;
+  readonly software?: readonly SoftwareId[] | undefined;
 }
 
 export interface AgentModel {
@@ -250,8 +271,36 @@ const toolInfo = (tool: ToolRegistration): ToolInfo => ({
   approval: isGated(tool),
 });
 
-/** Levels in the order an Upgrade goes. */
-const rank: Record<SandboxChoice, number> = { none: 0, shell: 1, desktop: 2 };
+const upgradeTarget = (
+  id: ConversationId,
+  from: {
+    readonly level: SandboxChoice;
+    readonly software: readonly SoftwareId[];
+  },
+  asked: UpgradeRequest
+) => {
+  const level =
+    asked.level !== undefined &&
+    LEVEL_RANK[asked.level] > LEVEL_RANK[from.level]
+      ? asked.level
+      : from.level;
+  const software = normalize([...from.software, ...(asked.software ?? [])]);
+  const added = software.filter((each) => !from.software.includes(each));
+  const problem = checkSoftware(level, software);
+  if (
+    level === "none" ||
+    (level === from.level && added.length === 0) ||
+    problem !== undefined
+  ) {
+    return new InvalidUpgrade({
+      id: Number(id),
+      from: from.level,
+      to: asked.level ?? from.level,
+      ...(problem === undefined ? {} : { reason: problem }),
+    });
+  }
+  return { level, software, added };
+};
 
 /** The extensions a conversation runs with, by its Workspace's Level. */
 export const extensionsFor = (
@@ -334,11 +383,12 @@ export interface Seat {
   /** The Workspace's Level. */
   readonly level: SandboxChoice;
   /**
-   * Raise the Level: a Sandbox at `level` over the same files replaces the current one, with its tools added.
-   * At a Capacity limit it fails, or with `wait` waits until there is room (`Capacity.cancel` withdraws it).
+   * Raise the Level, add Software, or both: a Sandbox with the higher Level and the Software of both over the same
+   * files replaces the current one, and a higher Level's tools are added. At a Capacity limit it fails, or with
+   * `wait` waits until there is room (`Capacity.cancel` withdraws it).
    */
   upgrade(
-    level: SandboxKind,
+    request: UpgradeRequest,
     options?: {
       readonly wait?: boolean;
       /** Who asked, for the conversation's record; the person, unless said otherwise. */
@@ -459,6 +509,8 @@ export class Agents extends Context.Service<
       readonly prompt: string;
       readonly title: string;
       readonly level: SandboxChoice;
+      /** Installed in its Sandboxes on top of the Level's image; `InvalidSetting` when the Level cannot have it. */
+      readonly software?: readonly SoftwareId[] | undefined;
       readonly createdAt: number;
       readonly approvals?: ApprovalPolicy | undefined;
       /** Changes to what a conversation at this Level gets by default. */
@@ -495,10 +547,10 @@ export class Agents extends Context.Service<
       ConversationAgent,
       AgentError | ConversationNotFound | InvalidSetting | SandboxError
     >;
-    /** Raise the Level of a Conversation without a Seat; its next Seat gets the Sandbox. */
+    /** Raise the Level, add Software, or both, for a Conversation without a Seat; its next Seat gets the Sandbox. */
     upgrade(
       id: ConversationId,
-      level: SandboxKind
+      request: UpgradeRequest
     ): Effect.Effect<void, AgentError | ConversationNotFound | InvalidUpgrade>;
     /** One stored Conversation. */
     get(
@@ -601,7 +653,7 @@ export class Agents extends Context.Service<
         // The upgrade of each conversation with a Seat, for the `upgrade_workspace` tool.
         const upgrades = new Map<
           ConversationId,
-          (level: SandboxKind) => Effect.Effect<void, unknown>
+          (request: UpgradeRequest) => Effect.Effect<void, unknown>
         >();
         const workspaceExt = workspaceExtension(async (id, level, signal) => {
           const upgrade = upgrades.get(id);
@@ -609,7 +661,7 @@ export class Agents extends Context.Service<
             throw new Error("This conversation is not running here.");
           }
           const exit = await Effect.runPromiseExit(
-            upgrade(level),
+            upgrade({ level }),
             signal === undefined ? {} : { signal }
           );
           if (Exit.isSuccess(exit)) {
@@ -970,16 +1022,31 @@ export class Agents extends Context.Service<
         const recordUpgrade = (
           id: ConversationId,
           from: SandboxChoice,
-          to: SandboxChoice,
+          to: { readonly level: SandboxChoice; readonly added: SoftwareId[] },
           by: "person" | "agent"
         ) =>
           Effect.annotateCurrentSpan({
             "langfuse.observation.type": "event",
             "langfuse.session.id": tracing.sessionOf(id),
-            "langfuse.observation.input": JSON.stringify({ from, to, by }),
+            "langfuse.observation.input": JSON.stringify({
+              from,
+              to: to.level,
+              software: to.added,
+              by,
+            }),
           }).pipe(
             Effect.andThen(
-              record(id, { by, changes: [{ type: "level", from, to }] })
+              record(id, {
+                by,
+                changes: [
+                  ...(from === to.level
+                    ? []
+                    : [{ type: "level" as const, from, to: to.level }]),
+                  ...(to.added.length === 0
+                    ? []
+                    : [{ type: "software" as const, added: to.added }]),
+                ],
+              })
             )
           );
 
@@ -1092,10 +1159,19 @@ export class Agents extends Context.Service<
           readonly prompt: string;
           readonly title: string;
           readonly level: SandboxChoice;
+          readonly software?: readonly SoftwareId[] | undefined;
           readonly createdAt: number;
           readonly approvals?: ApprovalPolicy | undefined;
           readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
         }) {
+          const software = normalize(createOptions.software ?? []);
+          const softwareProblem = checkSoftware(createOptions.level, software);
+          if (softwareProblem !== undefined) {
+            return yield* new InvalidSetting({
+              name: "software",
+              reason: softwareProblem,
+            });
+          }
           // This conversation's skills: the source as it is now, less any its settings turn off.
           const sourceSkills = (yield* catalog).skills;
           const settled = applyChange(
@@ -1149,6 +1225,9 @@ export class Agents extends Context.Service<
                   };
                   const workspace = await tx.doc(WorkspaceDoc, id);
                   workspace.level = createOptions.level;
+                  if (software.length > 0) {
+                    workspace.software = software;
+                  }
                   const approvals = await tx.doc(ApprovalDoc, id);
                   approvals.policy = settled.approvals;
                 },
@@ -1175,35 +1254,45 @@ export class Agents extends Context.Service<
           const workspace = yield* attempt(() =>
             harness.snapshot(WorkspaceDoc, id, context)
           );
-          // The Sandbox and its Level's claim, in a scope of their own so an Upgrade can replace them.
           let level: SandboxChoice = workspace?.level ?? "none";
+          let software: readonly SoftwareId[] = workspace?.software ?? [];
           let machine:
             | { readonly scope: Scope.Closeable; readonly sandbox: SandboxInfo }
             | undefined;
+          let levelClaim: Scope.Closeable | undefined;
+          let closing = false;
+          const upgrading = yield* Semaphore.make(1);
 
           // One finalizer, in this order: the conversation stops, no tool call can find the Sandbox any more,
-          // then the Sandbox goes and its claim is released.
+          // then the Sandbox goes and its claim is released. `closing` turns away an Upgrade queued behind it,
+          // and taking `upgrading` lets one still landing finish first: `machine` and `levelClaim` then name
+          // its new Sandbox and claim, and they close too.
           yield* Effect.addFinalizer(() =>
-            Effect.gen(function* () {
-              upgrades.delete(id);
-              seatSandboxes.delete(id);
-              yield* Effect.ignore(attempt(() => handle.abort(context)));
-              yield* Effect.ignore(
-                attempt(() =>
-                  harness.commit(async (tx) => {
-                    const doc = await tx.doc(SandboxDoc, id);
-                    delete doc.sandbox;
-                  }, context)
-                )
-              );
-              if (machine !== undefined) {
-                yield* Scope.close(machine.scope, Exit.void);
-              }
+            Effect.suspend(() => {
+              closing = true;
+              return Effect.gen(function* () {
+                upgrades.delete(id);
+                seatSandboxes.delete(id);
+                yield* Effect.ignore(attempt(() => handle.abort(context)));
+                yield* Effect.ignore(
+                  attempt(() =>
+                    harness.commit(async (tx) => {
+                      const doc = await tx.doc(SandboxDoc, id);
+                      delete doc.sandbox;
+                    }, context)
+                  )
+                );
+                if (machine !== undefined) {
+                  yield* Scope.close(machine.scope, Exit.void);
+                }
+                if (levelClaim !== undefined) {
+                  yield* Scope.close(levelClaim, Exit.void);
+                }
+              }).pipe(upgrading.withPermit);
             })
           );
 
-          // A Sandbox at `to` over the Workspace's files, its skills copied in and recorded before it is used.
-          const attach = (
+          const claimLevel = (
             to: SandboxKind,
             claimOptions: {
               readonly claim?: Claim | undefined;
@@ -1212,20 +1301,35 @@ export class Agents extends Context.Service<
           ) =>
             Effect.gen(function* () {
               const scope = yield* Scope.make();
+              const claim =
+                claimOptions.claim ??
+                (yield* capacity
+                  .claim([to], {
+                    holder: Number(id),
+                    wait: claimOptions.wait ?? false,
+                  })
+                  .pipe(
+                    Scope.provide(scope),
+                    Effect.onError(() => Scope.close(scope, Exit.void))
+                  ));
+              yield* Scope.addFinalizer(scope, claim.release);
+              return scope;
+            });
+
+          const attach = (
+            to: SandboxKind,
+            withSoftware: readonly SoftwareId[]
+          ) =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.make();
               const attached = yield* Effect.exit(
                 Effect.gen(function* () {
-                  const claim =
-                    claimOptions.claim ??
-                    (yield* capacity.claim([to], {
-                      holder: Number(id),
-                      wait: claimOptions.wait ?? false,
-                    }));
-                  yield* Effect.addFinalizer(() => claim.release);
                   const current = yield* attempt(() =>
                     harness.snapshot(WorkspaceDoc, id, context)
                   );
                   const made = yield* workspaces.sandbox({
                     level: to,
+                    software: withSoftware,
                     storage: current?.storage,
                   });
                   const conversationSkills = yield* skillsOf(id);
@@ -1272,6 +1376,9 @@ export class Agents extends Context.Service<
                       doc.sandbox = made.sandbox;
                       const files = await tx.doc(WorkspaceDoc, id);
                       files.level = to;
+                      if (withSoftware.length > 0) {
+                        files.software = [...withSoftware];
+                      }
                       files.storage = made.storage;
                     }, context)
                   );
@@ -1286,55 +1393,87 @@ export class Agents extends Context.Service<
             });
 
           if (level !== "none") {
-            machine = yield* attach(level, { claim: openOptions.levelClaim });
+            levelClaim = yield* claimLevel(level, {
+              claim: openOptions.levelClaim,
+            });
+            machine = yield* attach(level, software);
           }
 
-          const upgrading = yield* Semaphore.make(1);
           const upgrade = Effect.fn("Seat.upgrade")(
             function* (
-              to: SandboxKind,
+              request: UpgradeRequest,
               upgradeOptions: {
                 readonly wait?: boolean;
                 readonly by?: "person" | "agent";
               } = {}
             ) {
-              if (rank[to] <= rank[level]) {
-                return yield* new InvalidUpgrade({
-                  id: Number(id),
-                  from: level,
-                  to,
+              // The Seat is closing: a Sandbox made now would have nothing left to close it.
+              if (closing) {
+                return yield* new SandboxError({
+                  message: `Conversation ${id}'s Seat is closing.`,
                 });
               }
+              const target = upgradeTarget(id, { level, software }, request);
+              if (target instanceof InvalidUpgrade) {
+                return yield* target;
+              }
               const previous = machine;
-              const added = extensionsFor(to, desktop).filter(
+              const added = extensionsFor(target.level, desktop).filter(
                 (extension) =>
                   !extensionsFor(level, desktop).includes(extension)
               );
-              machine = yield* attach(to, {
-                wait: upgradeOptions.wait ?? false,
-              });
+              const claimed =
+                target.level === level
+                  ? undefined
+                  : yield* claimLevel(target.level, {
+                      wait: upgradeOptions.wait ?? false,
+                    });
+              machine = yield* attach(target.level, target.software).pipe(
+                Effect.onError(() =>
+                  claimed === undefined
+                    ? Effect.void
+                    : Scope.close(claimed, Exit.void)
+                )
+              );
+              const replaced = claimed === undefined ? undefined : levelClaim;
+              levelClaim = claimed ?? levelClaim;
               const from = level;
-              level = to;
+              ({ level, software } = target);
               yield* locked(
                 id,
                 addExtensions(id, added).pipe(
                   Effect.andThen(
-                    recordUpgrade(id, from, to, upgradeOptions.by ?? "person")
+                    recordUpgrade(
+                      id,
+                      from,
+                      target,
+                      upgradeOptions.by ?? "person"
+                    )
                   ),
                   // A settings change during the Upgrade went to the old Sandbox.
                   Effect.andThen(
                     reconcileSkills(id, { refresh: [], removed: [] })
                   )
                 )
+              ).pipe(
+                // The new Sandbox is recorded; the old one and the claim it replaced go, whatever happened above.
+                Effect.ensuring(
+                  Effect.gen(function* () {
+                    if (previous !== undefined) {
+                      yield* Scope.close(previous.scope, Exit.void);
+                    }
+                    if (replaced !== undefined) {
+                      yield* Scope.close(replaced, Exit.void);
+                    }
+                  })
+                )
               );
-              // The new Sandbox is recorded; the old one, and its claim, can go.
-              if (previous !== undefined) {
-                yield* Scope.close(previous.scope, Exit.void);
-              }
             },
             (effect) => upgrading.withPermit(effect)
           );
-          upgrades.set(id, (to) => upgrade(to, { wait: true, by: "agent" }));
+          upgrades.set(id, (request) =>
+            upgrade(request, { wait: true, by: "agent" })
+          );
           seatSandboxes.set(id, () => machine?.sandbox);
           // A settings change between the Sandbox's copy and this registration found no Sandbox to update.
           yield* locked(id, reconcileSkills(id, { refresh: [], removed: [] }));
@@ -1614,6 +1753,7 @@ export class Agents extends Context.Service<
             id,
             meta: doc.meta,
             level: workspace?.level ?? "none",
+            software: workspace?.software ?? [],
           } satisfies StoredConversation;
         });
 
@@ -1686,29 +1826,35 @@ export class Agents extends Context.Service<
 
         const upgradeStored = Effect.fn("Agents.upgrade")(function* (
           id: ConversationId,
-          to: SandboxKind
+          request: UpgradeRequest
         ) {
           yield* handleOf(id);
-          const from = yield* attempt(() =>
+          const { from, target } = yield* attempt(() =>
             harness.commit(async (tx) => {
               const doc = await tx.doc(WorkspaceDoc, id);
               const current = doc.level;
-              if (rank[to] > rank[current]) {
-                doc.level = to;
+              const reached = upgradeTarget(
+                id,
+                { level: current, software: doc.software ?? [] },
+                request
+              );
+              if (!(reached instanceof InvalidUpgrade)) {
+                doc.level = reached.level;
+                doc.software = [...reached.software];
               }
-              return current;
+              return { from: current, target: reached };
             }, context)
           );
-          if (rank[to] <= rank[from]) {
-            return yield* new InvalidUpgrade({ id: Number(id), from, to });
+          if (target instanceof InvalidUpgrade) {
+            return yield* target;
           }
-          const added = extensionsFor(to, desktop).filter(
+          const added = extensionsFor(target.level, desktop).filter(
             (extension) => !extensionsFor(from, desktop).includes(extension)
           );
           yield* locked(
             id,
             addExtensions(id, added).pipe(
-              Effect.andThen(recordUpgrade(id, from, to, "person"))
+              Effect.andThen(recordUpgrade(id, from, target, "person"))
             )
           );
         });
@@ -1849,6 +1995,12 @@ export class Agents extends Context.Service<
                 skills: infos,
                 skillProblems: current.problems,
                 mcp: mcp.servers,
+                software: offered("desktop").map((id) => ({
+                  id,
+                  label: SOFTWARE[id].label,
+                  description: SOFTWARE[id].description,
+                  level: SOFTWARE[id].level,
+                })),
                 extensions: installed.map((extension): ExtensionInfo => ({
                   name: extension.name,
                   levels: levelsOf(extension),

@@ -60,7 +60,8 @@ export const waitingShortage = (
       };
 };
 
-const RANK = { none: 0, shell: 1, desktop: 2 } as const;
+/** Levels in the order an Upgrade goes. */
+export const RANK = { none: 0, shell: 1, desktop: 2 } as const;
 
 /** The Levels above `level`, for an Upgrade menu. */
 export const upgradesFrom = (

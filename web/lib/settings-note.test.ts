@@ -28,6 +28,27 @@ describe(settingsNote, () => {
     ]);
   });
 
+  it("says what an Upgrade raised and added", () => {
+    expect(
+      [
+        {
+          by: "person",
+          changes: [{ type: "software", added: ["node", "uv"] }],
+        },
+        {
+          by: "person",
+          changes: [
+            { type: "level", from: "shell", to: "desktop" },
+            { type: "software", added: ["chrome"] },
+          ],
+        },
+      ].map(settingsNote)
+    ).toStrictEqual([
+      "You added Node.js 24, uv (Python packages)",
+      "You upgraded to a desktop and added Google Chrome",
+    ]);
+  });
+
   it("says the server switched a model it does not have", () => {
     expect(
       settingsNote({

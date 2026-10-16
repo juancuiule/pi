@@ -2,7 +2,7 @@
 
 import { Collapsible } from "@base-ui/react/collapsible";
 import { Radio } from "@base-ui/react/radio";
-import type { SandboxChoice } from "effect-pi/api";
+import type { SandboxChoice, SoftwareId } from "effect-pi/api";
 import { ChevronRight, Menu } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -24,6 +24,7 @@ import {
   settingsPayload,
 } from "@/lib/settings";
 import type { Overrides } from "@/lib/settings";
+import { pick, softwareChoices, softwareToAdd } from "@/lib/software";
 import { useConversationStore } from "@/lib/store";
 import { useDraftAttachments } from "@/lib/use-draft-attachments";
 
@@ -31,6 +32,7 @@ import { Composer } from "./composer";
 import { useOpenMenu } from "./console-shell";
 import { SANDBOX_INFO } from "./sandbox-badge";
 import { SettingsPanel } from "./settings-panel";
+import { SOFTWARE_BUILD_HINT, SoftwareChecklist } from "./software-checklist";
 import { Transcript } from "./transcript";
 
 const CHOICES: readonly {
@@ -79,6 +81,9 @@ export const NewConversation = ({
       : newConversationSettings(capabilities, sandbox, overrides);
   const customized =
     settings === undefined ? undefined : settingsPayload(overrides, settings);
+  const [picked, setPicked] = useState<SoftwareId[]>([]);
+  const catalog = capabilities?.software ?? [];
+  const software = softwareToAdd(catalog, sandbox, [], picked);
 
   // Set while the create runs: the view ahead already shows the message.
   const [creating, setCreating] = useState<PendingInput>();
@@ -106,6 +111,7 @@ export const NewConversation = ({
       // Sent for chats too: the agent's upgrade_workspace is gated like commands.
       {
         sandbox,
+        ...(software.length === 0 ? {} : { software }),
         prompt: text,
         attachments: ids,
         requestId,
@@ -153,7 +159,9 @@ export const NewConversation = ({
         </Button>
         <Transcript state={{ ...initialState, pending: [creating] }} />
         <p className="text-muted-foreground px-6 pb-6 text-center text-sm">
-          Creating the conversation…
+          {software.length === 0
+            ? "Creating the conversation…"
+            : "Creating the conversation and installing its software… The first time with this combination takes a few minutes."}
         </p>
       </div>
     );
@@ -210,6 +218,18 @@ export const NewConversation = ({
           </RadioGroup>
         </div>
       </fieldset>
+      {sandbox === "none" || catalog.length === 0 ? null : (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-muted-foreground mb-2 text-xs font-medium">
+            Software
+          </legend>
+          <SoftwareChecklist
+            choices={softwareChoices(catalog, sandbox, [], picked)}
+            onPick={(id, on) => setPicked((current) => pick(current, id, on))}
+          />
+          <p className="text-muted-foreground text-xs">{SOFTWARE_BUILD_HINT}</p>
+        </fieldset>
+      )}
       <div className="flex items-start gap-3">
         <Switch
           checked={approvals}

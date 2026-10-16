@@ -11,10 +11,11 @@ import type { ConversationId, Extension } from "@earendil-works/pi-durable";
 
 import { withApproval } from "../approvals.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
+import { SOFTWARE } from "../sandbox/software.ts";
+import type { SoftwareId } from "../sandbox/software.ts";
 import { WorkspaceDoc } from "../workspaces/workspaces.ts";
 
-/** What the agent is told about its machine, by its Workspace's Level. */
-export const workspaceSection = (level: SandboxChoice): string => {
+const levelSection = (level: SandboxChoice): string => {
   switch (level) {
     case "none": {
       return [
@@ -36,6 +37,21 @@ export const workspaceSection = (level: SandboxChoice): string => {
   }
 };
 
+/** What the agent is told about its machine, by its Workspace's Level and Software. */
+export const workspaceSection = (
+  level: SandboxChoice,
+  software: readonly SoftwareId[] = []
+): string =>
+  [
+    levelSection(level),
+    ...(software.length === 0
+      ? []
+      : [
+          "Installed beyond the base system:",
+          ...software.map((id) => `- ${SOFTWARE[id].prompt}`),
+        ]),
+  ].join("\n");
+
 /** Raise `conversationId`'s Workspace to `level`; resolves with a sentence for the model, rejects on failure. */
 export type UpgradeWorkspace = (
   conversationId: ConversationId,
@@ -53,7 +69,7 @@ export const workspaceExtension = (upgrade: UpgradeWorkspace): Extension =>
           input.conversationId,
           context
         );
-        return workspaceSection(doc?.level ?? "none");
+        return workspaceSection(doc?.level ?? "none", doc?.software);
       }),
     ],
     tools: [
@@ -61,7 +77,7 @@ export const workspaceExtension = (upgrade: UpgradeWorkspace): Extension =>
         defineTool({
           name: "upgrade_workspace",
           description:
-            "Get a bigger machine for this conversation: `shell` adds a Linux shell with file tools, `desktop` adds a graphical desktop on top. Your files in /workspace carry over; installed packages do not. Use it only when the task needs it, and say why.",
+            "Get a bigger machine for this conversation: `shell` adds a Linux shell with file tools, `desktop` adds a graphical desktop on top. Your files in /workspace carry over, and so does the software the person picked; what you installed yourself does not. Use it only when the task needs it, and say why.",
           parameters: Type.Object({
             level: Type.Union(
               [Type.Literal("shell"), Type.Literal("desktop")],

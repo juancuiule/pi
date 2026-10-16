@@ -56,6 +56,7 @@ const capabilities: Capabilities = {
   ],
   skillProblems: [],
   mcp: [],
+  software: [],
 };
 
 const enabledOf = (settings: ReturnType<typeof newConversationSettings>) =>

@@ -17,6 +17,7 @@ import type {
   SandboxShell,
   WorkspaceMount,
 } from "../sandbox/sandbox.ts";
+import type { SoftwareId } from "../sandbox/software.ts";
 import { Workspaces, WorkspaceStorage } from "../workspaces/workspaces.ts";
 import type { StorageRef } from "../workspaces/workspaces.ts";
 
@@ -27,21 +28,42 @@ export interface LocalSandboxes {
   readonly live: Set<string>;
   /** Workspace storage directories created and not yet removed. */
   readonly stored: Set<string>;
+  /** Every Sandbox created, in order: its Level and the Software asked for. */
+  readonly created: {
+    readonly kind: SandboxKind;
+    readonly software: readonly SoftwareId[];
+  }[];
 }
 
-export const localSandboxes = (): LocalSandboxes => {
+export const localSandboxes = (
+  options: {
+    /** Runs inside `create` before the Sandbox exists — a stand-in for a slow or failing image build. */
+    readonly onCreate?: Effect.Effect<void, SandboxError>;
+  } = {}
+): LocalSandboxes => {
   const live = new Set<string>();
   const stored = new Set<string>();
+  const created: LocalSandboxes["created"] = [];
   // A Sandbox's id is its working directory: the Workspace's directory.
   const sandboxes = Layer.succeed(
     Sandboxes,
     Sandboxes.of({
-      create: (kind: SandboxKind, _name: string, files: WorkspaceMount) =>
+      create: (
+        kind: SandboxKind,
+        _name: string,
+        files: WorkspaceMount,
+        software: readonly SoftwareId[]
+      ) =>
         files.type === "directory"
-          ? Effect.sync(() => {
-              live.add(files.path);
-              return { kind, id: files.path } satisfies SandboxInfo;
-            })
+          ? (options.onCreate ?? Effect.void).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  live.add(files.path);
+                  created.push({ kind, software: [...software] });
+                  return { kind, id: files.path } satisfies SandboxInfo;
+                })
+              )
+            )
           : Effect.die(new Error("Local sandboxes mount directories only")),
       remove: (sandbox: SandboxInfo) =>
         Effect.sync(() => {
@@ -127,5 +149,6 @@ export const localSandboxes = (): LocalSandboxes => {
     ),
     live,
     stored,
+    created,
   };
 };

@@ -121,7 +121,7 @@ const ConversationsHandlers = HttpApiBuilder.group(
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
       .handle("upgrade", ({ params, payload }) =>
-        conversations.upgrade(params.id, payload.level).pipe(
+        conversations.upgrade(params.id, payload).pipe(
           Effect.catchTags({
             AgentError: Effect.die,
             SandboxError: Effect.die,

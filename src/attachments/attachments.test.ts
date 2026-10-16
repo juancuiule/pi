@@ -709,7 +709,7 @@ describe("attachments in a Sandbox", WORKERS, () => {
             Number(seat.id)
           );
           yield* seat.ask("one", [early.id]);
-          yield* seat.upgrade("shell");
+          yield* seat.upgrade({ level: "shell" });
           const late = yield* upload(
             "../late.txt",
             "in the shell",

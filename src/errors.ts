@@ -33,13 +33,17 @@ export class SkillNotFound extends Schema.TaggedError<SkillNotFound>()(
   { name: Schema.String, available: Schema.Array(Schema.String) }
 ) {}
 
-/** An Upgrade must raise the Level: none, then shell, then desktop. */
+/**
+ * An Upgrade must raise the Level (none, then shell, then desktop), add Software, or both. `reason` says why the
+ * Level cannot have the Software asked for.
+ */
 export class InvalidUpgrade extends Schema.TaggedError<InvalidUpgrade>()(
   "InvalidUpgrade",
   {
     id: Schema.Number,
     from: Schema.Literals(["none", "shell", "desktop"]),
     to: Schema.Literals(["none", "shell", "desktop"]),
+    reason: Schema.optionalKey(Schema.String),
   }
 ) {}
 

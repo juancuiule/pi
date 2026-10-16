@@ -9,6 +9,7 @@ import type {
 import {
   Clock,
   Context,
+  Deferred,
   Effect,
   Exit,
   Layer,
@@ -19,7 +20,12 @@ import {
 } from "effect";
 
 import { Agents } from "../agents/agents.ts";
-import type { AgentError, ConversationAgent, Seat } from "../agents/agents.ts";
+import type {
+  AgentError,
+  ConversationAgent,
+  Seat,
+  UpgradeRequest,
+} from "../agents/agents.ts";
 import type { SettingsChange } from "../agents/settings.ts";
 import type { AnswerInput, ApprovalChoice } from "../approvals.ts";
 import { Attachments } from "../attachments/attachments.ts";
@@ -27,27 +33,29 @@ import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
 import type { ConversationEvent, HistoryPage } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
-import { ApprovalNotFound, ConversationArchived } from "../errors.ts";
+import {
+  ApprovalNotFound,
+  ConversationArchived,
+  InvalidSetting,
+} from "../errors.ts";
 import type {
   AttachmentNotFound,
   AttachmentRefused,
   CapacityExhausted,
   ConversationNotFound,
-  InvalidSetting,
   InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
-import type {
-  SandboxChoice,
-  SandboxError,
-  SandboxKind,
-} from "../sandbox/sandbox.ts";
+import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
+import { checkSoftware, normalize } from "../sandbox/software.ts";
+import type { SoftwareId } from "../sandbox/software.ts";
 
 export type ConversationStatus = "running" | "idle" | "paused" | "archived";
 
 export interface ConversationSummary {
   readonly id: number;
   readonly sandbox: SandboxChoice;
+  readonly software: readonly SoftwareId[];
   readonly sandboxId?: string;
   readonly vncUrl?: string;
   readonly title: string;
@@ -105,6 +113,7 @@ const summaryOf = (
   return {
     id: Number(stored.id),
     sandbox: stored.level,
+    software: stored.software,
     ...(sandbox === undefined ? {} : { sandboxId: sandbox.id }),
     ...(sandbox?.vncUrl === undefined ? {} : { vncUrl: sandbox.vncUrl }),
     title: stored.meta.title,
@@ -134,6 +143,7 @@ export class Conversations extends Context.Service<
      */
     create(input: {
       readonly sandbox: SandboxChoice;
+      readonly software?: readonly SoftwareId[] | undefined;
       readonly prompt: string;
       readonly attachments?: readonly string[] | undefined;
       readonly requestId?: string | undefined;
@@ -166,12 +176,12 @@ export class Conversations extends Context.Service<
     /** Abort the current Run; the Seat stays, unless a Pause was waiting for the Run to end. */
     stop(id: number): Effect.Effect<void, AgentError | ConversationNotFound>;
     /**
-     * Raise a Conversation's Level. With a Seat its Sandbox is replaced now, if there is room; without one its next
-     * Seat gets it.
+     * Raise a Conversation's Level, add Software, or both. With a Seat its Sandbox is replaced now, if there is room
+     * for another of its Level; without one its next Seat gets it.
      */
     upgrade(
       id: number,
-      level: SandboxKind
+      request: UpgradeRequest
     ): Effect.Effect<ConversationSummary, SeatError | InvalidUpgrade>;
     /** Withdraw an Upgrade waiting for room (the agent's); true when one was waiting. */
     cancelWait(id: number): Effect.Effect<boolean>;
@@ -246,7 +256,33 @@ export class Conversations extends Context.Service<
         const attachments = yield* Attachments;
         const capacity = yield* Capacity;
         const live = new Map<number, Live>();
+        // A Seat mid-open, before `register` lands it in `live`: its Conversation is recorded already, so it
+        // reads as paused. Look-ups wait on the gate instead of opening a second Seat or writing its Workspace;
+        // a first Software build can hold it for minutes.
+        const opening = new Map<number, Deferred.Deferred<boolean>>();
         const layerScope = yield* Scope.Scope;
+
+        // Wake what waits on `id`'s open. The gate leaves `opening` before it completes, so a late look-up sees
+        // `live` (or nothing) rather than a spent gate.
+        const settleOpening = (id: number, gate: Deferred.Deferred<boolean>) =>
+          Effect.sync(() => {
+            if (opening.get(id) === gate) {
+              opening.delete(id);
+            }
+          }).pipe(Effect.andThen(Deferred.succeed(gate, true)));
+
+        // A Conversation's Live entry, waiting out a Seat mid-open; `undefined` when it truly has none.
+        const seatEntry = (id: number): Effect.Effect<Live | undefined> =>
+          Effect.suspend(() => {
+            const entry = live.get(id);
+            if (entry !== undefined) {
+              return Effect.succeed(entry);
+            }
+            const gate = opening.get(id);
+            return gate === undefined
+              ? Effect.succeed(entry)
+              : Deferred.await(gate).pipe(Effect.andThen(() => seatEntry(id)));
+          });
 
         // End a Seat: its scope closes, which aborts the conversation, removes its Sandbox and releases its claim.
         const close = (id: number) =>
@@ -315,6 +351,10 @@ export class Conversations extends Context.Service<
         // Register a Seat and track whether a Run is going; a Pause waiting for the Run closes it when it ends.
         const register = Effect.fnUntraced(function* (id: number, entry: Live) {
           live.set(id, entry);
+          const gate = opening.get(id);
+          if (gate !== undefined) {
+            yield* settleOpening(id, gate);
+          }
           const changes = yield* entry.seat.changes.pipe(Effect.orDie);
           yield* changes.pipe(
             Stream.runForEach(() =>
@@ -400,11 +440,18 @@ export class Conversations extends Context.Service<
         // first send just started.
         const resuming = yield* Semaphore.make(1);
 
-        const seatOf = (id: number) =>
+        const seatOf = (id: number): Effect.Effect<Live, SeatError> =>
           Effect.suspend(() => {
             const existing = live.get(id);
             if (existing !== undefined) {
               return Effect.succeed(existing);
+            }
+            const gate = opening.get(id);
+            if (gate !== undefined) {
+              // Its Seat is mid-open — this create's, or a resume's. Wait for it; a second open would leak the loser.
+              return Deferred.await(gate).pipe(
+                Effect.andThen(() => seatOf(id))
+              );
             }
             // Only a real resume waits: a live Seat, or a send racing one, never queues behind another
             // Conversation's open.
@@ -413,21 +460,38 @@ export class Conversations extends Context.Service<
               if (arrived !== undefined) {
                 return Effect.succeed(arrived);
               }
+              if (opening.has(id)) {
+                // A gate appeared while this waited on `resuming`; let go of it and wait on the gate instead.
+                return Effect.succeed(arrived);
+              }
               return Effect.gen(function* () {
                 const stored = yield* agents.get(asId(id));
                 if (stored.meta.archivedAt !== undefined) {
                   return yield* new ConversationArchived({ id });
                 }
+                const openGate = yield* Deferred.make<boolean>();
+                opening.set(id, openGate);
                 // `open` claims the Level's resource itself.
                 const { entry } = yield* seatIn("none", (claimed) =>
                   Effect.gen(function* () {
                     yield* claimed.assign(id);
                     return { id, seat: yield* agents.open(asId(id)) };
                   })
+                ).pipe(
+                  Effect.onExit((exit) =>
+                    Exit.isSuccess(exit)
+                      ? Effect.void
+                      : settleOpening(id, openGate)
+                  )
                 );
                 return entry;
               });
-            }).pipe(resuming.withPermit);
+            }).pipe(
+              resuming.withPermit,
+              Effect.flatMap((entry) =>
+                entry === undefined ? seatOf(id) : Effect.succeed(entry)
+              )
+            );
           });
 
         const send = Effect.fn("Conversations.send")(function* (
@@ -457,6 +521,7 @@ export class Conversations extends Context.Service<
 
         const create = Effect.fn("Conversations.create")(function* (input: {
           readonly sandbox: SandboxChoice;
+          readonly software?: readonly SoftwareId[] | undefined;
           readonly prompt: string;
           readonly attachments?: readonly string[] | undefined;
           readonly requestId?: string | undefined;
@@ -464,6 +529,17 @@ export class Conversations extends Context.Service<
           readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
         }) {
           const files = input.attachments ?? [];
+          // Before the claims in `seatIn`, so bad Software reads as a 400 even with no Seat or Level room left.
+          const softwareProblem = checkSoftware(
+            input.sandbox,
+            normalize(input.software ?? [])
+          );
+          if (softwareProblem !== undefined) {
+            return yield* new InvalidSetting({
+              name: "software",
+              reason: softwareProblem,
+            });
+          }
           // Reserved before anything is created, so two creates cannot both take an upload; staged again on failure.
           const reservation =
             files.length === 0 ? undefined : yield* attachments.reserve(files);
@@ -477,21 +553,34 @@ export class Conversations extends Context.Service<
                   reservation?.records.map((record) => record.name)
                 ),
                 level: input.sandbox,
+                software: input.software,
                 createdAt: yield* Clock.currentTimeMillis,
                 approvals: input.approvals,
                 settings: input.settings,
               });
-              yield* claimed.assign(Number(created));
-              yield* reservation?.assign(Number(created)) ?? Effect.void;
-              return {
-                id: Number(created),
-                seat: yield* agents.open(
-                  created,
-                  claimed.levelClaim === undefined
-                    ? {}
-                    : { levelClaim: claimed.levelClaim }
-                ),
-              };
+              const createdId = Number(created);
+              const gate = yield* Deferred.make<boolean>();
+              // Recorded already: until `register` lands the Seat in `live`, look-ups wait on this gate.
+              opening.set(createdId, gate);
+              return yield* Effect.gen(function* () {
+                yield* claimed.assign(createdId);
+                yield* reservation?.assign(createdId) ?? Effect.void;
+                return {
+                  id: createdId,
+                  seat: yield* agents.open(
+                    created,
+                    claimed.levelClaim === undefined
+                      ? {}
+                      : { levelClaim: claimed.levelClaim }
+                  ),
+                };
+              }).pipe(
+                Effect.onExit((exit) =>
+                  Exit.isSuccess(exit)
+                    ? Effect.void
+                    : settleOpening(createdId, gate)
+                )
+              );
             })
           ).pipe(Effect.onError(() => reservation?.release ?? Effect.void));
           // A Seat whose first prompt cannot be sent is paused: the Conversation stays, resumable.
@@ -516,7 +605,7 @@ export class Conversations extends Context.Service<
         });
 
         const pause = Effect.fn("Conversations.pause")(function* (id: number) {
-          const entry = live.get(id);
+          const entry = yield* seatEntry(id);
           if (entry === undefined) {
             yield* agents.get(asId(id));
             return;
@@ -544,19 +633,21 @@ export class Conversations extends Context.Service<
 
         const upgrade = Effect.fn("Conversations.upgrade")(function* (
           id: number,
-          level: SandboxKind
+          request: UpgradeRequest
         ) {
-          const entry = live.get(id);
+          const entry = yield* seatEntry(id);
           if (entry === undefined) {
             const stored = yield* agents.get(asId(id));
             if (stored.meta.archivedAt !== undefined) {
               return yield* new ConversationArchived({ id });
             }
-            yield* agents.upgrade(asId(id), level);
+            yield* agents.upgrade(asId(id), request);
           } else {
-            yield* entry.seat
-              .upgrade(level)
-              .pipe(Effect.catchTag("ClaimCancelled", Effect.die));
+            yield* entry.seat.upgrade(request).pipe(
+              // Held like a send's: `close` waits for the new Sandbox rather than reap the Seat under it.
+              entry.lock.withPermit,
+              Effect.catchTag("ClaimCancelled", Effect.die)
+            );
           }
           const stored = yield* agents.get(asId(id));
           return summaryOf(
@@ -569,7 +660,7 @@ export class Conversations extends Context.Service<
         const archive = Effect.fn("Conversations.archive")(function* (
           id: number
         ) {
-          const entry = live.get(id);
+          const entry = yield* seatEntry(id);
           if (entry !== undefined) {
             yield* entry.seat.stop;
             yield* close(id);
