@@ -9,6 +9,7 @@ import type {
 import {
   Clock,
   Context,
+  Deferred,
   Effect,
   Exit,
   Layer,
@@ -244,7 +245,33 @@ export class Conversations extends Context.Service<
         const attachments = yield* Attachments;
         const capacity = yield* Capacity;
         const live = new Map<number, Live>();
+        // A Seat mid-open, before `register` lands it in `live`: its Conversation is recorded already, so it
+        // reads as paused. Look-ups wait on the gate instead of opening a second Seat or writing its Workspace;
+        // a first Software build can hold it for minutes.
+        const opening = new Map<number, Deferred.Deferred<boolean>>();
         const layerScope = yield* Scope.Scope;
+
+        // Wake what waits on `id`'s open. The gate leaves `opening` before it completes, so a late look-up sees
+        // `live` (or nothing) rather than a spent gate.
+        const settleOpening = (id: number, gate: Deferred.Deferred<boolean>) =>
+          Effect.sync(() => {
+            if (opening.get(id) === gate) {
+              opening.delete(id);
+            }
+          }).pipe(Effect.andThen(Deferred.succeed(gate, true)));
+
+        // A Conversation's Live entry, waiting out a Seat mid-open; `undefined` when it truly has none.
+        const seatEntry = (id: number): Effect.Effect<Live | undefined> =>
+          Effect.suspend(() => {
+            const entry = live.get(id);
+            if (entry !== undefined) {
+              return Effect.succeed(entry);
+            }
+            const gate = opening.get(id);
+            return gate === undefined
+              ? Effect.succeed(entry)
+              : Deferred.await(gate).pipe(Effect.andThen(() => seatEntry(id)));
+          });
 
         // End a Seat: its scope closes, which aborts the conversation, removes its Sandbox and releases its claim.
         const close = (id: number) =>
@@ -313,6 +340,10 @@ export class Conversations extends Context.Service<
         // Register a Seat and track whether a Run is going; a Pause waiting for the Run closes it when it ends.
         const register = Effect.fnUntraced(function* (id: number, entry: Live) {
           live.set(id, entry);
+          const gate = opening.get(id);
+          if (gate !== undefined) {
+            yield* settleOpening(id, gate);
+          }
           const changes = yield* entry.seat.changes.pipe(Effect.orDie);
           yield* changes.pipe(
             Stream.runForEach(() =>
@@ -398,11 +429,18 @@ export class Conversations extends Context.Service<
         // first send just started.
         const resuming = yield* Semaphore.make(1);
 
-        const seatOf = (id: number) =>
+        const seatOf = (id: number): Effect.Effect<Live, SeatError> =>
           Effect.suspend(() => {
             const existing = live.get(id);
             if (existing !== undefined) {
               return Effect.succeed(existing);
+            }
+            const gate = opening.get(id);
+            if (gate !== undefined) {
+              // Its Seat is mid-open — this create's, or a resume's. Wait for it; a second open would leak the loser.
+              return Deferred.await(gate).pipe(
+                Effect.andThen(() => seatOf(id))
+              );
             }
             // Only a real resume waits: a live Seat, or a send racing one, never queues behind another
             // Conversation's open.
@@ -411,21 +449,38 @@ export class Conversations extends Context.Service<
               if (arrived !== undefined) {
                 return Effect.succeed(arrived);
               }
+              if (opening.has(id)) {
+                // A gate appeared while this waited on `resuming`; let go of it and wait on the gate instead.
+                return Effect.succeed(arrived);
+              }
               return Effect.gen(function* () {
                 const stored = yield* agents.get(asId(id));
                 if (stored.meta.archivedAt !== undefined) {
                   return yield* new ConversationArchived({ id });
                 }
+                const openGate = yield* Deferred.make<boolean>();
+                opening.set(id, openGate);
                 // `open` claims the Level's resource itself.
                 const { entry } = yield* seatIn("none", (claimed) =>
                   Effect.gen(function* () {
                     yield* claimed.assign(id);
                     return { id, seat: yield* agents.open(asId(id)) };
                   })
+                ).pipe(
+                  Effect.onExit((exit) =>
+                    Exit.isSuccess(exit)
+                      ? Effect.void
+                      : settleOpening(id, openGate)
+                  )
                 );
                 return entry;
               });
-            }).pipe(resuming.withPermit);
+            }).pipe(
+              resuming.withPermit,
+              Effect.flatMap((entry) =>
+                entry === undefined ? seatOf(id) : Effect.succeed(entry)
+              )
+            );
           });
 
         const send = Effect.fn("Conversations.send")(function* (
@@ -481,17 +536,29 @@ export class Conversations extends Context.Service<
                 approvals: input.approvals,
                 settings: input.settings,
               });
-              yield* claimed.assign(Number(created));
-              yield* reservation?.assign(Number(created)) ?? Effect.void;
-              return {
-                id: Number(created),
-                seat: yield* agents.open(
-                  created,
-                  claimed.levelClaim === undefined
-                    ? {}
-                    : { levelClaim: claimed.levelClaim }
-                ),
-              };
+              const createdId = Number(created);
+              const gate = yield* Deferred.make<boolean>();
+              // Recorded already: until `register` lands the Seat in `live`, look-ups wait on this gate.
+              opening.set(createdId, gate);
+              return yield* Effect.gen(function* () {
+                yield* claimed.assign(createdId);
+                yield* reservation?.assign(createdId) ?? Effect.void;
+                return {
+                  id: createdId,
+                  seat: yield* agents.open(
+                    created,
+                    claimed.levelClaim === undefined
+                      ? {}
+                      : { levelClaim: claimed.levelClaim }
+                  ),
+                };
+              }).pipe(
+                Effect.onExit((exit) =>
+                  Exit.isSuccess(exit)
+                    ? Effect.void
+                    : settleOpening(createdId, gate)
+                )
+              );
             })
           ).pipe(Effect.onError(() => reservation?.release ?? Effect.void));
           // A Seat whose first prompt cannot be sent is paused: the Conversation stays, resumable.
@@ -516,7 +583,7 @@ export class Conversations extends Context.Service<
         });
 
         const pause = Effect.fn("Conversations.pause")(function* (id: number) {
-          const entry = live.get(id);
+          const entry = yield* seatEntry(id);
           if (entry === undefined) {
             yield* agents.get(asId(id));
             return;
@@ -546,7 +613,7 @@ export class Conversations extends Context.Service<
           id: number,
           request: UpgradeRequest
         ) {
-          const entry = live.get(id);
+          const entry = yield* seatEntry(id);
           if (entry === undefined) {
             const stored = yield* agents.get(asId(id));
             if (stored.meta.archivedAt !== undefined) {
@@ -554,9 +621,11 @@ export class Conversations extends Context.Service<
             }
             yield* agents.upgrade(asId(id), request);
           } else {
-            yield* entry.seat
-              .upgrade(request)
-              .pipe(Effect.catchTag("ClaimCancelled", Effect.die));
+            yield* entry.seat.upgrade(request).pipe(
+              // Held like a send's: `close` waits for the new Sandbox rather than reap the Seat under it.
+              entry.lock.withPermit,
+              Effect.catchTag("ClaimCancelled", Effect.die)
+            );
           }
           const stored = yield* agents.get(asId(id));
           return summaryOf(
@@ -569,7 +638,7 @@ export class Conversations extends Context.Service<
         const archive = Effect.fn("Conversations.archive")(function* (
           id: number
         ) {
-          const entry = live.get(id);
+          const entry = yield* seatEntry(id);
           if (entry !== undefined) {
             yield* entry.seat.stop;
             yield* close(id);

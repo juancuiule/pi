@@ -1199,28 +1199,35 @@ export class Agents extends Context.Service<
             | { readonly scope: Scope.Closeable; readonly sandbox: SandboxInfo }
             | undefined;
           let levelClaim: Scope.Closeable | undefined;
+          let closing = false;
+          const upgrading = yield* Semaphore.make(1);
 
           // One finalizer, in this order: the conversation stops, no tool call can find the Sandbox any more,
-          // then the Sandbox goes and its claim is released.
+          // then the Sandbox goes and its claim is released. `closing` turns away an Upgrade queued behind it,
+          // and taking `upgrading` lets one still landing finish first: `machine` and `levelClaim` then name
+          // its new Sandbox and claim, and they close too.
           yield* Effect.addFinalizer(() =>
-            Effect.gen(function* () {
-              upgrades.delete(id);
-              seatSandboxes.delete(id);
-              yield* Effect.ignore(attempt(() => handle.abort(context)));
-              yield* Effect.ignore(
-                attempt(() =>
-                  harness.commit(async (tx) => {
-                    const doc = await tx.doc(SandboxDoc, id);
-                    delete doc.sandbox;
-                  }, context)
-                )
-              );
-              if (machine !== undefined) {
-                yield* Scope.close(machine.scope, Exit.void);
-              }
-              if (levelClaim !== undefined) {
-                yield* Scope.close(levelClaim, Exit.void);
-              }
+            Effect.suspend(() => {
+              closing = true;
+              return Effect.gen(function* () {
+                upgrades.delete(id);
+                seatSandboxes.delete(id);
+                yield* Effect.ignore(attempt(() => handle.abort(context)));
+                yield* Effect.ignore(
+                  attempt(() =>
+                    harness.commit(async (tx) => {
+                      const doc = await tx.doc(SandboxDoc, id);
+                      delete doc.sandbox;
+                    }, context)
+                  )
+                );
+                if (machine !== undefined) {
+                  yield* Scope.close(machine.scope, Exit.void);
+                }
+                if (levelClaim !== undefined) {
+                  yield* Scope.close(levelClaim, Exit.void);
+                }
+              }).pipe(upgrading.withPermit);
             })
           );
 
@@ -1331,7 +1338,6 @@ export class Agents extends Context.Service<
             machine = yield* attach(level, software);
           }
 
-          const upgrading = yield* Semaphore.make(1);
           const upgrade = Effect.fn("Seat.upgrade")(
             function* (
               request: UpgradeRequest,
@@ -1340,6 +1346,12 @@ export class Agents extends Context.Service<
                 readonly by?: "person" | "agent";
               } = {}
             ) {
+              // The Seat is closing: a Sandbox made now would have nothing left to close it.
+              if (closing) {
+                return yield* new SandboxError({
+                  message: `Conversation ${id}'s Seat is closing.`,
+                });
+              }
               const target = upgradeTarget(id, { level, software }, request);
               if (target instanceof InvalidUpgrade) {
                 return yield* target;
@@ -1382,13 +1394,19 @@ export class Agents extends Context.Service<
                     reconcileSkills(id, { refresh: [], removed: [] })
                   )
                 )
+              ).pipe(
+                // The new Sandbox is recorded; the old one and the claim it replaced go, whatever happened above.
+                Effect.ensuring(
+                  Effect.gen(function* () {
+                    if (previous !== undefined) {
+                      yield* Scope.close(previous.scope, Exit.void);
+                    }
+                    if (replaced !== undefined) {
+                      yield* Scope.close(replaced, Exit.void);
+                    }
+                  })
+                )
               );
-              if (previous !== undefined) {
-                yield* Scope.close(previous.scope, Exit.void);
-              }
-              if (replaced !== undefined) {
-                yield* Scope.close(replaced, Exit.void);
-              }
             },
             (effect) => upgrading.withPermit(effect)
           );

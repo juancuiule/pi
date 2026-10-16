@@ -21,6 +21,7 @@ import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { Skills } from "../skills/skills.ts";
 import { localSandboxes } from "./sandboxes.ts";
+import type { LocalSandboxes } from "./sandboxes.ts";
 
 export const fauxAgents = (
   responses: FauxResponseStep[],
@@ -39,6 +40,8 @@ export const fauxAgents = (
     readonly model?: AgentModel;
     /** Attachment limits; the layer provides those Attachments too (temporary), for tests to upload with. */
     readonly attachmentLimits?: Partial<AttachmentLimits>;
+    /** The Sandboxes/Workspaces backend; a fresh `localSandboxes()` by default. */
+    readonly sandboxes?: LocalSandboxes;
     /** Whether the faux model takes images; it does by default. */
     readonly vision?: boolean;
   } = {}
@@ -51,7 +54,7 @@ export const fauxAgents = (
   );
   models.setProvider(faux.provider);
   faux.setResponses(responses);
-  const sandboxes = localSandboxes();
+  const sandboxes = options.sandboxes ?? localSandboxes();
   return {
     faux,
     sandboxes,

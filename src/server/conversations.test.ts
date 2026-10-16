@@ -3,10 +3,12 @@ import {
   fauxAssistantMessage,
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
+import { localSandboxes } from "../testing/sandboxes.ts";
+import type { LocalSandboxes } from "../testing/sandboxes.ts";
 import { Conversations, titleOf } from "./conversations.ts";
 
 const defaults = {
@@ -16,10 +18,16 @@ const defaults = {
 
 const setup = (
   responses: FauxResponseStep[],
-  options: Partial<typeof defaults> & { readonly shells?: number } = {}
+  options: Partial<typeof defaults> & {
+    readonly shells?: number;
+    readonly sandboxes?: LocalSandboxes;
+  } = {}
 ) => {
-  const { shells = 3, ...rest } = options;
-  const agents = fauxAgents(responses, { limits: { shells } });
+  const { shells = 3, sandboxes, ...rest } = options;
+  const agents = fauxAgents(responses, {
+    limits: { shells },
+    ...(sandboxes === undefined ? {} : { sandboxes }),
+  });
   return {
     ...agents,
     layer: Conversations.layer({ ...defaults, ...rest }).pipe(
@@ -609,5 +617,185 @@ describe("Upgrade", () => {
     );
 
     expect(reply._tag).toBe("Some");
+  }, 30_000);
+});
+
+// `sandboxes.create` holds on `hold`: a stand-in for a Software image build, which `docker.ts` runs inside
+// create. The Conversation is recorded and listed while its Seat is still being made.
+const buildGate = ({ free = 0 } = {}) => {
+  const started = Deferred.makeUnsafe<boolean>();
+  const hold = Deferred.makeUnsafe<boolean>();
+  let builds = 0;
+  return {
+    started,
+    hold,
+    onCreate: Effect.suspend(() => {
+      builds += 1;
+      return builds <= free
+        ? Effect.void
+        : Deferred.succeed(started, true).pipe(
+            Effect.andThen(Deferred.await(hold))
+          );
+    }),
+  };
+};
+
+const shellHolders = Effect.gen(function* () {
+  const conversations = yield* Conversations;
+  const usage = yield* conversations.capacity;
+  return usage.find((each) => each.resource === "shell")?.holders ?? [];
+});
+
+describe("a Seat mid-open", () => {
+  it("a resume during a building open waits for it instead of taking a second Seat", async () => {
+    const { started, hold, onCreate } = buildGate();
+    const { layer, sandboxes } = setup([answer("hi")], {
+      sandboxes: localSandboxes({ onCreate }),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const creating = yield* conversations
+          .create({ sandbox: "shell", prompt: "hi" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const listed = yield* conversations.list;
+        expect(listed).toHaveLength(1);
+        const resuming = yield* conversations
+          .resume(listed[0]?.id ?? -1)
+          .pipe(Effect.forkChild);
+        yield* Effect.sleep("50 millis");
+        const during = yield* shellHolders;
+        yield* Deferred.succeed(hold, true);
+        return {
+          during,
+          created: yield* Fiber.join(creating),
+          resumed: yield* Fiber.join(resuming),
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    // One Seat, one Sandbox, one shell claim: the resume waited on the open.
+    expect(result.during).toStrictEqual([result.created.id]);
+    expect(sandboxes.created).toStrictEqual([{ kind: "shell", software: [] }]);
+    expect(result.resumed.id).toBe(result.created.id);
+    expect(result.resumed.sandboxId).toBeDefined();
+  });
+
+  it("an Upgrade during a building open lands on the opened Seat", async () => {
+    const { started, hold, onCreate } = buildGate();
+    const { layer, sandboxes } = setup([answer("hi")], {
+      sandboxes: localSandboxes({ onCreate }),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const creating = yield* conversations
+          .create({ sandbox: "shell", software: ["node"], prompt: "hi" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const listed = yield* conversations.list;
+        const upgrading = yield* conversations
+          .upgrade(listed[0]?.id ?? -1, { software: ["uv"] })
+          .pipe(Effect.forkChild);
+        yield* Effect.sleep("50 millis");
+        yield* Deferred.succeed(hold, true);
+        return {
+          created: yield* Fiber.join(creating),
+          upgraded: yield* Fiber.join(upgrading),
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    // The stored-Upgrade path never ran: the Seat's open committed first, then the Upgrade replaced its Sandbox.
+    expect(sandboxes.created).toStrictEqual([
+      { kind: "shell", software: ["node"] },
+      { kind: "shell", software: ["node", "uv"] },
+    ]);
+    expect(result.upgraded.software).toStrictEqual(["node", "uv"]);
+    expect(result.created.id).toBe(result.upgraded.id);
+  });
+
+  it("a Pause during a seated Upgrade's build waits, then closes the new Sandbox", async () => {
+    const { started, hold, onCreate } = buildGate({ free: 1 });
+    const { layer, sandboxes } = setup([answer("hi")], {
+      sandboxes: localSandboxes({ onCreate }),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "hi",
+        });
+        const upgrading = yield* conversations
+          .upgrade(created.id, { software: ["uv"] })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const pausing = yield* conversations
+          .pause(created.id)
+          .pipe(Effect.forkChild);
+        yield* Effect.sleep("50 millis");
+        // The Seat's old Sandbox is still there; the Pause is queued behind the Upgrade, not racing it.
+        const during = yield* shellHolders;
+        yield* Deferred.succeed(hold, true);
+        const upgraded = yield* Fiber.join(upgrading);
+        yield* Fiber.join(pausing);
+        return {
+          during,
+          upgraded,
+          after: yield* shellHolders,
+          listed: yield* conversations.list,
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(result.during).toStrictEqual([result.upgraded.id]);
+    expect(sandboxes.created).toStrictEqual([
+      { kind: "shell", software: [] },
+      { kind: "shell", software: ["uv"] },
+    ]);
+    // Nothing orphaned: both Sandboxes removed, every claim released, the Conversation paused.
+    expect(sandboxes.live.size).toBe(0);
+    expect(result.after).toStrictEqual([]);
+    expect(result.listed[0]).toMatchObject({
+      status: "paused",
+      software: ["uv"],
+    });
+  }, 30_000);
+
+  it("an archive during a building open waits, then removes the Seat and the files", async () => {
+    const { started, hold, onCreate } = buildGate();
+    const { layer, sandboxes } = setup([answer("hi")], {
+      sandboxes: localSandboxes({ onCreate }),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const creating = yield* conversations
+          .create({ sandbox: "shell", prompt: "hi" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const listed = yield* conversations.list;
+        const archiving = yield* conversations
+          .archive(listed[0]?.id ?? -1)
+          .pipe(Effect.forkChild);
+        yield* Effect.sleep("50 millis");
+        yield* Deferred.succeed(hold, true);
+        return {
+          created: yield* Fiber.await(creating),
+          archived: yield* Fiber.join(archiving),
+          listed: yield* conversations.list,
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(sandboxes.live.size).toBe(0);
+    expect(sandboxes.stored.size).toBe(0);
+    expect(result.listed[0]?.status).toBe("archived");
   }, 30_000);
 });

@@ -31,7 +31,12 @@ export interface LocalSandboxes {
   }[];
 }
 
-export const localSandboxes = (): LocalSandboxes => {
+export const localSandboxes = (
+  options: {
+    /** Runs inside `create` before the Sandbox exists — a stand-in for a slow image build. */
+    readonly onCreate?: Effect.Effect<void>;
+  } = {}
+): LocalSandboxes => {
   const live = new Set<string>();
   const stored = new Set<string>();
   const created: LocalSandboxes["created"] = [];
@@ -46,11 +51,15 @@ export const localSandboxes = (): LocalSandboxes => {
         software: readonly SoftwareId[]
       ) =>
         files.type === "directory"
-          ? Effect.sync(() => {
-              live.add(files.path);
-              created.push({ kind, software: [...software] });
-              return { kind, id: files.path } satisfies SandboxInfo;
-            })
+          ? (options.onCreate ?? Effect.void).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  live.add(files.path);
+                  created.push({ kind, software: [...software] });
+                  return { kind, id: files.path } satisfies SandboxInfo;
+                })
+              )
+            )
           : Effect.die(new Error("Local sandboxes mount directories only")),
       remove: (sandbox: SandboxInfo) =>
         Effect.sync(() => {
