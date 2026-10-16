@@ -11,6 +11,7 @@ import {
 
 import {
   ApprovalNotFound,
+  ArtifactNotFound,
   AttachmentNotFound,
   AttachmentRefused,
   CapacityExhausted,
@@ -37,6 +38,7 @@ export type {
 } from "@earendil-works/pi-durable";
 export {
   ApprovalNotFound,
+  ArtifactNotFound,
   AttachmentNotFound,
   AttachmentRefused,
   CapacityExhausted,
@@ -422,6 +424,82 @@ const AttachmentGroup = HttpApiGroup.make("attachments").add(
   })
 );
 
+/** One version of an artifact, without the page. */
+export const ArtifactVersionInfo = Schema.Struct({
+  version: Schema.Int,
+  title: Schema.String,
+  createdAt: Schema.Number,
+});
+
+/** A page the agent wrote for the person, with its versions (see docs/plans/artifacts.md). */
+export const ArtifactInfo = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  createdAt: Schema.Number,
+  updatedAt: Schema.Number,
+  versions: Schema.Array(ArtifactVersionInfo),
+});
+export type ArtifactInfo = typeof ArtifactInfo.Type;
+
+/** `conversation`: the artifact's conversation (every artifact has one, so left out it finds nothing). */
+const ArtifactScope = {
+  conversation: Schema.optionalKey(Schema.FiniteFromString),
+};
+
+const ArtifactVersionQuery = {
+  ...ArtifactScope,
+  /** The version to serve; the latest by default. */
+  v: Schema.optionalKey(Schema.FiniteFromString),
+};
+
+const NoArtifact = ArtifactNotFound.pipe(HttpApiSchema.status(404));
+
+const ArtifactGroup = HttpApiGroup.make("artifacts").add(
+  // A conversation's artifacts, with their versions.
+  HttpApiEndpoint.get("list", "/artifacts", {
+    query: { conversation: Schema.FiniteFromString },
+    success: Schema.Array(ArtifactInfo),
+  }),
+  // One artifact: its title and every version.
+  HttpApiEndpoint.get("view", "/artifacts/:id", {
+    params: { id: Schema.String },
+    query: ArtifactScope,
+    success: ArtifactInfo,
+    error: NoArtifact,
+  }),
+  // The page itself, with its sandboxing headers: the console shows it in a sandboxed iframe.
+  HttpApiEndpoint.get("render", "/artifacts/:id/render", {
+    params: { id: Schema.String },
+    query: ArtifactVersionQuery,
+    success: Schema.String.pipe(
+      HttpApiSchema.asText({ contentType: "text/html" })
+    ),
+    error: NoArtifact,
+  }),
+  // One version's source, for the panel's code tab.
+  HttpApiEndpoint.get("source", "/artifacts/:id/source", {
+    params: { id: Schema.String },
+    query: ArtifactVersionQuery,
+    success: Schema.Struct({ version: Schema.Int, html: Schema.String }),
+    error: NoArtifact,
+  }),
+  // Remove an artifact and its versions.
+  HttpApiEndpoint.delete("remove", "/artifacts/:id", {
+    params: { id: Schema.String },
+    query: ArtifactScope,
+    success: HttpApiSchema.NoContent,
+    error: NoArtifact,
+  }),
+  // The JavaScript files pages may load, an allowlist served from node_modules; no CDNs.
+  HttpApiEndpoint.get("lib", "/artifact-libs/:file", {
+    params: { file: Schema.String },
+    success: Schema.Uint8Array.pipe(
+      HttpApiSchema.asUint8Array({ contentType: "text/javascript" })
+    ),
+    error: NoArtifact,
+  })
+);
+
 const InfoGroup = HttpApiGroup.make("info").add(
   HttpApiEndpoint.get("get", "/info", {
     success: Schema.Struct({ model: Schema.String }),
@@ -438,5 +516,6 @@ const InfoGroup = HttpApiGroup.make("info").add(
 export const Api = HttpApi.make("effect-pi")
   .add(ConversationGroup)
   .add(AttachmentGroup)
+  .add(ArtifactGroup)
   .add(InfoGroup)
   .prefix("/api");

@@ -98,14 +98,14 @@ export class Artifacts extends Context.Service<
       id: string,
       update: ArtifactUpdate
     ): Effect.Effect<ArtifactRef, ArtifactNotFound | ArtifactRefused>;
-    /** The conversation's artifact: its title and every version. */
+    /** The conversation's artifact: its title and every version. `undefined` scopes to no conversation. */
     view(
-      conversationId: number,
+      conversationId: number | undefined,
       id: string
     ): Effect.Effect<ArtifactView, ArtifactNotFound>;
-    /** One version's page, the latest by default. */
+    /** One version's page, the latest by default. `undefined` scopes to no conversation. */
     html(
-      conversationId: number,
+      conversationId: number | undefined,
       id: string,
       version?: number
     ): Effect.Effect<
@@ -114,9 +114,9 @@ export class Artifacts extends Context.Service<
     >;
     /** The conversation's artifacts, oldest first. */
     list(conversationId: number): Effect.Effect<readonly ArtifactView[]>;
-    /** Delete the conversation's artifact and all its versions. */
+    /** Delete the conversation's artifact and all its versions. `undefined` scopes to no conversation. */
     remove(
-      conversationId: number,
+      conversationId: number | undefined,
       id: string
     ): Effect.Effect<void, ArtifactNotFound>;
   }
@@ -127,8 +127,11 @@ export class Artifacts extends Context.Service<
       Effect.sync(() => {
         const { records } = options;
 
-        const viewOf = (id: string, conversationId: number) => {
-          const artifact = records.get(id, conversationId);
+        const viewOf = (id: string, conversationId: number | undefined) => {
+          const artifact =
+            conversationId === undefined
+              ? undefined
+              : records.get(id, conversationId);
           return artifact === undefined
             ? undefined
             : ({
@@ -257,7 +260,10 @@ export class Artifacts extends Context.Service<
             }),
           html: (conversationId, id, version) =>
             Effect.suspend(() => {
-              if (records.get(id, conversationId) === undefined) {
+              if (
+                conversationId === undefined ||
+                records.get(id, conversationId) === undefined
+              ) {
                 return Effect.fail(new ArtifactNotFound({ id }));
               }
               const found =
@@ -280,7 +286,7 @@ export class Artifacts extends Context.Service<
             ),
           remove: (conversationId, id) =>
             Effect.suspend(() =>
-              records.remove(id, conversationId)
+              conversationId !== undefined && records.remove(id, conversationId)
                 ? Effect.void
                 : Effect.fail(new ArtifactNotFound({ id }))
             ),
