@@ -1,7 +1,8 @@
 "use client";
 
-import { ImageIcon } from "lucide-react";
-import { isValidElement, useState } from "react";
+import { CodeXml, ImageIcon, LoaderCircle, Waypoints } from "lucide-react";
+import { useTheme } from "next-themes";
+import { isValidElement, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -19,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -28,6 +30,124 @@ import {
 } from "@/components/ui/code-block";
 import { useHighlightedCode } from "@/hooks/use-highlighted-code";
 import { cn } from "@/lib/utils";
+
+/** Unique ids for mermaid's render calls, serial across concurrent diagrams. */
+let serial = 0;
+
+/** Loads mermaid (only when a diagram is first shown) and renders `code` to SVG. */
+const draw = async (
+  code: string,
+  theme: "dark" | "default"
+): Promise<{ readonly svg: string } | { readonly error: string }> => {
+  const { default: mermaid } = await import("mermaid");
+  mermaid.initialize({
+    startOnLoad: false,
+    // No HTML labels or click handlers: the text may come from a file the reader did not write.
+    securityLevel: "strict",
+    theme,
+  });
+  const id = `effect-pi-mermaid-${(serial += 1)}`;
+  try {
+    // Rendered into a detached element: a failed parse leaves no stray node in the document.
+    const rendered = await mermaid.render(
+      id,
+      code,
+      document.createElement("div")
+    );
+    return { svg: rendered.svg };
+  } catch (error) {
+    document.querySelector(`#d${id}`)?.remove();
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+};
+
+/** A ```mermaid fence, drawn as a diagram, with the source behind a toggle. Mermaid loads on the first one. */
+const MermaidDiagram = ({
+  code,
+  source,
+}: {
+  code: string;
+  /** The fence's highlighted lines, shown as the source view. */
+  source: ReactNode[];
+}) => {
+  const { resolvedTheme } = useTheme();
+  const [showSource, setShowSource] = useState(false);
+  const [result, setResult] = useState<
+    { readonly svg: string } | { readonly error: string } | undefined
+  >();
+
+  useEffect(() => {
+    let cancelled = false;
+    // The source changes as it streams in; only render once it settles briefly.
+    const timer = setTimeout(() => {
+      void (async () => {
+        const drawn = await draw(
+          code,
+          resolvedTheme === "dark" ? "dark" : "default"
+        );
+        if (!cancelled) {
+          setResult(drawn);
+        }
+      })();
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [code, resolvedTheme]);
+
+  const failed = result !== undefined && "error" in result;
+  let body: ReactNode;
+  if (showSource || failed) {
+    body = (
+      <>
+        <CodeBlockContent>{source}</CodeBlockContent>
+        {failed ? (
+          <p role="alert" className="text-destructive px-3 pb-3 text-xs">
+            This diagram cannot be rendered: {result.error}
+          </p>
+        ) : null}
+      </>
+    );
+  } else if (result === undefined) {
+    body = (
+      <p className="text-muted-foreground flex items-center gap-2 px-3 pb-3 text-xs">
+        <LoaderCircle
+          aria-hidden
+          className="size-3.5 motion-safe:animate-spin"
+        />
+        Drawing the diagram…
+      </p>
+    );
+  } else {
+    body = (
+      <div
+        className="overflow-x-auto px-3 pb-3 [&_svg]:max-w-full"
+        // oxlint-disable-next-line react/no-danger -- mermaid's own SVG at securityLevel "strict": no scripts, handlers or HTML labels
+        dangerouslySetInnerHTML={{ __html: result.svg }}
+      />
+    );
+  }
+
+  return (
+    <CodeBlock className="my-2">
+      <CodeBlockActions>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={showSource ? "Show diagram" : "Show source"}
+          aria-pressed={showSource}
+          title={showSource ? "Show diagram" : "Show source"}
+          onClick={() => setShowSource((shown) => !shown)}
+        >
+          {showSource ? <Waypoints /> : <CodeXml />}
+        </Button>
+        <CodeBlockCopyButton value={code} />
+      </CodeBlockActions>
+      {body}
+    </CodeBlock>
+  );
+};
 
 /** A fenced code block: `pre` receives its inner `code` element, carrying `language-*` and the text. */
 const CodeFence = ({ children }: { children?: ReactNode }) => {
@@ -50,6 +170,9 @@ const CodeFence = ({ children }: { children?: ReactNode }) => {
     ""
   );
   const lines = useHighlightedCode(text, language);
+  if (language === "mermaid") {
+    return <MermaidDiagram code={text} source={lines} />;
+  }
   return (
     <CodeBlock className="my-2">
       <CodeBlockActions>
