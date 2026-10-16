@@ -36,6 +36,7 @@ import { useMounted } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 
 import { SANDBOX_INFO } from "./sandbox-badge";
+import { StatusDot } from "./status-dot";
 
 /** A clock that re-renders every 30s so relative timestamps stay fresh. */
 const useNow = (): number => {
@@ -127,6 +128,7 @@ export const Sidebar = () => {
   const { data } = useConversations();
   const { data: info } = useInfo();
   const resuming = useConversationStore((store) => store.resuming);
+  const ended = useConversationStore((store) => store.ended);
   const now = useNow();
   const [showArchived, setShowArchived] = useState(false);
   const all = [...(data ?? [])].toSorted((a, b) => b.createdAt - a.createdAt);
@@ -181,6 +183,11 @@ export const Sidebar = () => {
                   )}
                 >
                   <span className="flex min-w-0 items-center gap-1.5">
+                    <StatusDot
+                      conversation={conversation}
+                      ended={ended[conversation.id] === true}
+                      resuming={isResuming}
+                    />
                     <span
                       className={cn(
                         "min-w-0 flex-1 truncate text-sm",
