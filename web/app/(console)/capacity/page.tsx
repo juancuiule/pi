@@ -69,12 +69,12 @@ const CapacityPage = () => {
                 aria-labelledby={`capacity-${resource.resource}`}
                 className="flex flex-col gap-2"
               >
-                <h3
+                <h2
                   id={`capacity-${resource.resource}`}
                   className="font-heading text-sm font-semibold"
                 >
                   {SECTION_LABEL[resource.resource]}
-                </h3>
+                </h2>
                 <p className="text-muted-foreground text-xs">
                   {resource.holders.length} of {resource.limit} in use
                   {full ? ` · ${shortageText(shortage)}` : ""}

@@ -21,12 +21,12 @@ const SettingsPage = () => {
             aria-labelledby="model-heading"
             className="flex flex-col gap-2"
           >
-            <h3
+            <h2
               id="model-heading"
               className="font-heading text-sm font-semibold"
             >
               Model
-            </h3>
+            </h2>
             <p
               className="text-muted-foreground truncate font-mono text-xs"
               title={info?.model}

@@ -189,7 +189,7 @@ const CodeFence = ({ children }: { children?: ReactNode }) => {
 };
 
 // Element overrides only — no typography plugin, no raw HTML (react-markdown's default).
-const components: Components = {
+export const markdownComponents: Components = {
   p: ({ children }) => (
     <p className="my-2 wrap-anywhere first:mt-0 last:mb-0">{children}</p>
   ),
@@ -370,7 +370,7 @@ const UntrustedImage = ({
 
 /** For a document whose author is not the reader: raw HTML is parsed then sanitized (scripts, media, handlers die there), links ask before opening, images load only when asked. */
 const untrustedComponents: Components = {
-  ...components,
+  ...markdownComponents,
   a: UntrustedLink,
   img: UntrustedImage,
 };
@@ -379,17 +379,22 @@ export const Markdown = ({
   children,
   className,
   untrusted = false,
+  components,
 }: {
   children: string;
   className?: string;
   untrusted?: boolean;
+  components?: Components;
 }) => (
   <div className={cn("text-prose", className)}>
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       // Without rehype-raw raw HTML shows as text; sanitize keeps <img>/<a> as elements for the overrides while killing scripts, media and handlers.
       rehypePlugins={untrusted ? [rehypeRaw, rehypeSanitize] : []}
-      components={untrusted ? untrustedComponents : components}
+      components={{
+        ...(untrusted ? untrustedComponents : markdownComponents),
+        ...components,
+      }}
     >
       {children}
     </ReactMarkdown>

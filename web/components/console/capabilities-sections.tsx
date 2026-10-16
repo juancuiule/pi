@@ -43,33 +43,35 @@ export const ExtensionsSection = ({
   extensions: Capabilities["extensions"] | undefined;
 }) => (
   <section aria-labelledby="extensions-heading" className="flex flex-col gap-2">
-    <h3 id="extensions-heading" className="font-heading text-sm font-semibold">
+    <h2 id="extensions-heading" className="font-heading text-sm font-semibold">
       Extensions
-    </h3>
+    </h2>
     <ul className="flex flex-col gap-1">
       {extensions?.map((extension) => (
         <li key={extension.name}>
           <Collapsible.Root>
-            <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
-              <ChevronRight
-                aria-hidden
-                className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90"
-              />
-              <span className="flex min-w-0 flex-col">
-                <span className="text-sm font-medium">{extension.name}</span>
-                <span className="text-muted-foreground text-xs">
-                  {extension.levels
-                    .map((level) => LEVEL_LABEL[level])
-                    .join(", ")}
-                  {" · "}
-                  {extension.tools.length} tools
-                  {extension.sections.length === 0
-                    ? ""
-                    : ` · prompt: ${extension.sections.join(", ")}`}
-                  {extension.hooks === 0 ? "" : ` · ${extension.hooks} hooks`}
+            <h3 className="text-sm font-medium">
+              <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
+                <ChevronRight
+                  aria-hidden
+                  className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90"
+                />
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-sm font-medium">{extension.name}</span>
+                  <span className="text-muted-foreground text-xs">
+                    {extension.levels
+                      .map((level) => LEVEL_LABEL[level])
+                      .join(", ")}
+                    {" · "}
+                    {extension.tools.length} tools
+                    {extension.sections.length === 0
+                      ? ""
+                      : ` · prompt: ${extension.sections.join(", ")}`}
+                    {extension.hooks === 0 ? "" : ` · ${extension.hooks} hooks`}
+                  </span>
                 </span>
-              </span>
-            </Collapsible.Trigger>
+              </Collapsible.Trigger>
+            </h3>
             <Collapsible.Panel>
               <div className="pl-9">
                 {extension.tools.length === 0 ? (
@@ -95,9 +97,9 @@ export const McpServersSection = ({
   mcp: Capabilities["mcp"] | undefined;
 }) => (
   <section aria-labelledby="mcp-heading" className="flex flex-col gap-2">
-    <h3 id="mcp-heading" className="font-heading text-sm font-semibold">
+    <h2 id="mcp-heading" className="font-heading text-sm font-semibold">
       MCP servers
-    </h3>
+    </h2>
     {mcp?.length === 0 ? (
       <p className="text-muted-foreground text-sm">
         No MCP servers configured.
@@ -107,37 +109,39 @@ export const McpServersSection = ({
       {mcp?.map((server) => (
         <li key={server.name}>
           <Collapsible.Root>
-            <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
-              <ChevronRight
-                aria-hidden
-                className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90"
-              />
-              <span
-                aria-hidden
-                className={cn(
-                  "size-2 shrink-0 rounded-full",
-                  server.status === "connected"
-                    ? "bg-success"
-                    : "bg-destructive"
-                )}
-              />
-              <span className="flex min-w-0 flex-col">
-                <span className="text-sm font-medium">
-                  {server.name}
-                  <span className="sr-only">
-                    {server.status === "connected"
-                      ? ", connected"
-                      : ", unavailable"}
+            <h3 className="text-sm font-medium">
+              <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
+                <ChevronRight
+                  aria-hidden
+                  className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90"
+                />
+                <span
+                  aria-hidden
+                  className={cn(
+                    "size-2 shrink-0 rounded-full",
+                    server.status === "connected"
+                      ? "bg-success"
+                      : "bg-destructive"
+                  )}
+                />
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-sm font-medium">
+                    {server.name}
+                    <span className="sr-only">
+                      {server.status === "connected"
+                        ? ", connected"
+                        : ", unavailable"}
+                    </span>
+                  </span>
+                  <span
+                    className="text-muted-foreground truncate font-mono text-xs"
+                    title={server.url}
+                  >
+                    {server.url}
                   </span>
                 </span>
-                <span
-                  className="text-muted-foreground truncate font-mono text-xs"
-                  title={server.url}
-                >
-                  {server.url}
-                </span>
-              </span>
-            </Collapsible.Trigger>
+              </Collapsible.Trigger>
+            </h3>
             <Collapsible.Panel>
               <div className="pl-9">
                 {server.error === undefined ? null : (
