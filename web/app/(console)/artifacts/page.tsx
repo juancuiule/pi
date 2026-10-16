@@ -4,7 +4,6 @@
 // panel the chat uses — the open pair lives in the URL (`?c&artifact[&v]`), so a refresh or a link shares it.
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import {
@@ -22,16 +21,7 @@ import {
 import { relativeTime } from "@/lib/format";
 import { useArtifacts, useConversations } from "@/lib/queries";
 import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
-
-/** A clock that re-renders every 30s so relative timestamps stay fresh, like the sidebar's. */
-const useNow = (): number => {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-  return now;
-};
+import { useNow } from "@/lib/use-now";
 
 const ArtifactsPage = () => {
   const router = useRouter();

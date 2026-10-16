@@ -51,7 +51,6 @@ const page = (callId: string, title: string, html: string) =>
     { stopReason: "toolUse" }
   );
 
-/** Poll `check` every 10ms until it holds. */
 const waitUntil = (check: Effect.Effect<boolean, unknown>) =>
   Effect.gen(function* () {
     while (!(yield* check)) {

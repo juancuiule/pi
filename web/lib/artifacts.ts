@@ -75,7 +75,7 @@ export const openArtifactOf = (params: {
   };
 };
 
-/** A conversation's title, or `#<id>` when it is not in the loaded list, like the Capacity page. */
+/** A conversation's title, or `#<id>` when it is not in the loaded list. */
 export const conversationTitleOf = (
   conversations: readonly ConversationSummary[] | undefined,
   id: number

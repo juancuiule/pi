@@ -485,7 +485,7 @@ export const ArtifactInfo = Schema.Struct({
 });
 export type ArtifactInfo = typeof ArtifactInfo.Type;
 
-/** `conversation`: the artifact's conversation (every artifact has one, so left out it finds nothing). */
+/** `conversation`: the artifact's conversation. Left out it finds nothing on the scoped reads; on `list` it narrows the collection to one conversation. */
 const ArtifactScope = {
   conversation: Schema.optionalKey(Schema.FiniteFromString),
 };
