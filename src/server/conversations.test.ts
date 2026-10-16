@@ -6,6 +6,8 @@ import {
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { InvalidSetting } from "../errors.ts";
+import { SandboxError } from "../sandbox/sandbox.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
 import type { LocalSandboxes } from "../testing/sandboxes.ts";
@@ -646,6 +648,17 @@ const shellHolders = Effect.gen(function* () {
   return usage.find((each) => each.resource === "shell")?.holders ?? [];
 });
 
+// `onCreate` fails as an image `docker build` would; `except` builds succeed, the rest fail.
+const failingBuild = ({ except = new Set<number>() } = {}) => {
+  let builds = 0;
+  return Effect.suspend(() => {
+    builds += 1;
+    return except.has(builds)
+      ? Effect.void
+      : Effect.fail(new SandboxError({ message: "image build failed" }));
+  });
+};
+
 describe("a Seat mid-open", () => {
   it("a resume during a building open waits for it instead of taking a second Seat", async () => {
     const { started, hold, onCreate } = buildGate();
@@ -747,6 +760,8 @@ describe("a Seat mid-open", () => {
         return {
           during,
           upgraded,
+          // Read before the layer closes at the end of this Effect: teardown removes them all.
+          sandboxesLive: sandboxes.live.size,
           after: yield* shellHolders,
           listed: yield* conversations.list,
         };
@@ -759,7 +774,7 @@ describe("a Seat mid-open", () => {
       { kind: "shell", software: ["uv"] },
     ]);
     // Nothing orphaned: both Sandboxes removed, every claim released, the Conversation paused.
-    expect(sandboxes.live.size).toBe(0);
+    expect(result.sandboxesLive).toBe(0);
     expect(result.after).toStrictEqual([]);
     expect(result.listed[0]).toMatchObject({
       status: "paused",
@@ -789,13 +804,107 @@ describe("a Seat mid-open", () => {
         return {
           created: yield* Fiber.await(creating),
           archived: yield* Fiber.join(archiving),
+          // Read before the layer closes at the end of this Effect: teardown removes them all.
+          sandboxesLive: sandboxes.live.size,
+          sandboxesStored: sandboxes.stored.size,
           listed: yield* conversations.list,
         };
       }).pipe(Effect.provide(layer))
     );
 
-    expect(sandboxes.live.size).toBe(0);
-    expect(sandboxes.stored.size).toBe(0);
+    expect(result.sandboxesLive).toBe(0);
+    expect(result.sandboxesStored).toBe(0);
     expect(result.listed[0]?.status).toBe("archived");
   }, 30_000);
+});
+
+describe("a failed build", () => {
+  it("leaves a created Conversation paused and claim-free, and its gate settled", async () => {
+    const { layer, sandboxes } = setup([answer("hi")], {
+      sandboxes: localSandboxes({
+        onCreate: failingBuild({ except: new Set([2]) }),
+      }),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations
+          .create({ sandbox: "shell", prompt: "hi" })
+          .pipe(Effect.flip);
+        const listed = yield* conversations.list;
+        const holders = yield* shellHolders;
+        // The open's gate settled on the failure: a resume opens a Seat instead of hanging.
+        const resumed = yield* conversations.resume(listed[0]?.id ?? -1);
+        return {
+          created,
+          listed,
+          holders,
+          resumed,
+          sandboxesLive: sandboxes.live.size,
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(result.created).toBeInstanceOf(SandboxError);
+    expect(result.listed[0]?.status).toBe("paused");
+    expect(result.holders).toStrictEqual([]);
+    expect(result.resumed.sandboxId).toBeDefined();
+    expect(result.sandboxesLive).toBe(1);
+  });
+
+  it("on a seated Upgrade keeps the Seat's Sandbox, claims and Software", async () => {
+    const { layer, sandboxes } = setup([answer("hi"), answer("more")], {
+      sandboxes: localSandboxes({
+        onCreate: failingBuild({ except: new Set([1]) }),
+      }),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "hi",
+        });
+        const upgraded = yield* conversations
+          .upgrade(created.id, { software: ["uv"] })
+          .pipe(Effect.flip);
+        // The Seat is unharmed: its old Sandbox still serves sends.
+        yield* conversations.send(created.id, "more");
+        return {
+          upgraded,
+          holders: yield* shellHolders,
+          listed: yield* conversations.list,
+          sandboxesLive: sandboxes.live.size,
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(result.upgraded).toBeInstanceOf(SandboxError);
+    expect(sandboxes.created).toStrictEqual([{ kind: "shell", software: [] }]);
+    expect(result.sandboxesLive).toBe(1);
+    expect(result.holders).toStrictEqual([result.listed[0]?.id]);
+    expect(result.listed[0]?.software).toStrictEqual([]);
+  });
+
+  it("rejects Software the Level forbids before claiming a Seat or Level", async () => {
+    const { layer, sandboxes } = setup([answer("hi")], { shells: 1 });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        yield* conversations.create({ sandbox: "shell", prompt: "hi" });
+        // The one shell is taken, but the invalid Software must read as a 400, not a 409.
+        const rejected = yield* conversations
+          .create({ sandbox: "shell", software: ["chrome"], prompt: "hi" })
+          .pipe(Effect.flip);
+        return { rejected, listed: yield* conversations.list };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(result.rejected).toBeInstanceOf(InvalidSetting);
+    expect(result.listed).toHaveLength(1);
+    expect(sandboxes.created).toStrictEqual([{ kind: "shell", software: [] }]);
+  });
 });

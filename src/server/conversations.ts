@@ -33,17 +33,21 @@ import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
-import { ApprovalNotFound, ConversationArchived } from "../errors.ts";
+import {
+  ApprovalNotFound,
+  ConversationArchived,
+  InvalidSetting,
+} from "../errors.ts";
 import type {
   AttachmentNotFound,
   AttachmentRefused,
   CapacityExhausted,
   ConversationNotFound,
-  InvalidSetting,
   InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
+import { checkSoftware, normalize } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
 
 export type ConversationStatus = "running" | "idle" | "paused" | "archived";
@@ -518,6 +522,17 @@ export class Conversations extends Context.Service<
           readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
         }) {
           const files = input.attachments ?? [];
+          // Before the claims in `seatIn`, so bad Software reads as a 400 even with no Seat or Level room left.
+          const softwareProblem = checkSoftware(
+            input.sandbox,
+            normalize(input.software ?? [])
+          );
+          if (softwareProblem !== undefined) {
+            return yield* new InvalidSetting({
+              name: "software",
+              reason: softwareProblem,
+            });
+          }
           // Reserved before anything is created, so two creates cannot both take an upload; staged again on failure.
           const reservation =
             files.length === 0 ? undefined : yield* attachments.reserve(files);

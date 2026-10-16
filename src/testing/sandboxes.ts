@@ -9,6 +9,7 @@ import { Effect, Layer } from "effect";
 
 import { Sandboxes } from "../sandbox/sandbox.ts";
 import type {
+  SandboxError,
   SandboxInfo,
   SandboxKind,
   WorkspaceMount,
@@ -33,8 +34,8 @@ export interface LocalSandboxes {
 
 export const localSandboxes = (
   options: {
-    /** Runs inside `create` before the Sandbox exists — a stand-in for a slow image build. */
-    readonly onCreate?: Effect.Effect<void>;
+    /** Runs inside `create` before the Sandbox exists — a stand-in for a slow or failing image build. */
+    readonly onCreate?: Effect.Effect<void, SandboxError>;
   } = {}
 ): LocalSandboxes => {
   const live = new Set<string>();

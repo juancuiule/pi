@@ -90,7 +90,15 @@ export const AddSoftwareDialog = ({
     picked
   );
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) {
+          setPicked([]);
+        }
+        onOpenChange(next);
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Add software</AlertDialogTitle>
@@ -122,10 +130,8 @@ export const AddSoftwareDialog = ({
               upgrade.mutate(
                 { id: conversation.id, software: toAdd },
                 {
-                  onSuccess: () => {
-                    setPicked([]);
-                    toast.success(`Added ${labels}`, { id: progress });
-                  },
+                  onSuccess: () =>
+                    toast.success(`Added ${labels}`, { id: progress }),
                   onError: (error) =>
                     toast.error(error.message, { id: progress }),
                 }
