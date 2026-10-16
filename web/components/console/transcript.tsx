@@ -35,6 +35,7 @@ import {
 import { isNearBottom, userParts } from "@/lib/transcript";
 import { unansweredNote } from "@/lib/unanswered-note";
 
+import { ArtifactCard } from "./artifact-card";
 import { SentChip } from "./attachment-chip";
 import { Markdown } from "./markdown";
 import { ToolCall } from "./tool-call";
@@ -167,7 +168,12 @@ const Step = ({
     return <Thinking thinking={block.thinking} streaming={streaming} />;
   }
   if (block.type === "toolCall") {
-    return <ToolCall call={block} state={state} />;
+    // Artifact calls get a card that opens the page beside the chat, not an inspectable trace row.
+    return block.name.startsWith("artifact_") ? (
+      <ArtifactCard call={block} state={state} />
+    ) : (
+      <ToolCall call={block} state={state} />
+    );
   }
   return null;
 };
