@@ -25,6 +25,15 @@ export const useConversations = () =>
     refetchInterval: 2000,
   });
 
+/** Every artifact across conversations, most recently updated first, for the /artifacts page. */
+export const useArtifacts = () =>
+  useQuery({
+    queryKey: ["artifacts"],
+    queryFn: () => runApi((c) => c.artifacts.list({ query: {} })),
+    // A run can write a page between polls of the conversation list.
+    refetchInterval: 2000,
+  });
+
 export const useInfo = () =>
   useQuery({
     queryKey: ["info"],

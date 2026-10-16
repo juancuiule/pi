@@ -4,6 +4,7 @@ import type { ConversationSummary } from "effect-pi/api";
 import {
   BookOpen,
   Gauge,
+  LayoutTemplate,
   LoaderCircle,
   MessageSquare,
   Monitor,
@@ -56,6 +57,7 @@ const THEMES = [
 const PAGES = [
   { href: "/", label: "Conversations", icon: MessageSquare },
   { href: "/skills", label: "Skills", icon: BookOpen },
+  { href: "/artifacts", label: "Artifacts", icon: LayoutTemplate },
   { href: "/capacity", label: "Capacity", icon: Gauge },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
