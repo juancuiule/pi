@@ -38,6 +38,8 @@ export const fauxAgents = (
     readonly limits?: Partial<Limits>;
     /** The configured model; the faux provider has only `faux/faux-1`, the default. */
     readonly model?: AgentModel;
+    /** The faux model's context window (128k by default); small values drive threshold compaction. */
+    readonly contextWindow?: number;
     /** Attachment limits; the layer provides those Attachments too (temporary), for tests to upload with. */
     readonly attachmentLimits?: Partial<AttachmentLimits>;
     /** Whether the faux model takes images; it does by default. */
@@ -46,8 +48,18 @@ export const fauxAgents = (
 ) => {
   const models = createModels();
   const faux = fauxProvider(
-    options.vision === false
-      ? { models: [{ id: "faux-1", input: ["text"] }] }
+    options.vision === false || options.contextWindow !== undefined
+      ? {
+          models: [
+            {
+              id: "faux-1",
+              ...(options.vision === false ? { input: ["text" as const] } : {}),
+              ...(options.contextWindow === undefined
+                ? {}
+                : { contextWindow: options.contextWindow }),
+            },
+          ],
+        }
       : {}
   );
   models.setProvider(faux.provider);

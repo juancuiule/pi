@@ -171,6 +171,11 @@ const ConversationsHandlers = HttpApiBuilder.group(
           Effect.catchTag("AgentError", Effect.die)
         )
       )
+      .handle("history", ({ params, query }) =>
+        conversations
+          .history(params.id, { before: query.before, limit: query.limit })
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
       .handle("approvals", ({ params, payload }) =>
         conversations
           .decide(params.id, payload.key, payload.decision)
