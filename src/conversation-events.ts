@@ -3,6 +3,7 @@
 import type {
   AgentEvent,
   EntryId,
+  EntryRecord,
   SubmissionRecord,
 } from "@earendil-works/pi-durable";
 
@@ -15,10 +16,18 @@ export interface UnansweredInput {
   readonly detail?: Unanswered["detail"];
 }
 
-/** The first event: pi-durable's snapshot, plus the conversation's unanswered inputs. */
+/** The first event: pi-durable's snapshot, plus whether earlier entries exist and the unanswered inputs. */
 export type ConversationSnapshot = Extract<AgentEvent, { type: "snapshot" }> & {
+  /** True when a head marker (a compaction or reset) hides entries; the history endpoint returns them. */
+  readonly earlier: boolean;
   readonly unanswered: readonly UnansweredInput[];
 };
+
+/** One page of transcript entries from before the active context, oldest first; `earlier` when more exist before them. */
+export interface HistoryPage {
+  readonly entries: readonly EntryRecord[];
+  readonly earlier: boolean;
+}
 
 export type ConversationEvent =
   | Exclude<AgentEvent, { type: "snapshot" }>

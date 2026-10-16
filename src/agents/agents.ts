@@ -63,6 +63,7 @@ import { Capacity } from "../capacity.ts";
 import type { Claim, ClaimCancelled } from "../capacity.ts";
 import type {
   ConversationEvent,
+  HistoryPage,
   UnansweredInput,
 } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
@@ -136,6 +137,19 @@ export class AgentError extends Schema.TaggedError<AgentError>()("AgentError", {
 
 const attempt = <A>(run: () => Promise<A>) =>
   Effect.tryPromise({ try: run, catch: (cause) => new AgentError({ cause }) });
+
+/** History pages are capped so a transcript cannot be pulled whole in one request. */
+const HISTORY_PAGE = 200;
+
+// The hidden range is everything on the chain before the latest head marker's first retained entry; its `head`
+// always resolves to a stored numeric id (`"self"` is rewritten when the marker is appended).
+const earlierBound = async (
+  tx: Tx,
+  id: ConversationId
+): Promise<EntryId | undefined> => {
+  const head = await tx.latestHeadMarker(id);
+  return head === undefined ? undefined : ((Number(head.head) - 1) as EntryId);
+};
 
 export interface ToolInfo {
   readonly name: string;
@@ -483,6 +497,14 @@ export class Agents extends Context.Service<
       Stream.Stream<ConversationEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
+    /**
+     * Transcript entries the latest head marker (a compaction or reset) hides from the active context, oldest
+     * first. `before` pages back: pass the oldest id the caller holds to get the page that precedes it.
+     */
+    history(
+      id: ConversationId,
+      options?: { before?: number | undefined; limit?: number | undefined }
+    ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -1634,6 +1656,59 @@ export class Agents extends Context.Service<
           );
         });
 
+        const hasEarlier = (id: ConversationId) =>
+          harness.commit(async (tx) => {
+            const bound = await earlierBound(tx, id);
+            if (bound === undefined) {
+              return false;
+            }
+            const page = await tx.scanEntries(
+              { conversationId: id, maxEntryId: bound },
+              1
+            );
+            return page.items.length > 0;
+          }, context);
+
+        const history = Effect.fn("Agents.history")(function* (
+          id: ConversationId,
+          range: {
+            before?: number | undefined;
+            limit?: number | undefined;
+          } = {}
+        ) {
+          yield* handleOf(id);
+          return yield* attempt((): Promise<HistoryPage> =>
+            harness.commit(async (tx) => {
+              const bound = await earlierBound(tx, id);
+              if (bound === undefined) {
+                return { entries: [], earlier: false };
+              }
+              const limit = Math.min(
+                Math.max(range.limit ?? HISTORY_PAGE, 1),
+                HISTORY_PAGE
+              );
+              const max = (
+                range.before === undefined
+                  ? bound
+                  : Math.min(range.before - 1, bound)
+              ) as EntryId;
+              // One extra row decides whether another page precedes this one; it is left off the page.
+              const page = await tx.scanEntries(
+                { conversationId: id, maxEntryId: max },
+                limit + 1
+              );
+              const earlier = page.items.length > limit;
+              return {
+                entries: (earlier
+                  ? page.items.slice(0, limit)
+                  : page.items
+                ).toReversed(),
+                earlier,
+              };
+            }, context)
+          );
+        });
+
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
         ) {
@@ -1652,16 +1727,20 @@ export class Agents extends Context.Service<
                 watchEvents(harness, id, context)
               );
               // Read after the watch attached: an input settled since arrives as a `submission` event as well.
-              const unanswered = yield* Effect.exit(
-                attempt(() => unansweredInputs(id))
+              const settled = yield* Effect.exit(
+                attempt(async () => ({
+                  earlier: await hasEarlier(id),
+                  unanswered: await unansweredInputs(id),
+                }))
               );
-              if (Exit.isFailure(unanswered)) {
+              if (Exit.isFailure(settled)) {
                 yield* Effect.promise(() => watch.stop());
-                return yield* Effect.failCause(unanswered.cause);
+                return yield* Effect.failCause(settled.cause);
               }
               Queue.offerUnsafe(queue, {
                 ...watch.snapshot,
-                unanswered: unanswered.value,
+                earlier: settled.value.earlier,
+                unanswered: settled.value.unanswered,
               });
               // A watch that falls behind replaces its undelivered batches with a fresh snapshot, which gets the
               // unanswered inputs read again. Deliveries are awaited one at a time, so the order holds; a read that
@@ -1670,7 +1749,11 @@ export class Agents extends Context.Service<
                 const delivered = await Promise.all(
                   batch.map(async (event): Promise<ConversationEvent> =>
                     event.type === "snapshot"
-                      ? { ...event, unanswered: await unansweredInputs(id) }
+                      ? {
+                          ...event,
+                          earlier: await hasEarlier(id),
+                          unanswered: await unansweredInputs(id),
+                        }
                       : event
                   )
                 );
@@ -1858,6 +1941,7 @@ export class Agents extends Context.Service<
           archive,
           unarchive,
           events,
+          history,
         });
       })
     );

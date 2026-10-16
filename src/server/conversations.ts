@@ -25,7 +25,7 @@ import type { AnswerInput, ApprovalChoice } from "../approvals.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
-import type { ConversationEvent } from "../conversation-events.ts";
+import type { ConversationEvent, HistoryPage } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
 import { ApprovalNotFound, ConversationArchived } from "../errors.ts";
 import type {
@@ -206,6 +206,11 @@ export class Conversations extends Context.Service<
       Stream.Stream<ConversationEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
+    /** Entries a head marker hides from the active context, oldest first; `before` pages back from an entry id. */
+    history(
+      id: number,
+      options?: { before?: number | undefined }
+    ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
     /** Decide a call waiting for approval; only a Seat has any, so without one every key is unknown. */
     decide(
       id: number,
@@ -634,6 +639,7 @@ export class Conversations extends Context.Service<
           archive,
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),
+          history: (id, range) => agents.history(asId(id), range),
           agent: (id) => agents.agent(asId(id)),
           configure: (id, change) => agents.configure(asId(id), change),
           reset: (id) => agents.reset(asId(id)),
