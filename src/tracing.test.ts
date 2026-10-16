@@ -6,7 +6,11 @@ import { Effect, Tracer } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { ask, callTool, fauxAgents } from "./testing/faux.ts";
-import { redactAttachments, traceJson } from "./tracing.ts";
+import {
+  redactArtifactArguments,
+  redactAttachments,
+  traceJson,
+} from "./tracing.ts";
 
 /** A tracer that keeps every span it creates. */
 const recordingTracer = () => {
@@ -148,6 +152,47 @@ describe(traceJson, () => {
     expect(traceJson([image])).toBe(
       '[{"type":"image","data":"[1000 base64 characters]","mimeType":"image/png"}]'
     );
+  });
+});
+
+describe("artifact tool arguments", () => {
+  it("leaves a page's HTML out of the traced input", async () => {
+    const { spans, tracer } = recordingTracer();
+    const { layer } = fauxAgents([
+      callTool("artifact_create", {
+        title: "Report",
+        html: "<h1>secret page</h1>",
+      }),
+      fauxAssistantMessage([fauxText("done")]),
+    ]);
+    await Effect.runPromise(
+      ask("Make a page.").pipe(
+        Effect.provide(layer),
+        Effect.provideService(Tracer.Tracer, tracer)
+      )
+    );
+    const call = spans.find((span) => span.name === "tool artifact_create");
+    const input = String(call?.attributes.get("langfuse.observation.input"));
+    expect(input).not.toContain("secret page");
+    expect(input).toContain("Report");
+    expect(input).toContain("[20 characters of HTML]");
+  });
+});
+
+describe(redactArtifactArguments, () => {
+  it("replaces a page and each edit's text by their sizes", () => {
+    const redacted = redactArtifactArguments("artifact_update", {
+      id: "art_1",
+      edits: [{ find: "a find", replace: "a replace" }],
+      title: "kept",
+    });
+    const json = JSON.stringify(redacted);
+    expect(json).toBe(
+      '{"id":"art_1","edits":[{"find":"[6 characters of HTML]","replace":"[9 characters of HTML]"}],"title":"kept"}'
+    );
+    expect(
+      redactArtifactArguments("calculate", { html: "kept" })
+    ).toStrictEqual({ html: "kept" });
   });
 });
 
