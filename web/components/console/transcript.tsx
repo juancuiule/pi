@@ -539,7 +539,9 @@ const Earlier = ({
           type="button"
           disabled={loading || conversation === undefined}
           onClick={() => {
-            void showEarlier(conversation ?? 0, entries[0]?.id);
+            if (conversation !== undefined) {
+              void showEarlier(conversation, state.earlier.frontier);
+            }
           }}
           className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 mx-auto flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors outline-none focus-visible:ring-3 disabled:opacity-60"
         >

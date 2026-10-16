@@ -1656,8 +1656,8 @@ export class Agents extends Context.Service<
           );
         });
 
-        const hasEarlier = (id: ConversationId) =>
-          harness.commit(async (tx) => {
+        const earlierOf = (id: ConversationId) =>
+          harness.commit(async (tx): Promise<number | false> => {
             const bound = await earlierBound(tx, id);
             if (bound === undefined) {
               return false;
@@ -1666,7 +1666,7 @@ export class Agents extends Context.Service<
               { conversationId: id, maxEntryId: bound },
               1
             );
-            return page.items.length > 0;
+            return page.items.length === 0 ? false : bound;
           }, context);
 
         const history = Effect.fn("Agents.history")(function* (
@@ -1683,10 +1683,10 @@ export class Agents extends Context.Service<
               if (bound === undefined) {
                 return { entries: [], earlier: false };
               }
-              const limit = Math.min(
-                Math.max(range.limit ?? HISTORY_PAGE, 1),
-                HISTORY_PAGE
-              );
+              const requested = range.limit ?? Number.NaN;
+              const limit = Number.isFinite(requested)
+                ? Math.min(Math.max(requested, 1), HISTORY_PAGE)
+                : HISTORY_PAGE;
               const max = (
                 range.before === undefined
                   ? bound
@@ -1729,7 +1729,7 @@ export class Agents extends Context.Service<
               // Read after the watch attached: an input settled since arrives as a `submission` event as well.
               const settled = yield* Effect.exit(
                 attempt(async () => ({
-                  earlier: await hasEarlier(id),
+                  earlier: await earlierOf(id),
                   unanswered: await unansweredInputs(id),
                 }))
               );
@@ -1751,7 +1751,7 @@ export class Agents extends Context.Service<
                     event.type === "snapshot"
                       ? {
                           ...event,
-                          earlier: await hasEarlier(id),
+                          earlier: await earlierOf(id),
                           unanswered: await unansweredInputs(id),
                         }
                       : event

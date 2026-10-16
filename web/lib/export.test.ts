@@ -23,7 +23,13 @@ const summary: ConversationSummary = {
 
 const state: ConversationState = {
   pending: [],
-  earlier: { entries: [], hasMore: false, loading: false },
+  earlier: {
+    entries: [],
+    frontier: undefined,
+    bound: false,
+    hasMore: false,
+    loading: false,
+  },
   entries: [
     entry(1, [
       {
@@ -131,6 +137,27 @@ describe(toJsonl, () => {
 
   it("keeps image blocks' base64 data", () => {
     expect(toJsonl(state)).toContain('"data":"AAAA"');
+  });
+
+  it("includes paged-in earlier entries before the active transcript", () => {
+    const withHistory: ConversationState = {
+      ...state,
+      earlier: {
+        entries: [
+          entry(0, [{ role: "user", content: "the very first message" }]),
+        ],
+        frontier: 0,
+        bound: 1,
+        hasMore: false,
+        loading: false,
+      },
+    };
+    const [first] = toJsonl(withHistory).split("\n");
+    expect((JSON.parse(first ?? "") as EntryRecord).id).toBe(0);
+    const md = toMarkdown(summary, withHistory);
+    expect(md.indexOf("the very first message")).toBeLessThan(
+      md.indexOf("List /etc")
+    );
   });
 });
 

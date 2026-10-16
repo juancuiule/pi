@@ -164,7 +164,7 @@ const ConversationsHandlers = HttpApiBuilder.group(
       )
       .handle("history", ({ params, query }) =>
         conversations
-          .history(params.id, { before: query.before })
+          .history(params.id, { before: query.before, limit: query.limit })
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
       .handle("approvals", ({ params, payload }) =>

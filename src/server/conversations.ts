@@ -209,7 +209,7 @@ export class Conversations extends Context.Service<
     /** Entries a head marker hides from the active context, oldest first; `before` pages back from an entry id. */
     history(
       id: number,
-      options?: { before?: number | undefined }
+      options?: { before?: number | undefined; limit?: number | undefined }
     ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
     /** Decide a call waiting for approval; only a Seat has any, so without one every key is unknown. */
     decide(

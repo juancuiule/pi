@@ -45,8 +45,16 @@ export interface PendingInput {
  * which each snapshot replaces wholesale; this slice survives them.
  */
 export interface EarlierHistory {
-  /** Pages fetched so far plus entries a fresh head marker displaced, oldest first. */
+  /** Pages fetched so far plus entries a fresh head marker displaced, sorted by id (storage order). */
   readonly entries: readonly EntryRecord[];
+  /**
+   * The next page's `before`: the smallest id the last fetch returned, so fetched coverage walks contiguously down
+   * from the bound. Displaced entries are display-only and never move it; a moved bound resets it (re-anchor at
+   * the top) so newly hidden entries cannot leave a hole behind what is held.
+   */
+  readonly frontier: number | undefined;
+  /** The newest hidden entry id the latest snapshot reported, or false when nothing is hidden. */
+  readonly bound: number | false;
   /** Another page precedes what is loaded (the snapshot's `earlier`, then each page's). */
   readonly hasMore: boolean;
   /** A history request is in flight. */
@@ -71,7 +79,13 @@ export interface ConversationState {
 
 export const initialState: ConversationState = {
   entries: [],
-  earlier: { entries: [], hasMore: false, loading: false },
+  earlier: {
+    entries: [],
+    frontier: undefined,
+    bound: false,
+    hasMore: false,
+    loading: false,
+  },
   pending: [],
   streaming: undefined,
   tools: {},
@@ -82,6 +96,11 @@ export const initialState: ConversationState = {
   unanswered: {},
 };
 
+/** The entry id is in the transcript — the active view, or paged-in earlier history. */
+const hasEntry = (state: ConversationState, id: number): boolean =>
+  state.entries.some((entry) => entry.id === id) ||
+  state.earlier.entries.some((entry) => entry.id === id);
+
 /**
  * Show a sent message as pending — unless its entry is already here, as when the answer to `create` lands after the
  * subscription's snapshot.
@@ -90,8 +109,7 @@ export const withPending = (
   state: ConversationState,
   pending: PendingInput
 ): ConversationState =>
-  pending.entry !== undefined &&
-  state.entries.some((entry) => entry.id === pending.entry)
+  pending.entry !== undefined && hasEntry(state, pending.entry)
     ? state
     : { ...state, pending: [...state.pending, pending] };
 
@@ -133,8 +151,7 @@ const withSubmission = (
   }
   if (
     record.status === "unanswered" ||
-    (record.entry !== undefined &&
-      state.entries.some((entry) => entry.id === record.entry))
+    (record.entry !== undefined && hasEntry(state, record.entry))
   ) {
     return {
       ...state,
@@ -234,22 +251,31 @@ export const withEarlierLoading = (
     : { ...state, earlier: { ...state.earlier, loading } };
 
 /**
- * One fetched history page, folded in: its entries prepend what is held (they are older — `before` paged back
- * from the oldest held id), deduped by id so a page that raced a compaction cannot double an entry, and its
- * `earlier` flag becomes whether a further page exists.
+ * One fetched history page, folded in: its entries merge into the held set sorted by id, deduped by id against
+ * both lists — a page fetched after a new marker committed but before its snapshot can repeat entries still in
+ * the active transcript. `frontier` keeps the next `before` at the smallest fetched id, never a displaced entry,
+ * so paging always walks contiguously down from the bound.
  */
 export const withEarlierPage = (
   state: ConversationState,
   page: HistoryPage
 ): ConversationState => {
-  const held = new Set<number>(state.earlier.entries.map((entry) => entry.id));
+  const held = new Set<number>([
+    ...state.entries.map((entry) => entry.id),
+    ...state.earlier.entries.map((entry) => entry.id),
+  ]);
   return {
     ...state,
     earlier: {
+      ...state.earlier,
       entries: [
-        ...page.entries.filter((entry) => !held.has(entry.id)),
         ...state.earlier.entries,
-      ],
+        ...page.entries.filter((entry) => !held.has(entry.id)),
+      ].toSorted((a, b) => Number(a.id) - Number(b.id)),
+      frontier:
+        page.entries.length === 0
+          ? state.earlier.frontier
+          : Number(page.entries[0].id),
       hasMore: page.earlier,
       loading: false,
     },
@@ -325,21 +351,35 @@ const applySnapshot = (
   // a placed one's entry is in `entries` — or is out of view, then the transcript is right without it.
   const inbox = new Set<number>(event.inbox.map((item) => item.id));
   // A fresh head marker pushes active entries out of the view; they join the earlier history so the transcript
-  // keeps them — and a compaction while history is loaded leaves no paging hole. Every fetched page is older than
-  // the displaced entries (ids below the old head), so they land after it, in order.
+  // keeps them. The slice is sorted by id — a displaced marker's id is larger than the retained entries', and a
+  // fetched page can be older or newer than either.
   const held = new Set<number>([
     ...event.entries.map((entry) => entry.id),
     ...state.earlier.entries.map((entry) => entry.id),
   ]);
   const displaced = state.entries.filter((entry) => !held.has(entry.id));
+  const bound = event.earlier;
+  // bound === false: nothing is hidden — no head marker, or a restarted server reused this id for a different
+  // conversation — so any entries already paged in are stale.
+  const earlier =
+    bound === false
+      ? { ...initialState.earlier, loading: state.earlier.loading }
+      : {
+          entries: [...state.earlier.entries, ...displaced].toSorted(
+            (a, b) => Number(a.id) - Number(b.id)
+          ),
+          // The bound moved — a marker landed since the last snapshot: re-anchor so the range it newly hides
+          // refetches from the top instead of leaving a hole above what is held.
+          frontier:
+            bound === state.earlier.bound ? state.earlier.frontier : undefined,
+          bound,
+          hasMore: true,
+          loading: state.earlier.loading,
+        };
   return {
     ...initialState,
     entries: event.entries,
-    earlier: {
-      entries: [...state.earlier.entries, ...displaced],
-      hasMore: event.earlier === true,
-      loading: state.earlier.loading,
-    },
+    earlier,
     pending: state.pending.filter(
       (pending) =>
         pending.submission === undefined ||
@@ -518,7 +558,8 @@ export const toolResultEntryOf = (
   state: ConversationState,
   callId: string
 ): EntryRecord | undefined =>
-  state.entries.find((entry) =>
+  // Paged-in history holds the calls compaction hid — their results live there too.
+  [...state.entries, ...state.earlier.entries].find((entry) =>
     (entry.model ?? []).some(
       (m) => m.role === "toolResult" && m.toolCallId === callId
     )

@@ -26,7 +26,9 @@ export const exportSlug = (title: string, id: number): string =>
  * entry's, and shows in the Markdown export.
  */
 export const toJsonl = (state: ConversationState): string =>
-  `${state.entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+  `${[...state.earlier.entries, ...state.entries]
+    .map((entry) => JSON.stringify(entry))
+    .join("\n")}\n`;
 
 /** A code fence one backtick longer than the longest run inside, so nested fences can't break it. */
 const fence = (content: string): string => {
@@ -161,7 +163,7 @@ export const toMarkdown = (
     `Sandbox: ${SANDBOX_LABEL[summary.sandbox]} · Started ${new Date(summary.createdAt).toISOString()}`,
     "",
   ];
-  for (const entry of state.entries) {
+  for (const entry of [...state.earlier.entries, ...state.entries]) {
     parts.push(...entryMarkdown(state, entry));
   }
   return parts.join("\n").replaceAll(/\n{3,}/gu, "\n\n");

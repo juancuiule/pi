@@ -93,7 +93,10 @@ describe("Agents.history", () => {
       Effect.scoped(compacted).pipe(Effect.provide(layer))
     );
 
-    expect(snapshot?.type === "snapshot" && snapshot.earlier).toBeTruthy();
+    // `earlier` is the hidden range's bound: the newest hidden entry's id.
+    expect(snapshot?.type === "snapshot" && snapshot.earlier).toBe(
+      Number(full.entries.at(-1)?.id)
+    );
     // The hidden prefix is the whole transcript up to the cut, oldest first.
     const ids = full.entries.map((entry) => Number(entry.id));
     expect(full.entries.length).toBeGreaterThan(1);

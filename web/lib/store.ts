@@ -67,12 +67,16 @@ const applyBatch = (
     snapshot ||= event.type === "snapshot";
   }
   const byId = { ...store.byId, [id]: state };
-  // A snapshot means the server knows this id again: after a restart it can be a new conversation.
+  // A snapshot means the server knows this id again: after a restart it can be a new conversation. Fetched earlier
+  // pages could then be another conversation's — drop them rather than render them above the fresh view.
   if (!snapshot || store.ended[id] === undefined) {
     return { byId };
   }
   const { [id]: _cleared, ...ended } = store.ended;
-  return { byId, ended };
+  return {
+    byId: { ...byId, [id]: { ...state, earlier: initialState.earlier } },
+    ended,
+  };
 };
 
 export const useConversationStore = create<Store>()((set) => ({

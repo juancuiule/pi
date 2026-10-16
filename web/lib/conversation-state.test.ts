@@ -34,7 +34,7 @@ const entry = (id: number, message: unknown): EntryRecord =>
 const snapshot = (
   entries: EntryRecord[],
   running = false,
-  earlier = false
+  earlier: number | false = false
 ): ConversationEvent =>
   ({
     type: "snapshot",
@@ -217,7 +217,7 @@ describe(applyEvent, () => {
 
 describe("earlier history", () => {
   it("a snapshot's `earlier` flags hidden history without fetching it", () => {
-    const state = fold([snapshot([head(10)], false, true)]);
+    const state = fold([snapshot([head(10)], false, 9)]);
     expect(state.earlier.hasMore).toBeTruthy();
     expect(state.earlier.entries).toStrictEqual([]);
 
@@ -227,7 +227,7 @@ describe("earlier history", () => {
 
   it("folds a fetched page ahead of held entries, deduped, and clears loading", () => {
     const loaded = withEarlierPage(
-      withEarlierLoading(fold([snapshot([head(10)], false, true)]), true),
+      withEarlierLoading(fold([snapshot([head(10)], false, 9)]), true),
       {
         entries: [entry(8, assistant("eight")), entry(9, assistant("nine"))],
         earlier: true,
@@ -251,7 +251,7 @@ describe("earlier history", () => {
       snapshot(
         [entry(5, assistant("five")), entry(6, assistant("six"))],
         false,
-        true
+        4
       ),
     ]);
     const paged = withEarlierPage(loaded, {
@@ -268,23 +268,111 @@ describe("earlier history", () => {
       snapshot(
         [marker, entry(7, assistant("seven")), entry(8, assistant("eight"))],
         false,
-        true
+        6
       )
     );
     expect(next.entries.map((e) => e.id)).toStrictEqual([9, 7, 8]);
     expect(next.earlier.entries.map((e) => e.id)).toStrictEqual([2, 5, 6]);
     expect(next.earlier.hasMore).toBeTruthy();
+    // The bound moved: the next fetch re-anchors at the top instead of paging under the displaced entries.
+    expect(next.earlier.frontier).toBeUndefined();
   });
 
   it("keeps fetched earlier entries across a reconnect's snapshot", () => {
-    const state = fold([snapshot([head(10)], false, true)]);
+    const state = fold([snapshot([head(10)], false, 9)]);
     const loaded = withEarlierPage(state, {
       entries: [entry(8, assistant("eight"))],
       earlier: false,
     });
-    const reconnected = applyEvent(loaded, snapshot([head(10)], false, true));
+    const reconnected = applyEvent(loaded, snapshot([head(10)], false, 9));
     expect(reconnected.earlier.entries.map((e) => e.id)).toStrictEqual([8]);
+    expect(reconnected.earlier.frontier).toBe(8);
     expect(reconnected.earlier.hasMore).toBeTruthy();
+  });
+
+  it("does not double entries a raced page shares with the active transcript", () => {
+    // A second marker committed live (entries appended, no snapshot yet): the fetch bound moved server-side and
+    // the page it returns overlaps entries the client still shows.
+    const state = fold([
+      snapshot(
+        [
+          head(15),
+          entry(16, assistant("sixteen")),
+          entry(17, assistant("seventeen")),
+        ],
+        false,
+        14
+      ),
+    ]);
+    const loaded = withEarlierPage(state, {
+      entries: [
+        entry(13, assistant("thirteen")),
+        entry(16, assistant("sixteen")),
+        entry(17, assistant("seventeen")),
+      ],
+      earlier: false,
+    });
+    // 16 and 17 stay in the active transcript — the page does not re-show them as history.
+    expect(loaded.earlier.entries.map((e) => e.id)).toStrictEqual([13]);
+    expect(loaded.earlier.frontier).toBe(13);
+  });
+
+  it("sorts displaced entries into fetched history even when a marker's id lands mid-list", () => {
+    const state = fold([snapshot([head(10)], false, 9)]);
+    const loaded = withEarlierPage(state, {
+      entries: [entry(1, assistant("one")), entry(2, assistant("two"))],
+      earlier: true,
+    });
+    // The next view: [marker(20, head=15), 15, 16] — the marker's id is newer than the retained entries', and
+    // entries 15..16 remain, while nothing the client held is displaced.
+    const marker = {
+      ...entry(20, { role: "user", content: "s" }),
+      head: 15,
+    } as EntryRecord;
+    const next = applyEvent(
+      loaded,
+      snapshot(
+        [
+          marker,
+          entry(15, assistant("fifteen")),
+          entry(16, assistant("sixteen")),
+        ],
+        false,
+        14
+      )
+    );
+    // The superseded marker is displaced too — and sorts after the fetched page by id, not before it.
+    expect(next.earlier.entries.map((e) => e.id)).toStrictEqual([1, 2, 10]);
+    expect(next.earlier.bound).toBe(14);
+    expect(next.earlier.frontier).toBeUndefined();
+  });
+
+  it("resolves the tool result a paged-in call's entry carries", () => {
+    const loaded = withEarlierPage(fold([snapshot([head(10)], false, 9)]), {
+      entries: [
+        entry(4, {
+          role: "toolResult",
+          toolCallId: "c1",
+          content: [{ type: "text", text: "done" }],
+        }),
+      ],
+      earlier: false,
+    });
+    expect(toolResultOf(loaded, "c1")).toMatchObject({
+      role: "toolResult",
+      toolCallId: "c1",
+    });
+  });
+
+  it("clears paged history when a snapshot reports nothing hidden", () => {
+    const loaded = withEarlierPage(fold([snapshot([head(10)], false, 9)]), {
+      entries: [entry(8, assistant("eight"))],
+      earlier: false,
+    });
+    const next = applyEvent(loaded, snapshot([]));
+    expect(next.earlier.entries).toStrictEqual([]);
+    expect(next.earlier.bound).toBeFalsy();
+    expect(next.earlier.hasMore).toBeFalsy();
   });
 });
 

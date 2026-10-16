@@ -307,7 +307,10 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
   // from an entry id. Entries are storage records, typed for clients as `HistoryPage`.
   HttpApiEndpoint.get("history", "/conversations/:id/history", {
     params: ById,
-    query: { before: Schema.optionalKey(Schema.FiniteFromString) },
+    query: {
+      before: Schema.optionalKey(Schema.FiniteFromString),
+      limit: Schema.optionalKey(Schema.FiniteFromString),
+    },
     success: Schema.Struct({
       entries: Schema.Array(Schema.Unknown),
       earlier: Schema.Boolean,

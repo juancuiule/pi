@@ -526,7 +526,13 @@ describe("head markers and earlier history", () => {
     const withGate = transcript({
       ...initialState,
       entries: [active],
-      earlier: { entries: [], hasMore: true, loading: false },
+      earlier: {
+        entries: [],
+        frontier: undefined,
+        bound: 5,
+        hasMore: true,
+        loading: false,
+      },
     });
     expect(withGate).toContain("Show earlier entries");
 
@@ -540,7 +546,13 @@ describe("head markers and earlier history", () => {
     const paged = transcript({
       ...initialState,
       entries: [active],
-      earlier: { entries: [older], hasMore: false, loading: false },
+      earlier: {
+        entries: [older],
+        frontier: 2,
+        bound: 5,
+        hasMore: false,
+        loading: false,
+      },
     });
     // Exhausted: no gate, but the loaded entry renders, above the active transcript.
     expect(paged).not.toContain("Show earlier entries");
@@ -548,7 +560,13 @@ describe("head markers and earlier history", () => {
 
     const loading = transcript({
       ...initialState,
-      earlier: { entries: [], hasMore: true, loading: true },
+      earlier: {
+        entries: [],
+        frontier: undefined,
+        bound: 5,
+        hasMore: true,
+        loading: true,
+      },
     });
     expect(loading).toContain("Loading earlier entries…");
   });

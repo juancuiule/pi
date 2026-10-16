@@ -16,10 +16,14 @@ export interface UnansweredInput {
   readonly detail?: Unanswered["detail"];
 }
 
-/** The first event: pi-durable's snapshot, plus whether earlier entries exist and the unanswered inputs. */
+/** The first event: pi-durable's snapshot, plus the hidden-history bound and the unanswered inputs. */
 export type ConversationSnapshot = Extract<AgentEvent, { type: "snapshot" }> & {
-  /** True when a head marker (a compaction or reset) hides entries; the history endpoint returns them. */
-  readonly earlier: boolean;
+  /**
+   * The newest entry id a head marker (a compaction or reset) hides — the earlier-history bound — or false when
+   * nothing is hidden; the history endpoint pages the range ending at it. A higher value than the last snapshot's
+   * means a new marker landed and fetched pages should re-anchor at the top.
+   */
+  readonly earlier: number | false;
   readonly unanswered: readonly UnansweredInput[];
 };
 
