@@ -4,3 +4,7 @@ export const vncViewUrl = (vncUrl: string, control: boolean): string => {
   url.searchParams.set("view_only", String(!control));
   return url.toString();
 };
+
+/** The document the desktop panel frames. */
+export const desktopFrameUrl = (vncUrl: string, control: boolean): string =>
+  vncViewUrl(vncUrl, control);

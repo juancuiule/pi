@@ -16,7 +16,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { vncViewUrl } from "@/lib/vnc";
+import { desktopFrameUrl, vncViewUrl } from "@/lib/vnc";
 
 const placeholderText = (resuming: boolean, paused: boolean): string => {
   if (resuming) {
@@ -60,6 +60,7 @@ export const DesktopPanel = ({
   }
 
   const src = vncViewUrl(vncUrl, control);
+  const frame = desktopFrameUrl(vncUrl, control);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
@@ -115,7 +116,7 @@ export const DesktopPanel = ({
       {/* noVNC needs scripts and its own origin (another port than this page, so it cannot reach this page). */}
       <iframe
         key={reloadKey}
-        src={src}
+        src={frame}
         title="Sandbox desktop"
         // oxlint-disable-next-line react/iframe-missing-sandbox
         sandbox="allow-scripts allow-same-origin"
