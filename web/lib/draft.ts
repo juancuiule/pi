@@ -33,6 +33,11 @@ export const useTakeDraft = (
 ): void => {
   useEffect(() => {
     useDraft.setState({ target });
+    const pending = useDraft.getState().take();
+    if (pending !== undefined) {
+      onDraft(pending);
+      target.current?.focus();
+    }
     const unsubscribe = useDraft.subscribe((state) => {
       if (state.draft === undefined) {
         return;
