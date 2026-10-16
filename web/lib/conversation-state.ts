@@ -5,6 +5,7 @@ import type {
   AssistantMessage,
   ConversationEvent,
   EntryRecord,
+  HistoryPage,
   Message,
   MessageChange,
   UnansweredInput,
@@ -39,8 +40,23 @@ export interface PendingInput {
   readonly entry?: number;
 }
 
+/**
+ * Entries the latest head marker hides, paged in on demand from the history endpoint. Kept apart from `entries`,
+ * which each snapshot replaces wholesale; this slice survives them.
+ */
+export interface EarlierHistory {
+  /** Pages fetched so far plus entries a fresh head marker displaced, oldest first. */
+  readonly entries: readonly EntryRecord[];
+  /** Another page precedes what is loaded (the snapshot's `earlier`, then each page's). */
+  readonly hasMore: boolean;
+  /** A history request is in flight. */
+  readonly loading: boolean;
+}
+
 export interface ConversationState {
   readonly entries: readonly EntryRecord[];
+  /** Hidden history behind the latest head marker; see `EarlierHistory`. */
+  readonly earlier: EarlierHistory;
   /** Sent inputs not yet in `entries`, in send order. */
   readonly pending: readonly PendingInput[];
   readonly streaming: AssistantMessage | undefined;
@@ -55,6 +71,7 @@ export interface ConversationState {
 
 export const initialState: ConversationState = {
   entries: [],
+  earlier: { entries: [], hasMore: false, loading: false },
   pending: [],
   streaming: undefined,
   tools: {},
@@ -207,6 +224,38 @@ const withEntry = (
 ): readonly EntryRecord[] =>
   entries.some((e) => e.id === entry.id) ? entries : [...entries, entry];
 
+/** "Show earlier entries" is fetching a page. */
+export const withEarlierLoading = (
+  state: ConversationState,
+  loading: boolean
+): ConversationState =>
+  state.earlier.loading === loading
+    ? state
+    : { ...state, earlier: { ...state.earlier, loading } };
+
+/**
+ * One fetched history page, folded in: its entries prepend what is held (they are older — `before` paged back
+ * from the oldest held id), deduped by id so a page that raced a compaction cannot double an entry, and its
+ * `earlier` flag becomes whether a further page exists.
+ */
+export const withEarlierPage = (
+  state: ConversationState,
+  page: HistoryPage
+): ConversationState => {
+  const held = new Set<number>(state.earlier.entries.map((entry) => entry.id));
+  return {
+    ...state,
+    earlier: {
+      entries: [
+        ...page.entries.filter((entry) => !held.has(entry.id)),
+        ...state.earlier.entries,
+      ],
+      hasMore: page.earlier,
+      loading: false,
+    },
+  };
+};
+
 const applyChange = (
   message: AssistantMessage,
   change: MessageChange
@@ -275,9 +324,22 @@ const applySnapshot = (
   // Pendings keep only what the fresh view cannot account for: a queued one survives while still in the inbox;
   // a placed one's entry is in `entries` — or is out of view, then the transcript is right without it.
   const inbox = new Set<number>(event.inbox.map((item) => item.id));
+  // A fresh head marker pushes active entries out of the view; they join the earlier history so the transcript
+  // keeps them — and a compaction while history is loaded leaves no paging hole. Every fetched page is older than
+  // the displaced entries (ids below the old head), so they land after it, in order.
+  const held = new Set<number>([
+    ...event.entries.map((entry) => entry.id),
+    ...state.earlier.entries.map((entry) => entry.id),
+  ]);
+  const displaced = state.entries.filter((entry) => !held.has(entry.id));
   return {
     ...initialState,
     entries: event.entries,
+    earlier: {
+      entries: [...state.earlier.entries, ...displaced],
+      hasMore: event.earlier === true,
+      loading: state.earlier.loading,
+    },
     pending: state.pending.filter(
       (pending) =>
         pending.submission === undefined ||

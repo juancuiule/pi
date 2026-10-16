@@ -10,6 +10,8 @@ import {
   initialState,
   toolResultOf,
   withAck,
+  withEarlierLoading,
+  withEarlierPage,
   withoutPending,
   withPending,
 } from "./conversation-state";
@@ -29,10 +31,15 @@ const entry = (id: number, message: unknown): EntryRecord =>
     model: [message],
   }) as unknown as EntryRecord;
 
-const snapshot = (entries: EntryRecord[], running = false): ConversationEvent =>
+const snapshot = (
+  entries: EntryRecord[],
+  running = false,
+  earlier = false
+): ConversationEvent =>
   ({
     type: "snapshot",
     entries,
+    earlier,
     ...(running ? { run: { inputs: [] } } : {}),
     tools: [],
     compactions: [],
@@ -64,6 +71,13 @@ const foldFrom = (start: ConversationState, events: ConversationEvent[]) => {
   return state;
 };
 const fold = (events: ConversationEvent[]) => foldFrom(initialState, events);
+
+/** An entry carrying a `head`, as a head marker (a compaction or reset) does. */
+const head = (id: number): EntryRecord =>
+  ({
+    ...entry(id, { role: "user", content: "summary" }),
+    head: id,
+  }) as EntryRecord;
 
 describe(applyEvent, () => {
   it("a snapshot replaces all state, so reconnecting rebuilds it", () => {
@@ -198,6 +212,79 @@ describe(applyEvent, () => {
       4: { entry: 4, reason: "no_model" },
       9: { entry: 9, reason: "model_error" },
     });
+  });
+});
+
+describe("earlier history", () => {
+  it("a snapshot's `earlier` flags hidden history without fetching it", () => {
+    const state = fold([snapshot([head(10)], false, true)]);
+    expect(state.earlier.hasMore).toBeTruthy();
+    expect(state.earlier.entries).toStrictEqual([]);
+
+    // A snapshot without hidden history — and reconnects — report none.
+    expect(fold([snapshot([])]).earlier.hasMore).toBeFalsy();
+  });
+
+  it("folds a fetched page ahead of held entries, deduped, and clears loading", () => {
+    const loaded = withEarlierPage(
+      withEarlierLoading(fold([snapshot([head(10)], false, true)]), true),
+      {
+        entries: [entry(8, assistant("eight")), entry(9, assistant("nine"))],
+        earlier: true,
+      }
+    );
+    expect(loaded.earlier.loading).toBeFalsy();
+    expect(loaded.earlier.hasMore).toBeTruthy();
+    expect(loaded.earlier.entries.map((e) => e.id)).toStrictEqual([8, 9]);
+
+    // Paging deeper prepends the older page; an entry it repeats is not doubled.
+    const deeper = withEarlierPage(loaded, {
+      entries: [entry(6, assistant("six")), entry(8, assistant("eight"))],
+      earlier: false,
+    });
+    expect(deeper.earlier.entries.map((e) => e.id)).toStrictEqual([6, 8, 9]);
+    expect(deeper.earlier.hasMore).toBeFalsy();
+  });
+
+  it("moves entries a fresh head marker displaced into the earlier history, in order", () => {
+    const loaded = fold([
+      snapshot(
+        [entry(5, assistant("five")), entry(6, assistant("six"))],
+        false,
+        true
+      ),
+    ]);
+    const paged = withEarlierPage(loaded, {
+      entries: [entry(2, assistant("two"))],
+      earlier: true,
+    });
+    // A new snapshot after another compaction: entries 5 and 6 fell out of the active view.
+    const marker = {
+      ...entry(9, { role: "user", content: "s" }),
+      head: 7,
+    } as EntryRecord;
+    const next = applyEvent(
+      paged,
+      snapshot(
+        [marker, entry(7, assistant("seven")), entry(8, assistant("eight"))],
+        false,
+        true
+      )
+    );
+    expect(next.entries.map((e) => e.id)).toStrictEqual([9, 7, 8]);
+    expect(next.earlier.entries.map((e) => e.id)).toStrictEqual([2, 5, 6]);
+    expect(next.earlier.hasMore).toBeTruthy();
+  });
+
+  it("keeps fetched earlier entries across a reconnect's snapshot", () => {
+    const state = fold([snapshot([head(10)], false, true)]);
+    const loaded = withEarlierPage(state, {
+      entries: [entry(8, assistant("eight"))],
+      earlier: false,
+    });
+    const reconnected = applyEvent(loaded, snapshot([head(10)], false, true));
+    expect(reconnected.earlier.entries.map((e) => e.id)).toStrictEqual([8]);
+    expect(reconnected.earlier.hasMore).toBeTruthy();
   });
 });
 

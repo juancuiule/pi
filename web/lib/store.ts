@@ -1,6 +1,7 @@
 import type {
   ConversationEvent,
   ConversationSummary,
+  HistoryPage,
   SubmissionAck,
 } from "effect-pi/api";
 import { create } from "zustand";
@@ -9,6 +10,8 @@ import {
   applyEvent,
   initialState,
   withAck,
+  withEarlierLoading,
+  withEarlierPage,
   withoutPending,
   withPending,
 } from "./conversation-state";
@@ -35,6 +38,10 @@ interface Store {
   dropPending(id: number, requestId: string): void;
   /** The send's answer names the pending's submission — the `submission` event may already have. */
   ackPending(id: number, requestId: string, ack: SubmissionAck): void;
+  /** A "Show earlier entries" request is in flight. */
+  setEarlierLoading(id: number, loading: boolean): void;
+  /** Fold a fetched history page into the conversation's earlier history. */
+  addEarlierPage(id: number, page: HistoryPage): void;
   beginResume(id: number): void;
   endResume(id: number): void;
   toggleThinking(id: number): void;
@@ -83,6 +90,10 @@ export const useConversationStore = create<Store>()((set) => ({
     set(update(id, (state) => withoutPending(state, requestId))),
   ackPending: (id, requestId, ack) =>
     set(update(id, (state) => withAck(state, requestId, ack))),
+  setEarlierLoading: (id, loading) =>
+    set(update(id, (state) => withEarlierLoading(state, loading))),
+  addEarlierPage: (id, page) =>
+    set(update(id, (state) => withEarlierPage(state, page))),
   beginResume: (id) =>
     set((store) => ({
       resuming: { ...store.resuming, [id]: (store.resuming[id] ?? 0) + 1 },

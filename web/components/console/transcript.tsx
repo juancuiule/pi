@@ -1,16 +1,21 @@
 "use client";
 
-import type { AssistantMessage, EntryRecord } from "effect-pi/api";
+import type { AssistantMessage, EntryRecord, HistoryPage } from "effect-pi/api";
 import {
   ArrowDown,
   BookOpen,
   Brain,
   CircleAlert,
+  FoldVertical,
+  History,
   Info,
   LoaderCircle,
+  RotateCcw,
+  SeparatorHorizontal,
   SlidersHorizontal,
 } from "lucide-react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { CodeBlock, CodeBlockContent } from "@/components/ui/code-block";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,8 +28,11 @@ import {
   TraceLine,
   TraceTitle,
 } from "@/components/ui/trace";
+import { runApi } from "@/lib/api";
 import { hasPendingApproval } from "@/lib/approval";
 import { splitAttachments } from "@/lib/attachments";
+import { boundaryNote } from "@/lib/boundary-note";
+import type { BoundaryNote } from "@/lib/boundary-note";
 import type { ConversationState, PendingInput } from "@/lib/conversation-state";
 import { settingsNote } from "@/lib/settings-note";
 import {
@@ -32,6 +40,7 @@ import {
   skillMentionParts,
   splitSkillHints,
 } from "@/lib/skill-message";
+import { useConversationStore } from "@/lib/store";
 import { isNearBottom, userParts } from "@/lib/transcript";
 import { unansweredNote } from "@/lib/unanswered-note";
 
@@ -220,6 +229,38 @@ const AssistantBlocks = ({
   );
 };
 
+const BOUNDARY_ICON: Record<BoundaryNote["kind"], typeof FoldVertical> = {
+  compaction: FoldVertical,
+  reset: RotateCcw,
+  boundary: SeparatorHorizontal,
+};
+
+/** A head marker's muted row: its boundary title, with the summary or handoff text under the fold. */
+const BoundaryRow = ({ note }: { note: BoundaryNote }) => {
+  const Icon = BOUNDARY_ICON[note.kind];
+  const line = (
+    <TraceLine>
+      <TraceIcon>
+        <Icon />
+      </TraceIcon>
+      <TraceTitle>{note.title}</TraceTitle>
+    </TraceLine>
+  );
+  if (note.body === "") {
+    return <Trace>{line}</Trace>;
+  }
+  return (
+    <Trace>
+      <TraceCollapsible>
+        <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
+        <TraceCollapsibleContent>
+          <Markdown>{note.body}</Markdown>
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
+  );
+};
+
 const Entry = ({
   entry,
   state,
@@ -232,6 +273,11 @@ const Entry = ({
   /** For the attachments' download links; unset while a create is in flight. */
   conversation?: number;
 }) => {
+  // A head marker carries a user-role message (the summary or handoff); it is a boundary, not a sent message.
+  const boundary = boundaryNote(entry);
+  if (boundary !== undefined) {
+    return <BoundaryRow note={boundary} />;
+  }
   const message = entry.model?.[0];
   const note =
     entry.kind === "app.settings" ? settingsNote(entry.data) : undefined;
@@ -415,6 +461,112 @@ const Failure = ({ children }: { children: string }) => (
   </p>
 );
 
+/** An entry and, under it, the "not answered" note its run may have left. */
+const EntryItem = ({
+  entry,
+  state,
+  showThinking,
+  conversation,
+}: {
+  entry: EntryRecord;
+  state: ConversationState;
+  showThinking: boolean;
+  conversation?: number;
+}) => {
+  const unanswered = state.unanswered[entry.id];
+  const note =
+    unanswered === undefined ? undefined : unansweredNote(unanswered);
+  return (
+    <>
+      <Entry
+        entry={entry}
+        state={state}
+        showThinking={showThinking}
+        conversation={conversation}
+      />
+      {note === undefined ? null : <Failure>{note}</Failure>}
+    </>
+  );
+};
+
+/**
+ * Fetch one page of hidden history: the newest page when `before` is unset, deeper ones with the oldest held
+ * entry's id. A failure only clears the spinner, so the gate stays for a retry.
+ */
+const showEarlier = async (
+  conversation: number,
+  before: number | undefined
+) => {
+  const { addEarlierPage, setEarlierLoading } = useConversationStore.getState();
+  setEarlierLoading(conversation, true);
+  try {
+    const page = await runApi((c) =>
+      c.conversations.history({
+        params: { id: conversation },
+        query: before === undefined ? {} : { before },
+      })
+    );
+    // The endpoint's entries are storage records, typed for clients as `HistoryPage`.
+    addEarlierPage(conversation, page as HistoryPage);
+  } catch (error) {
+    setEarlierLoading(conversation, false);
+    toast.error(
+      error instanceof Error
+        ? error.message
+        : "Could not load the earlier entries."
+    );
+  }
+};
+
+/** Hidden history at the top of the transcript: fetched pages in order, behind a "Show earlier entries" gate. */
+const Earlier = ({
+  state,
+  showThinking,
+  conversation,
+}: {
+  state: ConversationState;
+  showThinking: boolean;
+  conversation?: number;
+}) => {
+  const { entries, hasMore, loading } = state.earlier;
+  if (entries.length === 0 && !hasMore && !loading) {
+    return null;
+  }
+  return (
+    <>
+      {hasMore || loading ? (
+        <button
+          type="button"
+          disabled={loading || conversation === undefined}
+          onClick={() => {
+            void showEarlier(conversation ?? 0, entries[0]?.id);
+          }}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 mx-auto flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors outline-none focus-visible:ring-3 disabled:opacity-60"
+        >
+          {loading ? (
+            <LoaderCircle
+              aria-hidden
+              className="size-3.5 motion-safe:animate-spin"
+            />
+          ) : (
+            <History aria-hidden className="size-3.5" />
+          )}
+          {loading ? "Loading earlier entries…" : "Show earlier entries"}
+        </button>
+      ) : null}
+      {entries.map((entry) => (
+        <EntryItem
+          key={entry.id}
+          entry={entry}
+          state={state}
+          showThinking={showThinking}
+          conversation={conversation}
+        />
+      ))}
+    </>
+  );
+};
+
 const Body = ({
   state,
   resuming,
@@ -427,22 +579,20 @@ const Body = ({
   conversation?: number;
 }) => (
   <>
-    {state.entries.map((entry) => {
-      const unanswered = state.unanswered[entry.id];
-      const note =
-        unanswered === undefined ? undefined : unansweredNote(unanswered);
-      return (
-        <Fragment key={entry.id}>
-          <Entry
-            entry={entry}
-            state={state}
-            showThinking={showThinking}
-            conversation={conversation}
-          />
-          {note === undefined ? null : <Failure>{note}</Failure>}
-        </Fragment>
-      );
-    })}
+    <Earlier
+      state={state}
+      showThinking={showThinking}
+      conversation={conversation}
+    />
+    {state.entries.map((entry) => (
+      <EntryItem
+        key={entry.id}
+        entry={entry}
+        state={state}
+        showThinking={showThinking}
+        conversation={conversation}
+      />
+    ))}
     {state.streaming === undefined ? null : (
       <AssistantBlocks
         message={state.streaming}

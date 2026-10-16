@@ -1,8 +1,10 @@
 // Export builders for a conversation: JSON Lines of the raw entry records, or a Markdown document
 // a person can read. Pure, so both are unit-tested.
-import type { ConversationSummary } from "effect-pi/api";
+import type { ConversationSummary, EntryRecord } from "effect-pi/api";
 
 import { splitAttachments } from "./attachments";
+import { boundaryNote } from "./boundary-note";
+import type { BoundaryNote } from "./boundary-note";
 import type { ConversationState } from "./conversation-state";
 import { toolResultOf } from "./conversation-state";
 import { SANDBOX_LABEL } from "./sandbox-info";
@@ -65,6 +67,90 @@ const resultParts = (
   return { output: texts.join("\n"), failed: result.isError ?? false, images };
 };
 
+/** The Markdown heading a head marker gets — it is a boundary, not a `## User` message. */
+const boundaryHeading = (note: BoundaryNote): string => {
+  switch (note.kind) {
+    case "compaction": {
+      return note.reason === undefined
+        ? "Compaction summary"
+        : `Compaction summary (${note.reason})`;
+    }
+    case "reset": {
+      return "Reset";
+    }
+    default: {
+      return `Boundary: ${note.title}`;
+    }
+  }
+};
+
+/** One entry's Markdown blocks: a boundary heading and body for head markers, else its messages rendered. */
+const entryMarkdown = (
+  state: ConversationState,
+  entry: EntryRecord
+): string[] => {
+  const boundary = boundaryNote(entry);
+  if (boundary !== undefined) {
+    const parts = [`## ${boundaryHeading(boundary)}`, ""];
+    if (boundary.body !== "") {
+      parts.push(boundary.body, "");
+    }
+    return parts;
+  }
+  const parts: string[] = [];
+  for (const message of entry.model ?? []) {
+    if (message.role === "user") {
+      const { text: full, images } = userParts(message);
+      // A file's text stays out of the export; its name and id say what was attached.
+      const { text, attachments } = splitAttachments(full);
+      parts.push("## User", "");
+      if (text !== "") {
+        parts.push(text, "");
+      }
+      for (const attachment of attachments) {
+        parts.push(`> Attached: ${attachment.name} (${attachment.id})`, "");
+      }
+      for (const image of images) {
+        parts.push(`![image](${image.src})`, "");
+      }
+      const unanswered = state.unanswered[entry.id];
+      const note =
+        unanswered === undefined ? undefined : unansweredNote(unanswered);
+      if (note !== undefined) {
+        parts.push(`> ${note}`, "");
+      }
+      continue;
+    }
+    if (message.role !== "assistant") {
+      continue;
+    }
+    for (const block of message.content) {
+      if (block.type === "text") {
+        parts.push("## Assistant", "", block.text, "");
+      } else if (block.type === "toolCall") {
+        const { output, failed, images } = resultParts(state, block.id);
+        parts.push(
+          `### Tool: ${block.name}${failed ? " (failed)" : ""}`,
+          "",
+          toolSummary(block.name, block.arguments),
+          "",
+          fenced(JSON.stringify(block.arguments ?? {}, null, 2), "json"),
+          ""
+        );
+        // An image-only result has no text to fence; the images render outside one anyway.
+        if (output !== "" || images.length === 0) {
+          parts.push(fenced(output), "");
+        }
+        for (const image of images) {
+          parts.push(`![image](${image.src})`, "");
+        }
+      }
+      // Thinking blocks are omitted.
+    }
+  }
+  return parts;
+};
+
 export const toMarkdown = (
   summary: ConversationSummary,
   state: ConversationState
@@ -76,56 +162,7 @@ export const toMarkdown = (
     "",
   ];
   for (const entry of state.entries) {
-    for (const message of entry.model ?? []) {
-      if (message.role === "user") {
-        const { text: full, images } = userParts(message);
-        // A file's text stays out of the export; its name and id say what was attached.
-        const { text, attachments } = splitAttachments(full);
-        parts.push("## User", "");
-        if (text !== "") {
-          parts.push(text, "");
-        }
-        for (const attachment of attachments) {
-          parts.push(`> Attached: ${attachment.name} (${attachment.id})`, "");
-        }
-        for (const image of images) {
-          parts.push(`![image](${image.src})`, "");
-        }
-        const unanswered = state.unanswered[entry.id];
-        const note =
-          unanswered === undefined ? undefined : unansweredNote(unanswered);
-        if (note !== undefined) {
-          parts.push(`> ${note}`, "");
-        }
-        continue;
-      }
-      if (message.role !== "assistant") {
-        continue;
-      }
-      for (const block of message.content) {
-        if (block.type === "text") {
-          parts.push("## Assistant", "", block.text, "");
-        } else if (block.type === "toolCall") {
-          const { output, failed, images } = resultParts(state, block.id);
-          parts.push(
-            `### Tool: ${block.name}${failed ? " (failed)" : ""}`,
-            "",
-            toolSummary(block.name, block.arguments),
-            "",
-            fenced(JSON.stringify(block.arguments ?? {}, null, 2), "json"),
-            ""
-          );
-          // An image-only result has no text to fence; the images render outside one anyway.
-          if (output !== "" || images.length === 0) {
-            parts.push(fenced(output), "");
-          }
-          for (const image of images) {
-            parts.push(`![image](${image.src})`, "");
-          }
-        }
-        // Thinking blocks are omitted.
-      }
-    }
+    parts.push(...entryMarkdown(state, entry));
   }
   return parts.join("\n").replaceAll(/\n{3,}/gu, "\n\n");
 };

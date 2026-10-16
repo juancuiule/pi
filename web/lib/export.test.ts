@@ -23,6 +23,7 @@ const summary: ConversationSummary = {
 
 const state: ConversationState = {
   pending: [],
+  earlier: { entries: [], hasMore: false, loading: false },
   entries: [
     entry(1, [
       {
@@ -171,5 +172,38 @@ describe(toMarkdown, () => {
     expect(md).toContain(
       "## User\n\nhello\n\n> Not answered: the conversation's model is not available"
     );
+  });
+
+  it("labels head markers as boundaries, never as user messages", () => {
+    const compaction = {
+      id: 3,
+      kind: "pi.compaction",
+      head: 2,
+      data: { reason: "threshold" },
+      model: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "The conversation history before this point was compacted into the following summary:\n\n<summary>\nsummarized so far\n</summary>",
+            },
+          ],
+        },
+      ],
+    } as unknown as EntryRecord;
+    const reset = {
+      id: 8,
+      kind: "pi.reset",
+      head: 8,
+      model: [{ role: "user", content: "carry on" }],
+    } as unknown as EntryRecord;
+    const md = toMarkdown(summary, { ...state, entries: [compaction, reset] });
+    expect(md).toContain(
+      "## Compaction summary (threshold)\n\nsummarized so far"
+    );
+    expect(md).toContain("## Reset\n\ncarry on");
+    expect(md).not.toContain("## User");
+    expect(md).not.toContain("<summary>");
   });
 });

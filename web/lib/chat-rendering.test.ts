@@ -40,6 +40,27 @@ const assistant = (thinking: string): AssistantMessage =>
     content: [{ type: "thinking", thinking }],
   }) as unknown as AssistantMessage;
 
+/** A `pi.compaction` head marker, as pi-durable writes it (the wrapped summary as a user message). */
+const compaction = (reason: string): EntryRecord =>
+  ({
+    id: 4,
+    conversationId: 1,
+    kind: "pi.compaction",
+    head: 3,
+    data: { reason },
+    model: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "The conversation history before this point was compacted into the following summary:\n\n<summary>\nsummarized so far\n</summary>",
+          },
+        ],
+      },
+    ],
+  }) as unknown as EntryRecord;
+
 const transcript = (
   state: ConversationState,
   resuming = false,
@@ -467,6 +488,69 @@ describe("Markdown code blocks", () => {
     expect(html).toContain(">pwd</code>");
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("head markers and earlier history", () => {
+  it("renders a compaction as a collapsed boundary row, not a user bubble", () => {
+    const html = transcript({
+      ...initialState,
+      entries: [compaction("threshold")],
+    });
+    expect(html).toContain("Context compacted (threshold)");
+    expect(html).toContain('aria-expanded="false"');
+    // Neither the model-facing wrapper nor a user bubble.
+    expect(html).not.toContain("compacted into the following summary");
+    expect(html).not.toContain("ml-auto");
+  });
+
+  it("renders a reset with its handoff under the fold", () => {
+    const reset = {
+      id: 4,
+      conversationId: 1,
+      kind: "pi.reset",
+      head: 4,
+      model: [{ role: "user", content: "carry on" }],
+    } as unknown as EntryRecord;
+    const html = transcript({ ...initialState, entries: [reset] });
+    expect(html).toContain("Conversation reset");
+    expect(html).not.toContain("ml-auto");
+  });
+
+  it("offers to show earlier entries, then keeps them above the transcript once paged out", () => {
+    const user = {
+      role: "user",
+      content: [{ type: "text", text: "newest" }],
+    } as Message;
+    const active = { ...entry(user), id: 6 } as EntryRecord;
+    const withGate = transcript({
+      ...initialState,
+      entries: [active],
+      earlier: { entries: [], hasMore: true, loading: false },
+    });
+    expect(withGate).toContain("Show earlier entries");
+
+    const older = {
+      ...entry({
+        role: "user",
+        content: [{ type: "text", text: "oldest" }],
+      } as Message),
+      id: 2,
+    } as EntryRecord;
+    const paged = transcript({
+      ...initialState,
+      entries: [active],
+      earlier: { entries: [older], hasMore: false, loading: false },
+    });
+    // Exhausted: no gate, but the loaded entry renders, above the active transcript.
+    expect(paged).not.toContain("Show earlier entries");
+    expect(paged.indexOf("oldest")).toBeLessThan(paged.indexOf("newest"));
+
+    const loading = transcript({
+      ...initialState,
+      earlier: { entries: [], hasMore: true, loading: true },
+    });
+    expect(loading).toContain("Loading earlier entries…");
   });
 });
 
