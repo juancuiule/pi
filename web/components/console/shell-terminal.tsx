@@ -12,7 +12,7 @@ import { connectShell } from "@/lib/shell";
 
 const encoder = new TextEncoder();
 
-/** Extra attempts after a `sandbox` close (Upgrade replaces the container); a live shell resets the count. */
+/** Extra attempts after a `sandbox` or `disconnected` close; a live shell (any output) resets the count. */
 const MAX_RECONNECTS = 2;
 
 const placeholderText = (resuming: boolean): string =>
@@ -67,11 +67,19 @@ export const ShellTerminal = ({
         if (disposed) {
           return;
         }
-        // Upgrade swapped the Sandbox out from under the shell; the new socket lands in the new container,
-        // which needs a moment to be recorded.
-        if (reason === "sandbox" && reconnects.current < MAX_RECONNECTS) {
+        // `sandbox`: Upgrade swapped the Sandbox out from under the shell; the new socket lands in the new
+        // container, which needs a moment to be recorded. `disconnected`: the socket dropped but the PTY is
+        // a seat-scoped session now — a reconnect lands back in it with scrollback replayed.
+        if (
+          (reason === "sandbox" || reason === "disconnected") &&
+          reconnects.current < MAX_RECONNECTS
+        ) {
           reconnects.current += 1;
-          term.current?.write("\r\n[sandbox changed — reconnecting]\r\n");
+          term.current?.write(
+            reason === "sandbox"
+              ? "\r\n[sandbox changed — reconnecting]\r\n"
+              : "\r\n[connection lost — reconnecting]\r\n"
+          );
           timer.current = setTimeout(connect, 500);
           return;
         }

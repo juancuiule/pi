@@ -36,6 +36,6 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Sandbox**: A running machine over a Workspace. It exists only while its Conversation has a Seat. _Avoid_: container, VM
 
-**Shell**: The console's live terminal in a Conversation's Sandbox: a real PTY over a WebSocket, not the agent's command output (that is the Agent tab). _Avoid_: exec, agent terminal
+**Shell**: The console's live terminal in a Conversation's Sandbox: a real PTY over a WebSocket, not the agent's command output (that is the Agent tab). A session owned by the Sandbox's lifetime — sockets attach and detach, each attach replays the scrollback. _Avoid_: exec, agent terminal
 
 **Capacity**: How many Sandboxes the server runs at once. _Avoid_: cap, limit, slots
