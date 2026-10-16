@@ -347,31 +347,34 @@ const ArtifactsHandlers = HttpApiBuilder.group(
   })
 );
 
-const InfoHandlers = HttpApiBuilder.group(
-  Api,
-  "info",
-  Effect.fnUntraced(function* (handlers) {
-    const {
-      capabilities,
-      model: { provider, modelId },
-    } = yield* Agents;
-    const { capacity } = yield* Conversations;
-    const model = `${provider}/${modelId}`;
-    return handlers
-      .handle("get", () => Effect.succeed({ model }))
-      .handle("capabilities", () => capabilities)
-      .handle("capacity", () => capacity);
-  })
-);
+const infoHandlers = (apiUrl: string) =>
+  HttpApiBuilder.group(
+    Api,
+    "info",
+    Effect.fnUntraced(function* (handlers) {
+      const {
+        capabilities,
+        model: { provider, modelId },
+      } = yield* Agents;
+      const { capacity } = yield* Conversations;
+      const model = `${provider}/${modelId}`;
+      return handlers
+        .handle("get", () => Effect.succeed({ model, apiUrl }))
+        .handle("capabilities", () => capabilities)
+        .handle("capacity", () => capacity);
+    })
+  );
 
-export const ApiLayer = HttpApiBuilder.layer(Api).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      ConversationsHandlers,
-      AttachmentsHandlers,
-      ArtifactsHandlers,
-      InfoHandlers
-    )
-  ),
-  Layer.merge(loopbackOnly)
-);
+/** The HTTP API; `apiUrl` is the server's own address, reported by `/api/info`. */
+export const apiLayer = (options: { readonly apiUrl: string }) =>
+  HttpApiBuilder.layer(Api).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ConversationsHandlers,
+        AttachmentsHandlers,
+        ArtifactsHandlers,
+        infoHandlers(options.apiUrl)
+      )
+    ),
+    Layer.merge(loopbackOnly)
+  );

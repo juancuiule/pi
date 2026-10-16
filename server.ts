@@ -23,7 +23,8 @@ import { modelFromConfig } from "./src/models.ts";
 import { saveScreenshotsTo } from "./src/screenshots.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { echoModel } from "./src/server/faux.ts";
-import { ApiLayer } from "./src/server/handlers.ts";
+import { apiLayer } from "./src/server/handlers.ts";
+import { shellRoute } from "./src/server/shell.ts";
 import { Skills } from "./src/skills/skills.ts";
 import * as DockerVolumes from "./src/workspaces/docker-volume.ts";
 
@@ -87,7 +88,13 @@ const UploadLimits = Layer.succeedContext(
   })
 );
 
-const ServerLive = HttpRouter.serve(ApiLayer).pipe(
+const ServerLive = HttpRouter.serve(
+  // Where the console reaches this server directly, skipping Next's rewrite (the shell's socket needs it).
+  Layer.mergeAll(
+    apiLayer({ apiUrl: `http://127.0.0.1:${config.server.port}` }),
+    shellRoute
+  )
+).pipe(
   Layer.provide(ConversationsLive),
   Layer.provide(AgentsLive),
   Layer.provide(NodeHttpServerLayer),
