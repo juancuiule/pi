@@ -1,8 +1,18 @@
-import type { ConversationEvent, ConversationSummary } from "effect-pi/api";
+import type {
+  ConversationEvent,
+  ConversationSummary,
+  SubmissionAck,
+} from "effect-pi/api";
 import { create } from "zustand";
 
-import { applyEvent, initialState } from "./conversation-state";
-import type { ConversationState } from "./conversation-state";
+import {
+  applyEvent,
+  initialState,
+  withAck,
+  withoutPending,
+  withPending,
+} from "./conversation-state";
+import type { ConversationState, PendingInput } from "./conversation-state";
 
 interface Store {
   readonly byId: Readonly<Record<number, ConversationState>>;
@@ -16,32 +26,63 @@ interface Store {
   /** Conversations whose thinking steps the person chose to hide in the transcript. */
   readonly hiddenThinking: Readonly<Record<number, true>>;
   apply(id: number, event: ConversationEvent): void;
+  /** One stream chunk's events in a single update: a commit's events land together or not at all. */
+  applyAll(id: number, events: Iterable<ConversationEvent>): void;
   markEnded(id: number): void;
+  /** Show a message being sent; the submission carrying its requestId resolves it. */
+  addPending(id: number, pending: PendingInput): void;
+  /** The send failed: remove its pending message. */
+  dropPending(id: number, requestId: string): void;
+  /** The send's answer names the pending's submission — the `submission` event may already have. */
+  ackPending(id: number, requestId: string, ack: SubmissionAck): void;
   beginResume(id: number): void;
   endResume(id: number): void;
   toggleThinking(id: number): void;
 }
+
+const update =
+  (id: number, change: (state: ConversationState) => ConversationState) =>
+  (store: Store) => {
+    const state = store.byId[id] ?? initialState;
+    const next = change(state);
+    return next === state ? {} : { byId: { ...store.byId, [id]: next } };
+  };
+
+const applyBatch = (
+  store: Store,
+  id: number,
+  events: Iterable<ConversationEvent>
+) => {
+  let state = store.byId[id] ?? initialState;
+  let snapshot = false;
+  for (const event of events) {
+    state = applyEvent(state, event);
+    snapshot ||= event.type === "snapshot";
+  }
+  const byId = { ...store.byId, [id]: state };
+  // A snapshot means the server knows this id again: after a restart it can be a new conversation.
+  if (!snapshot || store.ended[id] === undefined) {
+    return { byId };
+  }
+  const { [id]: _cleared, ...ended } = store.ended;
+  return { byId, ended };
+};
 
 export const useConversationStore = create<Store>()((set) => ({
   byId: {},
   ended: {},
   resuming: {},
   hiddenThinking: {},
-  apply: (id, event) =>
-    set((store) => {
-      const byId = {
-        ...store.byId,
-        [id]: applyEvent(store.byId[id] ?? initialState, event),
-      };
-      // A snapshot means the server knows this id again: after a restart it can be a new conversation.
-      if (event.type !== "snapshot" || store.ended[id] === undefined) {
-        return { byId };
-      }
-      const { [id]: _cleared, ...ended } = store.ended;
-      return { byId, ended };
-    }),
+  apply: (id, event) => set((store) => applyBatch(store, id, [event])),
+  applyAll: (id, events) => set((store) => applyBatch(store, id, events)),
   markEnded: (id) =>
     set((store) => ({ ended: { ...store.ended, [id]: true } })),
+  addPending: (id, pending) =>
+    set(update(id, (state) => withPending(state, pending))),
+  dropPending: (id, requestId) =>
+    set(update(id, (state) => withoutPending(state, requestId))),
+  ackPending: (id, requestId, ack) =>
+    set(update(id, (state) => withAck(state, requestId, ack))),
   beginResume: (id) =>
     set((store) => ({
       resuming: { ...store.resuming, [id]: (store.resuming[id] ?? 0) + 1 },

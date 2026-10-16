@@ -3,9 +3,12 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { canSend, sendable } from "@/lib/attachments";
+import { attachmentRef, canSend, sendable } from "@/lib/attachments";
 import { useTakeDraft } from "@/lib/draft";
 import { useSendMessage } from "@/lib/queries";
+import { requestIdForSend } from "@/lib/send-request";
+import type { FailedSend } from "@/lib/send-request";
+import { useConversationStore } from "@/lib/store";
 import { useDraftAttachments } from "@/lib/use-draft-attachments";
 
 import { Composer } from "./composer";
@@ -45,22 +48,46 @@ export const MessageInput = ({
   useTakeDraft(setPrompt, textarea);
   const send = useSendMessage(id);
   const files = useDraftAttachments(id);
+  // A failed send kept for its requestId: resending the same message resolves to the same submission.
+  const failed = useRef<FailedSend | null>(null);
 
   const submit = () => {
     if (!canSend(prompt, files.items) || send.isPending) {
       return;
     }
     // Files added while this sends are not part of it, and stay in the composer.
-    const { ids, keys } = sendable(files.items);
+    const { ids, keys, drafts } = sendable(files.items);
+    const text = prompt.trim();
+    // Names this send's submission; the `submission` event carries it back.
+    const requestId = requestIdForSend(failed.current, text, ids);
+    // The bubble shows now, marked "Sending…"; the marked "sent" drafts are not deleted when this unmounts.
+    useConversationStore.getState().addPending(id, {
+      requestId,
+      prompt: text,
+      attachments: drafts.map((draft) => attachmentRef(draft.info)),
+    });
+    setPrompt("");
+    files.take(keys);
+    textarea.current?.focus();
     send.mutate(
-      { prompt: prompt.trim(), attachments: ids },
+      { prompt: text, attachments: ids, requestId },
       {
-        onSuccess: () => {
-          setPrompt("");
-          files.take(keys);
-          textarea.current?.focus();
+        onSuccess: (ack) => {
+          if (failed.current?.requestId === requestId) {
+            failed.current = null;
+          }
+          useConversationStore.getState().ackPending(id, requestId, ack);
         },
-        onError: (error) => toast.error(error.message),
+        onError: (error) => {
+          failed.current = { requestId, text, attachments: ids };
+          // Back to just before Send: the pending bubble goes, the draft — and any text typed since — returns.
+          useConversationStore.getState().dropPending(id, requestId);
+          setPrompt((current) =>
+            current.trim() === "" ? text : `${text}\n\n${current}`
+          );
+          files.restore(drafts);
+          toast.error(error.message);
+        },
       }
     );
   };

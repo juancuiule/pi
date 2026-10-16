@@ -121,9 +121,11 @@ export const attachmentUrl = (
 export const attachmentPageUrl = (
   id: string,
   page: number,
-  conversation: number
+  conversation?: number
 ): string =>
-  `/api/attachments/${encodeURIComponent(id)}/pages/${page}?conversation=${conversation}`;
+  `/api/attachments/${encodeURIComponent(id)}/pages/${page}${
+    conversation === undefined ? "" : `?conversation=${conversation}`
+  }`;
 
 /** A file in the composer: uploading, refused, or uploaded and checked. */
 export type DraftAttachment =
@@ -205,20 +207,34 @@ export const canSend = (
   (prompt.trim() !== "" || drafts.some((draft) => draft.state === "uploaded"));
 
 /**
- * What a message sends: the uploaded files' ids, and their keys to drop from the composer once it is sent. Refused
- * files stay behind for the person to remove.
+ * What a message sends: the uploaded files' ids, their keys to drop from the composer once it is sent, and the
+ * drafts themselves, for the pending message and to restore on failure. Refused files stay behind for the person to
+ * remove.
  */
 export const sendable = (
   drafts: readonly DraftAttachment[]
-): { readonly ids: string[]; readonly keys: string[] } => {
+): {
+  readonly ids: string[];
+  readonly keys: string[];
+  readonly drafts: readonly Extract<DraftAttachment, { state: "uploaded" }>[];
+} => {
   const uploaded = drafts.flatMap((draft) =>
     draft.state === "uploaded" ? [draft] : []
   );
   return {
     ids: uploaded.map((draft) => draft.info.id),
     keys: uploaded.map((draft) => draft.key),
+    drafts: uploaded,
   };
 };
+
+/** An uploaded file as the transcript's chips name it. */
+export const attachmentRef = (info: AttachmentInfo): AttachmentRef => ({
+  id: info.id,
+  name: info.name,
+  kind: info.kind,
+  status: info.status,
+});
 
 /**
  * The cells of a prepared table row: cells are joined with ` | `, and inside a cell `\|`, `\n` and `\\` stand for a

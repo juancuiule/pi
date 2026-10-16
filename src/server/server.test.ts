@@ -310,6 +310,118 @@ describe("HTTP API", () => {
     );
   });
 
+  // Issue #16: the send's answer names its submission so the console's pending message can resolve; a retried
+  // requestId is the same submission again, not a second message.
+  it("answers sends with the submission a requestId deduplicates", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hi", requestId: "create-1" },
+        });
+        const sent = yield* client.conversations.send({
+          params: { id: created.id },
+          payload: { prompt: "again", requestId: "send-1" },
+        });
+        const retry = yield* client.conversations.send({
+          params: { id: created.id },
+          payload: { prompt: "again", requestId: "send-1" },
+        });
+        return { created, sent, retry };
+      }).pipe(
+        Effect.provide(
+          server([
+            fauxAssistantMessage([fauxText("one")]),
+            fauxAssistantMessage([fauxText("two")]),
+          ])
+        )
+      )
+    );
+    expect(result.created.submission.id).toBeTypeOf("number");
+    expect(result.sent.id).toBeTypeOf("number");
+    expect(result.retry.id).toBe(result.sent.id);
+  });
+
+  // Issue #16: a retried requestId must reach the dedup check — claiming its files first would refuse the
+  // already-sent ones, or commit new files no message references.
+  it("deduplicates a retried send with files instead of refusing or re-claiming them", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hi" },
+        });
+        const file = yield* client.attachments.upload({
+          payload: form("a.txt", "first", created.id),
+        });
+        const other = yield* client.attachments.upload({
+          payload: form("b.txt", "second", created.id),
+        });
+        const sent = yield* client.conversations.send({
+          params: { id: created.id },
+          payload: {
+            prompt: "with a file",
+            attachments: [file.id],
+            requestId: "send-files",
+          },
+        });
+        // The retry names the same files, now already claimed and sent: only a dedup before claiming answers.
+        const sameFiles = yield* client.conversations.send({
+          params: { id: created.id },
+          payload: {
+            prompt: "with a file",
+            attachments: [file.id],
+            requestId: "send-files",
+          },
+        });
+        // Same requestId, different files: deduped too, claiming nothing — `other` stays unsent for a real send.
+        const differentFiles = yield* client.conversations.send({
+          params: { id: created.id },
+          payload: {
+            prompt: "unrelated",
+            attachments: [other.id],
+            requestId: "send-files",
+          },
+        });
+        const later = yield* client.conversations.send({
+          params: { id: created.id },
+          payload: { prompt: "for real this time", attachments: [other.id] },
+        });
+        return { sent, sameFiles, differentFiles, later };
+      }).pipe(
+        Effect.provide(
+          server([
+            fauxAssistantMessage([fauxText("one")]),
+            fauxAssistantMessage([fauxText("two")]),
+            fauxAssistantMessage([fauxText("three")]),
+            fauxAssistantMessage([fauxText("four")]),
+          ])
+        )
+      )
+    );
+    expect(result.sameFiles.id).toBe(result.sent.id);
+    expect(result.differentFiles.id).toBe(result.sent.id);
+    expect(result.later.id).toBeTypeOf("number");
+  });
+
+  it("rejects a requestId beyond its bound", async () => {
+    const exits = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hi" },
+        });
+        return yield* Effect.exit(
+          client.conversations.send({
+            params: { id: created.id },
+            payload: { prompt: "hi", requestId: "x".repeat(200) },
+          })
+        );
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("one")])])))
+    );
+    expect(Exit.isFailure(exits)).toBeTruthy();
+  });
+
   it("reports the model", async () => {
     const info = await Effect.runPromise(
       Effect.gen(function* () {

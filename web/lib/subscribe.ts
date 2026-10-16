@@ -1,4 +1,4 @@
-import { Effect, Fiber, Schedule, Stream } from "effect";
+import { Duration, Effect, Fiber, Schedule, Stream } from "effect";
 import type { ConversationEvent } from "effect-pi/api";
 import { Api } from "effect-pi/api";
 import { FetchHttpClient } from "effect/http";
@@ -9,15 +9,19 @@ import { useConversationStore } from "./store";
 
 /** Feed a conversation's events into the store until the returned function is called or the conversation ends. */
 const startSubscription = (id: number): (() => void) => {
-  const { apply, markEnded } = useConversationStore.getState();
+  const { applyAll, markEnded } = useConversationStore.getState();
   const subscribe = Effect.gen(function* () {
     const client = yield* HttpApiClient.make(Api, {
       baseUrl: window.location.origin,
     });
     const events = yield* client.conversations.events({ params: { id } });
-    yield* Stream.runForEach(events, (event) =>
-      // The wire schema is JSON; the server sends ConversationEvents.
-      Effect.sync(() => apply(id, event as unknown as ConversationEvent))
+    // Events that arrive together apply in one update: a commit's entry and its submission can never paint
+    // both sides of the pending/committed swap.
+    yield* Stream.runForEach(
+      events.pipe(Stream.groupedWithin(1000, Duration.zero)),
+      (batch) =>
+        // The wire schema is JSON; the server sends ConversationEvents.
+        Effect.sync(() => applyAll(id, batch as unknown as ConversationEvent[]))
     );
   }).pipe(
     Effect.catchTag("ConversationNotFound", () =>

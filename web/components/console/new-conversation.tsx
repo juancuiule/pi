@@ -10,9 +10,13 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { RadioGroup } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
-import { canSend, sendable } from "@/lib/attachments";
+import { attachmentRef, canSend, sendable } from "@/lib/attachments";
+import { initialState } from "@/lib/conversation-state";
+import type { PendingInput } from "@/lib/conversation-state";
 import { useTakeDraft } from "@/lib/draft";
 import { useCapabilities, useCreateConversation, useInfo } from "@/lib/queries";
+import { requestIdForSend } from "@/lib/send-request";
+import type { FailedSend } from "@/lib/send-request";
 import {
   flip,
   newConversationSettings,
@@ -20,11 +24,13 @@ import {
   settingsPayload,
 } from "@/lib/settings";
 import type { Overrides } from "@/lib/settings";
+import { useConversationStore } from "@/lib/store";
 import { useDraftAttachments } from "@/lib/use-draft-attachments";
 
 import { Composer } from "./composer";
 import { SANDBOX_INFO } from "./sandbox-badge";
 import { SettingsPanel } from "./settings-panel";
+import { Transcript } from "./transcript";
 
 const CHOICES: readonly {
   value: SandboxChoice;
@@ -75,29 +81,84 @@ export const NewConversation = ({
   const customized =
     settings === undefined ? undefined : settingsPayload(overrides, settings);
 
+  // Set while the create runs: the view ahead already shows the message.
+  const [creating, setCreating] = useState<PendingInput>();
+  // A failed create kept for its requestId: resending the same message resolves to the same submission.
+  const failed = useRef<FailedSend | null>(null);
+
   const submit = () => {
     if (!canSend(prompt, files.items) || create.isPending) {
       return;
     }
-    const { ids, keys } = sendable(files.items);
+    const { ids, keys, drafts } = sendable(files.items);
+    const text = prompt.trim();
+    // Names the first message's submission; its `submission` event and the create's answer carry it back.
+    const requestId = requestIdForSend(failed.current, text, ids);
+    const pending: PendingInput = {
+      requestId,
+      prompt: text,
+      attachments: drafts.map((draft) => attachmentRef(draft.info)),
+    };
+    setCreating(pending);
+    setPrompt("");
+    // Marked sent, so unmounting does not delete them: the create claims them.
+    files.take(keys);
     create.mutate(
       // Sent for chats too: the agent's upgrade_workspace is gated like commands.
       {
         sandbox,
-        prompt: prompt.trim(),
+        prompt: text,
         attachments: ids,
+        requestId,
         approvals: approvals ? ("ask" as const) : ("auto" as const),
         ...(customized === undefined ? {} : { settings: customized }),
       },
       {
         onSuccess: (created) => {
-          files.take(keys);
+          if (failed.current?.requestId === requestId) {
+            failed.current = null;
+          }
+          // Hand the pending message to the new conversation's transcript before navigating to it.
+          const store = useConversationStore.getState();
+          store.addPending(created.id, pending);
+          store.ackPending(created.id, requestId, created.submission);
           onCreated(created.id);
         },
-        onError: (error) => toast.error(error.message),
+        onError: (error) => {
+          failed.current = { requestId, text, attachments: ids };
+          // Back to the form exactly as it was: the bubble goes, the draft and its files return — ahead of
+          // anything typed while it was sending.
+          setCreating(undefined);
+          setPrompt((current) =>
+            current.trim() === "" ? text : `${text}\n\n${current}`
+          );
+          files.restore(drafts);
+          toast.error(error.message);
+        },
       }
     );
   };
+
+  if (creating !== undefined) {
+    // The conversation view already, minus what needs its id: its transcript, and no composer to send with yet.
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Conversations"
+          className="absolute top-3 left-3 md:hidden"
+          onClick={onMenu}
+        >
+          <Menu />
+        </Button>
+        <Transcript state={{ ...initialState, pending: [creating] }} />
+        <p className="text-muted-foreground px-6 pb-6 text-center text-sm">
+          Creating the conversation…
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center gap-5 p-6">

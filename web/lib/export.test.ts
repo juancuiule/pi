@@ -22,6 +22,7 @@ const summary: ConversationSummary = {
 };
 
 const state: ConversationState = {
+  pending: [],
   entries: [
     entry(1, [
       {

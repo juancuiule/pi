@@ -10,7 +10,9 @@ const REASONS: Readonly<Record<string, string>> = {
 };
 
 /** "Not answered: …"; `undefined` for a Stop, which the transcript already shows as stopped work. */
-export const unansweredNote = (input: UnansweredInput): string | undefined => {
+export const unansweredNote = (
+  input: Pick<UnansweredInput, "reason" | "detail">
+): string | undefined => {
   if (input.reason === "aborted") {
     return undefined;
   }
