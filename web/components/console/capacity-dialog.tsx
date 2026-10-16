@@ -15,7 +15,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
 import type { CapacityShortage } from "@/lib/api";
 import { capacityShortageOf, runApi } from "@/lib/api";
 import { holdersOf, shortageText } from "@/lib/capacity";
@@ -23,6 +22,8 @@ import type { Holder } from "@/lib/capacity";
 import { CapacityContext } from "@/lib/capacity-context";
 import type { CapacityDialog, CapacityGuard } from "@/lib/capacity-context";
 import { fetchConversations, useConversations } from "@/lib/queries";
+
+import { HolderRow } from "./holder-row";
 
 const POLL_MS = 500;
 
@@ -58,57 +59,6 @@ interface Request {
   /** True to run the call again, false to give up; absent when nothing here waits to retry. */
   readonly settle?: (retry: boolean) => void;
 }
-
-const HolderRow = ({
-  holder,
-  disabled,
-  onPause,
-}: {
-  holder: Holder;
-  disabled: boolean;
-  onPause: (stopFirst: boolean) => void;
-}) => (
-  <li className="flex items-center gap-2 rounded-md border px-3 py-2">
-    <span className="flex min-w-0 flex-1 flex-col">
-      <span className="truncate text-sm font-medium" title={holder.title}>
-        {holder.title}
-      </span>
-      <span className="text-muted-foreground text-xs">
-        {holder.running ? "Working" : "Idle"}
-        {holder.pausing ? " · Pausing after this run" : ""}
-      </span>
-    </span>
-    {holder.running ? (
-      <>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled || holder.pausing}
-          onClick={() => onPause(false)}
-        >
-          After this run
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onClick={() => onPause(true)}
-        >
-          Stop and pause
-        </Button>
-      </>
-    ) : (
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={disabled}
-        onClick={() => onPause(false)}
-      >
-        Pause
-      </Button>
-    )}
-  </li>
-);
 
 export const CapacityGuardProvider = ({
   children,
