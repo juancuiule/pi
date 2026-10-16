@@ -101,7 +101,7 @@ export const useCreateConversation = () => {
     }) => guard(() => runApi((c) => c.conversations.create({ payload }))),
     onSuccess: (created) => {
       queryClient.setQueryData<readonly ConversationSummary[]>(LIST, (all) => [
-        ...(all ?? []),
+        ...(all ?? []).filter((each) => each.id !== created.id),
         created,
       ]);
     },
