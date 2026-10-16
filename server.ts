@@ -14,6 +14,7 @@ import { HttpRouter, Multipart } from "effect/http";
 
 import { mcpServers } from "./mcp.config.ts";
 import { Agents } from "./src/agents/agents.ts";
+import { Artifacts } from "./src/artifacts/artifacts.ts";
 import { Attachments } from "./src/attachments/attachments.ts";
 import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
@@ -22,7 +23,8 @@ import { modelFromConfig } from "./src/models.ts";
 import { saveScreenshotsTo } from "./src/screenshots.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { echoModel } from "./src/server/faux.ts";
-import { ApiLayer } from "./src/server/handlers.ts";
+import { apiLayer } from "./src/server/handlers.ts";
+import { shellRoute } from "./src/server/shell.ts";
 import { Skills } from "./src/skills/skills.ts";
 import * as DockerVolumes from "./src/workspaces/docker-volume.ts";
 
@@ -43,6 +45,8 @@ const AttachmentsLive = Attachments.local({
   limits: config.attachments,
 });
 
+const ArtifactsLive = Artifacts.local({ database: config.paths.db });
+
 // One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
 const CapacityLive = Capacity.layer(config.capacity);
 
@@ -57,7 +61,8 @@ const AgentsLive = Agents.layer({
   Layer.provide(DockerVolumes.workspaces()),
   Layer.provide(Skills.directory(config.paths.skills)),
   Layer.provide(CapacityLive),
-  Layer.provideMerge(AttachmentsLive)
+  Layer.provideMerge(AttachmentsLive),
+  Layer.provideMerge(ArtifactsLive)
 );
 
 const ConversationsLive = Conversations.layer(config.server).pipe(
@@ -83,7 +88,13 @@ const UploadLimits = Layer.succeedContext(
   })
 );
 
-const ServerLive = HttpRouter.serve(ApiLayer).pipe(
+const ServerLive = HttpRouter.serve(
+  // Where the console reaches this server directly, skipping Next's rewrite (the shell's socket needs it).
+  Layer.mergeAll(
+    apiLayer({ apiUrl: `http://127.0.0.1:${config.server.port}` }),
+    shellRoute
+  )
+).pipe(
   Layer.provide(ConversationsLive),
   Layer.provide(AgentsLive),
   Layer.provide(NodeHttpServerLayer),

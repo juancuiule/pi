@@ -13,6 +13,7 @@ import { Effect, Layer } from "effect";
 import { Agents } from "../agents/agents.ts";
 import type { AgentModel } from "../agents/agents.ts";
 import type { ApprovalPolicy } from "../approvals.ts";
+import { Artifacts } from "../artifacts/artifacts.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import type { AttachmentLimits } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
@@ -38,6 +39,8 @@ export const fauxAgents = (
     readonly limits?: Partial<Limits>;
     /** The configured model; the faux provider has only `faux/faux-1`, the default. */
     readonly model?: AgentModel;
+    /** The faux model's context window (128k by default); small values drive threshold compaction. */
+    readonly contextWindow?: number;
     /** Attachment limits; the layer provides those Attachments too (temporary), for tests to upload with. */
     readonly attachmentLimits?: Partial<AttachmentLimits>;
     /** The Sandboxes/Workspaces backend; a fresh `localSandboxes()` by default. */
@@ -48,8 +51,18 @@ export const fauxAgents = (
 ) => {
   const models = createModels();
   const faux = fauxProvider(
-    options.vision === false
-      ? { models: [{ id: "faux-1", input: ["text"] }] }
+    options.vision === false || options.contextWindow !== undefined
+      ? {
+          models: [
+            {
+              id: "faux-1",
+              ...(options.vision === false ? { input: ["text" as const] } : {}),
+              ...(options.contextWindow === undefined
+                ? {}
+                : { contextWindow: options.contextWindow }),
+            },
+          ],
+        }
       : {}
   );
   models.setProvider(faux.provider);
@@ -70,6 +83,7 @@ export const fauxAgents = (
       Layer.provide(sandboxes.layer),
       Layer.provide(options.skills ?? Skills.none),
       Layer.provideMerge(Attachments.temporary(options.attachmentLimits)),
+      Layer.provideMerge(Artifacts.temporary()),
       Layer.provideMerge(
         Capacity.layer({ seats: 10, shells: 3, desktops: 1, ...options.limits })
       )

@@ -31,7 +31,7 @@ import type { AnswerInput, ApprovalChoice } from "../approvals.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
-import type { ConversationEvent } from "../conversation-events.ts";
+import type { ConversationEvent, HistoryPage } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
 import {
   ApprovalNotFound,
@@ -167,6 +167,8 @@ export class Conversations extends Context.Service<
       SubmissionRecord,
       SeatError | SkillNotFound | AttachmentError
     >;
+    /** The Conversation's Seat when it has one; a paused or archived Conversation has none. Never resumes. */
+    seat(id: number): Effect.Effect<Seat | undefined>;
     /** Give a paused Conversation a Seat; for one that has a Seat, cancel a Pause waiting for its Run. */
     resume(id: number): Effect.Effect<ConversationSummary, SeatError>;
     /** Free a Conversation's Seat: at once when idle, otherwise once the current Run ends. */
@@ -216,6 +218,11 @@ export class Conversations extends Context.Service<
       Stream.Stream<ConversationEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
+    /** Entries a head marker hides from the active context, oldest first; `before` pages back from an entry id. */
+    history(
+      id: number,
+      options?: { before?: number | undefined; limit?: number | undefined }
+    ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
     /** Decide a call waiting for approval; only a Seat has any, so without one every key is unknown. */
     decide(
       id: number,
@@ -717,6 +724,7 @@ export class Conversations extends Context.Service<
           create,
           list,
           send,
+          seat: (id) => Effect.sync(() => live.get(id)?.seat),
           resume,
           pause,
           stop,
@@ -725,6 +733,7 @@ export class Conversations extends Context.Service<
           archive,
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),
+          history: (id, range) => agents.history(asId(id), range),
           agent: (id) => agents.agent(asId(id)),
           configure: (id, change) => agents.configure(asId(id), change),
           reset: (id) => agents.reset(asId(id)),

@@ -52,6 +52,7 @@ import {
   isGated,
   stopWaitingCalls,
 } from "../approvals.ts";
+import { Artifacts, artifactsExtension } from "../artifacts/artifacts.ts";
 import {
   Attachments,
   attachmentsExtension,
@@ -63,6 +64,7 @@ import { Capacity } from "../capacity.ts";
 import type { Claim, ClaimCancelled } from "../capacity.ts";
 import type {
   ConversationEvent,
+  HistoryPage,
   UnansweredInput,
 } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
@@ -79,6 +81,7 @@ import {
   ConversationNotFound,
   InvalidSetting,
   InvalidUpgrade,
+  SandboxUnavailable,
 } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
@@ -86,6 +89,7 @@ import type {
   SandboxChoice,
   SandboxInfo,
   SandboxKind,
+  SandboxShell,
 } from "../sandbox/sandbox.ts";
 import { SandboxDoc, SandboxError } from "../sandbox/sandbox.ts";
 import {
@@ -145,6 +149,19 @@ export class AgentError extends Schema.TaggedError<AgentError>()("AgentError", {
 const attempt = <A>(run: () => Promise<A>) =>
   Effect.tryPromise({ try: run, catch: (cause) => new AgentError({ cause }) });
 
+/** History pages are capped so a transcript cannot be pulled whole in one request. */
+const HISTORY_PAGE = 200;
+
+// The hidden range is everything on the chain before the latest head marker's first retained entry; its `head`
+// always resolves to a stored numeric id (`"self"` is rewritten when the marker is appended).
+const earlierBound = async (
+  tx: Tx,
+  id: ConversationId
+): Promise<EntryId | undefined> => {
+  const head = await tx.latestHeadMarker(id);
+  return head === undefined ? undefined : ((Number(head.head) - 1) as EntryId);
+};
+
 export interface ToolInfo {
   readonly name: string;
   readonly description: string;
@@ -180,7 +197,13 @@ export interface Capabilities {
     readonly description: string;
     /** False for skills with `disable-model-invocation`: only `/skill:<name>` loads them. */
     readonly modelInvocable: boolean;
+    /** Every file in the skill's folder, `SKILL.md` first. */
+    readonly files: readonly string[];
+    /** The SKILL.md body after its frontmatter, for the console's skills page. */
+    readonly body: string;
   }[];
+  /** Skill folders the catalog skipped and why. */
+  readonly skillProblems: readonly string[];
   readonly mcp: readonly McpServerState[];
   /** The Software this host offers, in catalog order, with the lowest Level that offers each. */
   readonly software: readonly {
@@ -434,6 +457,26 @@ export interface Seat {
     Stream.Stream<number, AgentError>,
     AgentError
   >;
+  /**
+   * A live interactive shell in this Seat's Sandbox, open until the caller's scope closes. `SandboxUnavailable`
+   * when there is none: Level `none`, or mid-Upgrade while it is replaced.
+   */
+  shell(size: {
+    readonly columns: number;
+    readonly rows: number;
+  }): Effect.Effect<
+    SandboxShell,
+    SandboxError | SandboxUnavailable,
+    Scope.Scope
+  >;
+  /**
+   * This Seat's Sandbox as it comes, goes, and is replaced (Upgrade, Pause), starting with the current one.
+   * Single-use, and must be run; finishing or interrupting it stops its watch.
+   */
+  readonly sandboxChanges: Effect.Effect<
+    Stream.Stream<SandboxInfo | undefined, AgentError>,
+    AgentError
+  >;
 }
 
 export class Agents extends Context.Service<
@@ -535,6 +578,14 @@ export class Agents extends Context.Service<
       Stream.Stream<ConversationEvent, AgentError>,
       AgentError | ConversationNotFound
     >;
+    /**
+     * Transcript entries the latest head marker (a compaction or reset) hides from the active context, oldest
+     * first. `before` pages back: pass the oldest id the caller holds to get the page that precedes it.
+     */
+    history(
+      id: ConversationId,
+      options?: { before?: number | undefined; limit?: number | undefined }
+    ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -563,6 +614,7 @@ export class Agents extends Context.Service<
         });
         registry.install(tracing.extension);
         const attachments = yield* Attachments;
+        const artifacts = yield* Artifacts;
         // Skills are read from their source for every new conversation; the extension reads the conversation's.
         const skills = yield* Skills;
         const skillsExt = skillsExtension(skills);
@@ -639,6 +691,8 @@ export class Agents extends Context.Service<
         // Read and search over the conversation's attachments; always on, so a file once sent stays readable.
         const attachmentsExt = attachmentsExtension(attachments);
         registry.install(attachmentsExt);
+        const artifactsExt = artifactsExtension(artifacts);
+        registry.install(artifactsExt);
         // `ask_user`: questions as a form in the console.
         const questionsExt = questionsExtension();
         registry.install(questionsExt);
@@ -647,6 +701,7 @@ export class Agents extends Context.Service<
           ...extensionsFor("desktop", desktop),
           workspaceExt,
           attachmentsExt,
+          artifactsExt,
           questionsExt,
           skillsExt,
           ...mcp.extensions,
@@ -655,13 +710,16 @@ export class Agents extends Context.Service<
         const everyLevel = new Set<Extension>([
           workspaceExt,
           attachmentsExt,
+          artifactsExt,
           questionsExt,
           skillsExt,
           ...mcp.extensions,
           tracing.extension,
         ]);
         const isLocked = (extension: Extension) =>
-          extension === tracing.extension || extension === attachmentsExt;
+          extension === tracing.extension ||
+          extension === attachmentsExt ||
+          extension === artifactsExt;
         const levelsOf = (extension: Extension) =>
           LEVELS.filter(
             (level) =>
@@ -690,6 +748,7 @@ export class Agents extends Context.Service<
             ...extensionsFor(level, desktop),
             workspaceExt,
             attachmentsExt,
+            artifactsExt,
             questionsExt,
             ...(withSkills ? [skillsExt] : []),
             ...mcp.extensions,
@@ -956,6 +1015,9 @@ export class Agents extends Context.Service<
             }, context)
           );
 
+        const backfillAlwaysOnExtensions = (id: ConversationId) =>
+          addExtensions(id, [attachmentsExt, artifactsExt]);
+
         // An Upgrade, recorded in the conversation and on its span for Langfuse.
         const recordUpgrade = (
           id: ConversationId,
@@ -1188,8 +1250,7 @@ export class Agents extends Context.Service<
             return yield* new ConversationArchived({ id: Number(id) });
           }
           yield* locked(id, ensureModel(id));
-          // A conversation from before attachments gets their always-on extension.
-          yield* locked(id, addExtensions(id, [attachmentsExt]));
+          yield* locked(id, backfillAlwaysOnExtensions(id));
           const workspace = yield* attempt(() =>
             harness.snapshot(WorkspaceDoc, id, context)
           );
@@ -1639,6 +1700,22 @@ export class Agents extends Context.Service<
             }
           );
 
+          const shell = Effect.fn("Seat.shell")(function* (size: {
+            readonly columns: number;
+            readonly rows: number;
+          }) {
+            const target = machine?.sandbox;
+            if (target === undefined) {
+              return yield* new SandboxUnavailable({ id: Number(id) });
+            }
+            return yield* workspaces.shell(target, size);
+          });
+
+          const sandboxChanges = watchStream(
+            () => harness.watchDoc(SandboxDoc, id, context),
+            (doc) => doc?.sandbox
+          );
+
           return {
             id,
             get sandbox() {
@@ -1656,6 +1733,8 @@ export class Agents extends Context.Service<
             pendingApprovals,
             running,
             changes,
+            shell,
+            sandboxChanges,
           } satisfies Seat;
         });
 
@@ -1780,6 +1859,59 @@ export class Agents extends Context.Service<
           );
         });
 
+        const earlierOf = (id: ConversationId) =>
+          harness.commit(async (tx): Promise<number | false> => {
+            const bound = await earlierBound(tx, id);
+            if (bound === undefined) {
+              return false;
+            }
+            const page = await tx.scanEntries(
+              { conversationId: id, maxEntryId: bound },
+              1
+            );
+            return page.items.length === 0 ? false : bound;
+          }, context);
+
+        const history = Effect.fn("Agents.history")(function* (
+          id: ConversationId,
+          range: {
+            before?: number | undefined;
+            limit?: number | undefined;
+          } = {}
+        ) {
+          yield* handleOf(id);
+          return yield* attempt((): Promise<HistoryPage> =>
+            harness.commit(async (tx) => {
+              const bound = await earlierBound(tx, id);
+              if (bound === undefined) {
+                return { entries: [], earlier: false };
+              }
+              const requested = range.limit ?? Number.NaN;
+              const limit = Number.isFinite(requested)
+                ? Math.min(Math.max(requested, 1), HISTORY_PAGE)
+                : HISTORY_PAGE;
+              const max = (
+                range.before === undefined
+                  ? bound
+                  : Math.min(range.before - 1, bound)
+              ) as EntryId;
+              // One extra row decides whether another page precedes this one; it is left off the page.
+              const page = await tx.scanEntries(
+                { conversationId: id, maxEntryId: max },
+                limit + 1
+              );
+              const earlier = page.items.length > limit;
+              return {
+                entries: (earlier
+                  ? page.items.slice(0, limit)
+                  : page.items
+                ).toReversed(),
+                earlier,
+              };
+            }, context)
+          );
+        });
+
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
         ) {
@@ -1798,16 +1930,20 @@ export class Agents extends Context.Service<
                 watchEvents(harness, id, context)
               );
               // Read after the watch attached: an input settled since arrives as a `submission` event as well.
-              const unanswered = yield* Effect.exit(
-                attempt(() => unansweredInputs(id))
+              const settled = yield* Effect.exit(
+                attempt(async () => ({
+                  earlier: await earlierOf(id),
+                  unanswered: await unansweredInputs(id),
+                }))
               );
-              if (Exit.isFailure(unanswered)) {
+              if (Exit.isFailure(settled)) {
                 yield* Effect.promise(() => watch.stop());
-                return yield* Effect.failCause(unanswered.cause);
+                return yield* Effect.failCause(settled.cause);
               }
               Queue.offerUnsafe(queue, {
                 ...watch.snapshot,
-                unanswered: unanswered.value,
+                earlier: settled.value.earlier,
+                unanswered: settled.value.unanswered,
               });
               // A watch that falls behind replaces its undelivered batches with a fresh snapshot, which gets the
               // unanswered inputs read again. Deliveries are awaited one at a time, so the order holds; a read that
@@ -1816,7 +1952,11 @@ export class Agents extends Context.Service<
                 const delivered = await Promise.all(
                   batch.map(async (event): Promise<ConversationEvent> =>
                     event.type === "snapshot"
-                      ? { ...event, unanswered: await unansweredInputs(id) }
+                      ? {
+                          ...event,
+                          earlier: await earlierOf(id),
+                          unanswered: await unansweredInputs(id),
+                        }
                       : event
                   )
                 );
@@ -1835,30 +1975,45 @@ export class Agents extends Context.Service<
 
         // The skills a new conversation would get. A source that cannot be read is a defect here (a 500).
         const capabilities = catalog.pipe(
-          Effect.map((current): Capabilities => ({
-            skills: current.skills.map((skill) => ({
-              name: skill.name,
-              description: skill.description,
-              modelInvocable: !skill.disableModelInvocation,
-            })),
-            mcp: mcp.servers,
-            software: offered("desktop").map((id) => ({
-              id,
-              label: SOFTWARE[id].label,
-              description: SOFTWARE[id].description,
-              level: SOFTWARE[id].level,
-            })),
-            extensions: installed.map((extension): ExtensionInfo => ({
-              name: extension.name,
-              levels: levelsOf(extension),
-              tools: (extension.tools ?? []).map(toolInfo),
-              sections: (extension.sections ?? []).map(
-                (section) => section.key
+          Effect.flatMap((current) =>
+            Effect.map(
+              Effect.all(
+                current.skills.map((skill) =>
+                  skills.body(skill).pipe(
+                    Effect.map((body) => ({
+                      name: skill.name,
+                      description: skill.description,
+                      modelInvocable: !skill.disableModelInvocation,
+                      files: skill.files,
+                      body,
+                    })),
+                    Effect.mapError((cause) => new AgentError({ cause }))
+                  )
+                )
               ),
-              hooks: extension.hooks?.length ?? 0,
-              locked: isLocked(extension),
-            })),
-          })),
+              (infos): Capabilities => ({
+                skills: infos,
+                skillProblems: current.problems,
+                mcp: mcp.servers,
+                software: offered("desktop").map((id) => ({
+                  id,
+                  label: SOFTWARE[id].label,
+                  description: SOFTWARE[id].description,
+                  level: SOFTWARE[id].level,
+                })),
+                extensions: installed.map((extension): ExtensionInfo => ({
+                  name: extension.name,
+                  levels: levelsOf(extension),
+                  tools: (extension.tools ?? []).map(toolInfo),
+                  sections: (extension.sections ?? []).map(
+                    (section) => section.key
+                  ),
+                  hooks: extension.hooks?.length ?? 0,
+                  locked: isLocked(extension),
+                })),
+              })
+            )
+          ),
           Effect.orDie
         );
 
@@ -2010,6 +2165,7 @@ export class Agents extends Context.Service<
           archive,
           unarchive,
           events,
+          history,
         });
       })
     );

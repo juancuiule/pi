@@ -33,8 +33,43 @@ export const traceJson = (value: unknown): string =>
 /** Tools whose results are attachment text. */
 const ATTACHMENT_TOOLS = new Set(["read_attachment", "search_attachment"]);
 
+/** Tools whose arguments carry a page's HTML. */
+const ARTIFACT_TOOLS = new Set(["artifact_create", "artifact_update"]);
+
 const sizeOf = (text: string) =>
   `[${text.length} characters of attachment text]`;
+
+const sizeOfHtml = (text: string) => `[${text.length} characters of HTML]`;
+
+/** An artifact tool's arguments for a trace, with the page and the edits' text replaced by their sizes. */
+export const redactArtifactArguments = (
+  tool: string,
+  args: unknown
+): unknown => {
+  if (!ARTIFACT_TOOLS.has(tool) || args === null || typeof args !== "object") {
+    return args;
+  }
+  const redacted = { ...(args as Record<string, unknown>) };
+  if (typeof redacted.html === "string") {
+    redacted.html = sizeOfHtml(redacted.html);
+  }
+  if (Array.isArray(redacted.edits)) {
+    redacted.edits = redacted.edits.map((edit) => {
+      if (edit === null || typeof edit !== "object") {
+        return edit;
+      }
+      const pair = { ...(edit as Record<string, unknown>) };
+      if (typeof pair.find === "string") {
+        pair.find = sizeOfHtml(pair.find);
+      }
+      if (typeof pair.replace === "string") {
+        pair.replace = sizeOfHtml(pair.replace);
+      }
+      return pair;
+    });
+  }
+  return redacted;
+};
 
 /** Message text with each `<attachment>` block's contents replaced by their size. */
 export const redactAttachmentBlocks = (text: string): string =>
@@ -128,6 +163,10 @@ export const makeAgentTracing = (
 ): AgentTracing => {
   const forTrace = (messages: readonly Message[]) =>
     options.attachmentText === true ? messages : redactAttachments(messages);
+  const forTraceArgs = (tool: string, args: unknown) =>
+    options.attachmentText === true
+      ? args
+      : redactArtifactArguments(tool, args);
   const redactsTool = (tool: string) =>
     options.attachmentText !== true && ATTACHMENT_TOOLS.has(tool);
   const forTraceResult = <B extends { readonly type: string }>(
@@ -215,7 +254,9 @@ export const makeAgentTracing = (
           start(api.taskId, api.conversationId, `tool ${call.name}`, {
             "langfuse.observation.type": "tool",
             "gen_ai.tool.name": call.name,
-            "langfuse.observation.input": traceJson(call.arguments),
+            "langfuse.observation.input": traceJson(
+              forTraceArgs(call.name, call.arguments)
+            ),
           });
         },
         afterTool: (call, result, api) => {

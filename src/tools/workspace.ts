@@ -20,8 +20,9 @@ const levelSection = (level: SandboxChoice): string => {
     case "none": {
       return [
         "You have no machine yet: you cannot write files or run anything.",
-        'When the user asks you to create, write, save or run a file, a script or a program, first call upgrade_workspace with level "shell", then write and run it there with your file and shell tools. Use level "desktop" when a task needs a graphical desktop.',
-        "Do not answer such a request by pasting the code in your reply.",
+        "When the user asks for something to see or use — a report, a chart, a dashboard, a prototype — call artifact_create with its self-contained HTML; the person sees the page beside the chat.",
+        'When the user asks for a file to keep or code to run — a document, a script, a program — first call upgrade_workspace with level "shell", then write and run it there with your file and shell tools. Use level "desktop" when a task needs a graphical desktop.',
+        "Do not answer either kind of request by pasting the code or the page in your reply.",
       ].join("\n");
     }
     case "shell": {

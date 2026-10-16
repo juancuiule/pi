@@ -13,10 +13,11 @@ import {
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { Effect, Layer } from "effect";
+import { Effect, Fiber, Layer, Schedule, Stream } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
+import { Artifacts } from "../artifacts/artifacts.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import { saveScreenshotsTo } from "../screenshots.ts";
@@ -26,6 +27,8 @@ import { ask, callTool, echoToolResult } from "../testing/faux.ts";
 import * as DockerVolumes from "../workspaces/docker-volume.ts";
 import { Workspaces } from "../workspaces/workspaces.ts";
 import * as DockerSandboxes from "./docker.ts";
+import { Sandboxes } from "./sandbox.ts";
+import type { SandboxShell } from "./sandbox.ts";
 
 const containerExists = (name: string) =>
   execFileSync("docker", ["ps", "-a", "--filter", `name=^${name}$`, "-q"], {
@@ -59,6 +62,13 @@ const createdAt = (image: string) =>
     }
   ).trim();
 
+/** Polls `f` until true, giving up after ~10 seconds. */
+const until = (f: () => boolean) =>
+  Effect.suspend(() => (f() ? Effect.succeed(true) : Effect.fail(false))).pipe(
+    Effect.retry({ schedule: Schedule.spaced("50 millis"), times: 200 }),
+    Effect.orElseSucceed(() => false)
+  );
+
 /** Run `command` in a Sandbox, collecting its output. */
 const run = (env: ExecutionEnv, command: string) =>
   Effect.promise(async () => {
@@ -87,6 +97,7 @@ const dockerAgents = (
     Layer.provide(testWorkspaces()),
     Layer.provide(Skills.none),
     Layer.provide(Attachments.temporary()),
+    Layer.provide(Artifacts.temporary()),
     Layer.provide(Capacity.layer({ seats: 2, shells: 1, desktops: 1 }))
   );
 };
@@ -275,6 +286,110 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       );
 
       expect(answer).toContain("X=640\nY=400");
+    });
+
+    it("runs an interactive PTY with resize and Ctrl-C, killed when its scope closes", async () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "effect-pi-shell-"));
+      const name = `effect-pi-shell-${crypto.randomUUID().slice(0, 8)}`;
+      const utf8 = new TextDecoder();
+      const ascii = new TextEncoder();
+
+      const observed = await Effect.runPromise(
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes;
+          const sandbox = yield* sandboxes.create(
+            "shell",
+            name,
+            {
+              type: "directory",
+              path: dir,
+            },
+            []
+          );
+          yield* Effect.addFinalizer(() =>
+            Effect.ignore(sandboxes.remove(sandbox))
+          );
+
+          let output = "";
+          const seen = (text: string | RegExp) =>
+            typeof text === "string"
+              ? output.includes(text)
+              : text.test(output);
+          const collect = (shell: SandboxShell) =>
+            Stream.runForEach(shell.output, (chunk) =>
+              Effect.sync(() => {
+                output += utf8.decode(chunk, { stream: true });
+              })
+            ).pipe(Effect.forkDetach);
+
+          const first = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const shell = yield* sandboxes.shell(sandbox, {
+                columns: 100,
+                rows: 40,
+              });
+              const reader = yield* collect(shell);
+              yield* shell.write(ascii.encode("echo MARKER\n"));
+              const echoed = yield* until(() => seen("MARKER"));
+              yield* shell.write(ascii.encode("stty size\n"));
+              const sized = yield* until(() => seen("40 100"));
+              yield* shell.resize(90, 30);
+              yield* shell.write(ascii.encode("stty size\n"));
+              const resized = yield* until(() => seen("30 90"));
+              // Ctrl-C reaches the foreground job as SIGINT, not literal input.
+              yield* shell.write(ascii.encode("sleep 300\n"));
+              yield* Effect.sleep("300 millis");
+              yield* shell.write(Uint8Array.of(3));
+              yield* shell.write(ascii.encode("echo INTACT\n"));
+              const intact = yield* until(() => seen("INTACT"));
+              // `exit` ends the exec: the PTY's stream ends and the collector joins.
+              yield* shell.write(ascii.encode("exit\n"));
+              const exited = yield* Fiber.join(reader).pipe(
+                Effect.timeoutOption("10 seconds"),
+                Effect.map((option) => option._tag === "Some")
+              );
+              return { echoed, sized, resized, intact, exited };
+            })
+          );
+
+          // A scope closing mid-job ends the exec without `exit`: the PTY's SIGHUP kills it.
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const shell = yield* sandboxes.shell(sandbox, {
+                columns: 60,
+                rows: 20,
+              });
+              yield* collect(shell);
+              yield* shell.write(ascii.encode("sleep 300\n"));
+              yield* Effect.sleep("500 millis");
+            })
+          );
+          const killed = yield* until(() => {
+            try {
+              execFileSync(
+                "docker",
+                ["exec", name, "pgrep", "-f", "sleep 300"],
+                { stdio: ["ignore", "ignore", "ignore"] }
+              );
+              return false;
+            } catch {
+              return true;
+            }
+          });
+
+          return { first, killed };
+        }).pipe(Effect.provide(DockerSandboxes.layer()), Effect.scoped)
+      );
+
+      expect(observed.first).toStrictEqual({
+        echoed: true,
+        sized: true,
+        resized: true,
+        intact: true,
+        exited: true,
+      });
+      expect(observed.killed).toBeTruthy();
+      rmSync(dir, { recursive: true, force: true });
     });
   }
 );

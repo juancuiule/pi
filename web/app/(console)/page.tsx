@@ -3,17 +3,16 @@
 import type { ConversationSummary } from "effect-pi/api";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { toast } from "sonner";
 
-import { CapacityGuardProvider } from "@/components/console/capacity-dialog";
+import { ArtifactPanel } from "@/components/console/artifact-panel";
 import { ConversationHeader } from "@/components/console/conversation-header";
 import { DesktopPanel } from "@/components/console/desktop-panel";
 import { MessageInput } from "@/components/console/message-input";
 import { NewConversation } from "@/components/console/new-conversation";
-import { Sidebar } from "@/components/console/sidebar";
 import { Transcript } from "@/components/console/transcript";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +22,11 @@ import {
 } from "@/components/ui/resizable";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { AnswersContext, ApprovalContext } from "@/lib/approval-context";
+import { OpenArtifactContext } from "@/lib/artifact-context";
+import { latestArtifactCall } from "@/lib/artifacts";
+import type { OpenArtifact } from "@/lib/artifacts";
+import { parseConversationId } from "@/lib/conversation-id";
+import type { ConversationState } from "@/lib/conversation-state";
 import {
   useConversationAction,
   useConversations,
@@ -31,13 +35,13 @@ import {
 } from "@/lib/queries";
 import { useConversationStore, useResuming } from "@/lib/store";
 import { useConversationEvents } from "@/lib/use-conversation-events";
-import { useMediaQuery } from "@/lib/use-media-query";
+import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
 
 // wterm loads its WASM at runtime, so the terminal never renders on the server.
-const TerminalPanel = dynamic(
+const SandboxPanel = dynamic(
   async () => {
-    const mod = await import("@/components/console/terminal-panel");
-    return mod.TerminalPanel;
+    const mod = await import("@/components/console/sandbox-panel");
+    return mod.SandboxPanel;
   },
   { ssr: false }
 );
@@ -56,11 +60,6 @@ const readOnlyOf = (
   gone: boolean,
   conversation: ConversationSummary | undefined
 ) => gone || conversation?.status === "archived";
-
-const parseId = (value: string | null): number | undefined => {
-  const id = value === null ? Number.NaN : Number(value);
-  return Number.isInteger(id) ? id : undefined;
-};
 
 const ArchivedNotice = ({ id, onNew }: { id: number; onNew: () => void }) => {
   const act = useConversationAction();
@@ -115,6 +114,122 @@ const Composer = ({
     />
   );
 
+/**
+ * The artifact open beside the chat, independent of the sandbox panel (a Level-none conversation has pages but
+ * no machine). A just-committed `artifact_*` result opens it on its own; the calls already committed when the
+ * first snapshot landed are the baseline, so a reload never pops the panel.
+ */
+const useArtifactPanel = (
+  selectedId: number | undefined,
+  state: ConversationState
+): [OpenArtifact | undefined, (artifact: OpenArtifact | undefined) => void] => {
+  const [artifact, setArtifact] = useState<OpenArtifact | undefined>();
+  const [artifactConversation, setArtifactConversation] = useState(selectedId);
+  if (artifactConversation !== selectedId) {
+    setArtifactConversation(selectedId);
+    setArtifact(undefined);
+  }
+  const seen = useRef<{ conversation?: number; callId?: string }>({});
+  useEffect(() => {
+    if (selectedId === undefined || !state.hydrated) {
+      seen.current = {};
+      return;
+    }
+    if (seen.current.conversation !== selectedId) {
+      seen.current = {
+        conversation: selectedId,
+        callId: latestArtifactCall(state.entries)?.callId,
+      };
+      return;
+    }
+    const latest = latestArtifactCall(state.entries);
+    if (latest !== undefined && latest.callId !== seen.current.callId) {
+      seen.current.callId = latest.callId;
+      setArtifact({ id: latest.id, version: latest.version });
+    }
+  }, [selectedId, state]);
+  return [artifact, setArtifact];
+};
+
+/** On desktop an artifact is a third pane after the main one; dragging it shut closes it. */
+const ArtifactResizablePanel = ({
+  artifact,
+  conversation,
+  onClose,
+}: {
+  artifact: OpenArtifact | undefined;
+  conversation: number | undefined;
+  onClose: () => void;
+}) => {
+  if (artifact === undefined || conversation === undefined) {
+    return null;
+  }
+  return (
+    <>
+      <ResizableHandle />
+      <ResizablePanel
+        defaultSize="30%"
+        minSize="15%"
+        collapsible
+        onResize={(size) => {
+          if (size.asPercentage === 0) {
+            onClose();
+          }
+        }}
+      >
+        <ArtifactPanel
+          key={`${conversation}:${artifact.id}`}
+          artifact={artifact}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      </ResizablePanel>
+    </>
+  );
+};
+
+/** Below the desktop breakpoint the same panel is a Sheet instead. */
+const ArtifactSheet = ({
+  artifact,
+  conversation,
+  isDesktop,
+  onClose,
+}: {
+  artifact: OpenArtifact | undefined;
+  conversation: number | undefined;
+  isDesktop: boolean | null;
+  onClose: () => void;
+}) => (
+  <Sheet
+    open={
+      isDesktop === false &&
+      artifact !== undefined &&
+      conversation !== undefined
+    }
+    onOpenChange={(open) => {
+      if (!open) {
+        onClose();
+      }
+    }}
+  >
+    <SheetContent
+      side="right"
+      showCloseButton={false}
+      className="w-full sm:max-w-2xl"
+    >
+      <SheetTitle className="sr-only">Artifact page</SheetTitle>
+      {artifact === undefined || conversation === undefined ? null : (
+        <ArtifactPanel
+          key={`${conversation}:${artifact.id}`}
+          artifact={artifact}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      )}
+    </SheetContent>
+  </Sheet>
+);
+
 const NotFound = ({ onNew }: { onNew: () => void }) => (
   <div className="flex h-full flex-col items-center justify-center gap-2 p-6">
     <h1 className="text-base font-medium">Conversation not found</h1>
@@ -148,15 +263,13 @@ const ConversationMutations = ({
 
 const Console = () => {
   const router = useRouter();
-  const selectedId = parseId(useSearchParams().get("c"));
+  const selectedId = parseConversationId(useSearchParams().get("c"));
   const select = (id: number) => router.push(`/?c=${id}`);
   const clear = () => router.push("/");
 
-  // Tailwind's md breakpoint: below it the sidebar is a Sheet and the side panel is hidden.
-  const isDesktop = useMediaQuery("(min-width: 48rem)");
+  const isDesktop = useMediaQuery(DESKTOP_MEDIA);
   const sidePanel = usePanelRef();
   const [sideCollapsed, setSideCollapsed] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
 
   const state = useConversationEvents(selectedId);
   const thinkingHidden = useConversationStore(
@@ -179,6 +292,8 @@ const Console = () => {
     conversation === undefined &&
     !(readOnly && state.entries.length > 0);
 
+  const [artifact, setArtifact] = useArtifactPanel(selectedId, state);
+
   const toggleSidePanel = () => {
     const panel = sidePanel.current;
     if (panel === null) {
@@ -194,9 +309,7 @@ const Console = () => {
   // While the list loads, show nothing: flashing a composer for a conversation that may not exist is worse.
   let main: ReactNode = null;
   if (selectedId === undefined) {
-    main = (
-      <NewConversation onCreated={select} onMenu={() => setMenuOpen(true)} />
-    );
+    main = <NewConversation onCreated={select} />;
   } else if (data !== undefined) {
     main = notFound ? (
       <NotFound onNew={clear} />
@@ -208,7 +321,6 @@ const Console = () => {
             <ConversationHeader
               conversation={conversation}
               state={state}
-              onMenu={() => setMenuOpen(true)}
               sidePanel={
                 showSandbox && isDesktop
                   ? {
@@ -243,31 +355,17 @@ const Console = () => {
   }
 
   return (
-    <>
+    <OpenArtifactContext.Provider value={setArtifact}>
       <title>{pageTitle(conversation)}</title>
-      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-        <SheetContent side="left" className="w-72">
-          <SheetTitle className="sr-only">Conversations</SheetTitle>
-          <Sidebar
-            selectedId={selectedId}
-            onSelect={(id) => {
-              setMenuOpen(false);
-              select(id);
-            }}
-            onNew={() => {
-              setMenuOpen(false);
-              clear();
-            }}
-          />
-        </SheetContent>
-      </Sheet>
       {isDesktop === true ? (
-        <ResizablePanelGroup orientation="horizontal" className="h-dvh">
-          <ResizablePanel defaultSize="260px" minSize="220px" maxSize="420px">
-            <Sidebar selectedId={selectedId} onSelect={select} onNew={clear} />
-          </ResizablePanel>
-          <ResizableHandle />
+        // Nested inside the console shell's page panel: main, then an open artifact, then the sandbox.
+        <ResizablePanelGroup orientation="horizontal" className="h-full">
           <ResizablePanel minSize="30%">{main}</ResizablePanel>
+          <ArtifactResizablePanel
+            artifact={artifact}
+            conversation={selectedId}
+            onClose={() => setArtifact(undefined)}
+          />
           {showSandbox ? (
             <>
               <ResizableHandle />
@@ -286,7 +384,12 @@ const Console = () => {
                       resuming={resuming}
                     />
                   ) : (
-                    <TerminalPanel state={state} resuming={resuming} />
+                    <SandboxPanel
+                      id={conversation.id}
+                      live={!seatlessOf(conversation)}
+                      state={state}
+                      resuming={resuming}
+                    />
                   )}
                 </div>
               </ResizablePanel>
@@ -294,19 +397,15 @@ const Console = () => {
           ) : null}
         </ResizablePanelGroup>
       ) : null}
-      {isDesktop === false ? (
-        <div className="flex h-dvh flex-col">{main}</div>
-      ) : null}
-    </>
+      {isDesktop === false ? main : null}
+      <ArtifactSheet
+        artifact={artifact}
+        conversation={selectedId}
+        isDesktop={isDesktop}
+        onClose={() => setArtifact(undefined)}
+      />
+    </OpenArtifactContext.Provider>
   );
 };
 
-const Home = () => (
-  <Suspense>
-    <CapacityGuardProvider>
-      <Console />
-    </CapacityGuardProvider>
-  </Suspense>
-);
-
-export default Home;
+export default Console;

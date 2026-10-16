@@ -110,6 +110,8 @@ const SUMMARIES: Record<string, (args: Args) => string> = {
   desktop_screenshot: () => "",
   calculate,
   ask_user: askUser,
+  artifact_create: (args) => text(args.title) ?? "",
+  artifact_update: (args) => text(args.title) ?? "",
 };
 
 /** A compact one-line description of a call's arguments; "" when there is nothing meaningful to show. */

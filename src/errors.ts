@@ -47,6 +47,12 @@ export class InvalidUpgrade extends Schema.TaggedError<InvalidUpgrade>()(
   }
 ) {}
 
+/** The Conversation has no Sandbox to run a shell in: Level none, or the Sandbox is being replaced. */
+export class SandboxUnavailable extends Schema.TaggedError<SandboxUnavailable>()(
+  "SandboxUnavailable",
+  { id: Schema.Number }
+) {}
+
 /** A settings change that cannot be applied: an unknown name, a locked extension, or one the Level does not allow. */
 export class InvalidSetting extends Schema.TaggedError<InvalidSetting>()(
   "InvalidSetting",
@@ -75,4 +81,19 @@ export class AttachmentRefused extends Schema.TaggedError<AttachmentRefused>()(
 export class EmptyMessage extends Schema.TaggedError<EmptyMessage>()(
   "EmptyMessage",
   {}
+) {}
+
+/** No artifact with this id in the conversation it was asked for. */
+export class ArtifactNotFound extends Schema.TaggedError<ArtifactNotFound>()(
+  "ArtifactNotFound",
+  { id: Schema.String }
+) {}
+
+/**
+ * A page or change `artifact_create`/`artifact_update` cannot take: over the size cap, more edits than allowed, or
+ * a `find` that is missing or not unique. `reason` is the sentence the model reads.
+ */
+export class ArtifactRefused extends Schema.TaggedError<ArtifactRefused>()(
+  "ArtifactRefused",
+  { reason: Schema.String }
 ) {}

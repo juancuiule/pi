@@ -1,4 +1,8 @@
 // Handlers for the API in api.ts. Agent and sandbox failures are defects: they surface as 500s.
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import path from "node:path";
+
 import type {
   ConversationId,
   SubmissionRecord,
@@ -9,9 +13,14 @@ import { HttpServerResponse } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 
 import { Agents } from "../agents/agents.ts";
+import { Artifacts } from "../artifacts/artifacts.ts";
 import { Attachments, infoOf } from "../attachments/attachments.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
-import { ConversationArchived, EmptyMessage } from "../errors.ts";
+import {
+  ArtifactNotFound,
+  ConversationArchived,
+  EmptyMessage,
+} from "../errors.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";
@@ -162,6 +171,11 @@ const ConversationsHandlers = HttpApiBuilder.group(
           Effect.catchTag("AgentError", Effect.die)
         )
       )
+      .handle("history", ({ params, query }) =>
+        conversations
+          .history(params.id, { before: query.before, limit: query.limit })
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
       .handle("approvals", ({ params, payload }) =>
         conversations
           .decide(params.id, payload.key, payload.decision)
@@ -262,26 +276,105 @@ const AttachmentsHandlers = HttpApiBuilder.group(
   })
 );
 
-const InfoHandlers = HttpApiBuilder.group(
+/** An artifact page's sandbox: scripts only inline or from this origin's artifact-libs, nothing fetched. */
+const ARTIFACT_CSP =
+  "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'";
+
+/**
+ * The JavaScript a page may load, by served name: each resolves to the file of that name in its package's dist
+ * folder (the entry point's directory). Anything not in the map is a 404 — pages never reach a CDN.
+ */
+const ARTIFACT_LIBS: Record<string, string> = {
+  "chart.umd.js": "chart.js",
+  "mermaid.min.js": "mermaid",
+};
+
+const require_ = createRequire(import.meta.url);
+
+const libPath = (file: string) => {
+  const pkg = ARTIFACT_LIBS[file];
+  return pkg === undefined
+    ? undefined
+    : path.join(path.dirname(require_.resolve(pkg)), file);
+};
+
+const ArtifactsHandlers = HttpApiBuilder.group(
   Api,
-  "info",
+  "artifacts",
   Effect.fnUntraced(function* (handlers) {
-    const {
-      capabilities,
-      model: { provider, modelId },
-    } = yield* Agents;
-    const { capacity } = yield* Conversations;
-    const model = `${provider}/${modelId}`;
+    const artifacts = yield* Artifacts;
     return handlers
-      .handle("get", () => Effect.succeed({ model }))
-      .handle("capabilities", () => capabilities)
-      .handle("capacity", () => capacity);
+      .handle("list", ({ query }) => artifacts.list(query.conversation))
+      .handle("view", ({ params, query }) =>
+        artifacts.view(query.conversation, params.id)
+      )
+      .handle("render", ({ params, query }) =>
+        artifacts.html(query.conversation, params.id, query.v).pipe(
+          Effect.map(({ html }) =>
+            HttpServerResponse.text(html, {
+              contentType: "text/html",
+              headers: {
+                "content-security-policy": ARTIFACT_CSP,
+                "x-content-type-options": "nosniff",
+                "cache-control": "no-store",
+              },
+            })
+          )
+        )
+      )
+      .handle("source", ({ params, query }) =>
+        artifacts.html(query.conversation, params.id, query.v)
+      )
+      .handle("remove", ({ params, query }) =>
+        artifacts.remove(query.conversation, params.id)
+      )
+      .handle("lib", ({ params }) => {
+        const file = libPath(params.file);
+        return file === undefined
+          ? Effect.fail(new ArtifactNotFound({ id: params.file }))
+          : Effect.promise(() => readFile(file)).pipe(
+              Effect.map((bytes) =>
+                HttpServerResponse.uint8Array(bytes, {
+                  contentType: "text/javascript",
+                  headers: {
+                    "x-content-type-options": "nosniff",
+                    "cache-control": "no-store",
+                  },
+                })
+              )
+            );
+      });
   })
 );
 
-export const ApiLayer = HttpApiBuilder.layer(Api).pipe(
-  Layer.provide(
-    Layer.mergeAll(ConversationsHandlers, AttachmentsHandlers, InfoHandlers)
-  ),
-  Layer.merge(loopbackOnly)
-);
+const infoHandlers = (apiUrl: string) =>
+  HttpApiBuilder.group(
+    Api,
+    "info",
+    Effect.fnUntraced(function* (handlers) {
+      const {
+        capabilities,
+        model: { provider, modelId },
+      } = yield* Agents;
+      const { capacity } = yield* Conversations;
+      const model = `${provider}/${modelId}`;
+      return handlers
+        .handle("get", () => Effect.succeed({ model, apiUrl }))
+        .handle("capabilities", () => capabilities)
+        .handle("capacity", () => capacity);
+    })
+  );
+
+/** The HTTP API; `apiUrl` is the server's own address, reported by `/api/info`. */
+export const apiLayer = (options: { readonly apiUrl: string }) =>
+  HttpApiBuilder.layer(Api).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ConversationsHandlers,
+        AttachmentsHandlers,
+        ArtifactsHandlers,
+        infoHandlers(options.apiUrl)
+      )
+    ),
+    Layer.merge(loopbackOnly)
+  );

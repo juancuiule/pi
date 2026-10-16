@@ -22,6 +22,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Attachment**: A file a person sends with a message: its original, kept privately on the server, and the text or image prepared from it once. Before a message takes it, it is an upload: staged (no Conversation yet) or a Conversation's, and it expires unsent. _Avoid_: document, file upload, asset
 
+**Artifact**: A sandboxed HTML page the agent writes for the person, kept privately on the server with every version of it. _Avoid_: file, document, page
+
 ## Workspaces
 
 **Workspace**: The durable machine side of a Conversation: its Level, its Software and its files. _Avoid_: volume, environment
@@ -33,5 +35,7 @@ A server where people talk to agents in conversations; an agent can run tools on
 **Upgrade**: Raising a Workspace's Level, adding Software, or both. The person can do either; the agent only raises the Level.
 
 **Sandbox**: A running machine over a Workspace. It exists only while its Conversation has a Seat. _Avoid_: container, VM
+
+**Shell**: The console's live terminal in a Conversation's Sandbox: a real PTY over a WebSocket, not the agent's command output (that is the Agent tab). _Avoid_: exec, agent terminal
 
 **Capacity**: How many Sandboxes the server runs at once. _Avoid_: cap, limit, slots

@@ -12,6 +12,7 @@ import type {
   SandboxError,
   SandboxInfo,
   SandboxKind,
+  SandboxShell,
   WorkspaceMount,
 } from "../sandbox/sandbox.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
@@ -79,6 +80,14 @@ export class Workspaces extends Context.Service<
     discard(storage: StorageRef): Effect.Effect<void, SandboxError>;
     /** The execution environment of a Sandbox, for the harness; cheap, called for every tool call. */
     env(sandbox: SandboxInfo): ExecutionEnv;
+    /**
+     * A live interactive shell in a Sandbox, ending when its scope closes; unlike `env`, it is a
+     * real PTY, not a request/reply channel, so it is not for tool calls.
+     */
+    shell(
+      sandbox: SandboxInfo,
+      size: { readonly columns: number; readonly rows: number }
+    ): Effect.Effect<SandboxShell, SandboxError, Scope.Scope>;
   }
 >()("effect-pi/Workspaces") {
   static readonly layer = Layer.effect(
@@ -116,6 +125,7 @@ export class Workspaces extends Context.Service<
         sandbox,
         discard: storage.remove,
         env: sandboxes.env,
+        shell: sandboxes.shell,
       });
     })
   );

@@ -2,6 +2,9 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 
+/** Tailwind's md breakpoint: below it the sidebar is a Sheet and the side panel is hidden. */
+export const DESKTOP_MEDIA = "(min-width: 48rem)";
+
 /** Whether a CSS media query matches, live. `null` on the server and until mounted. */
 export const useMediaQuery = (query: string): boolean | null => {
   const subscribe = useCallback(
