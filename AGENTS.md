@@ -160,3 +160,4 @@ Agents are traced with Effect spans, exported to Langfuse over OTLP.
 ## Pull requests
 
 - After opening a PR, generate an explain-diff walkthrough of the branch's diff against its base (the `explain-diff` skill writes a self-contained HTML file at `/tmp/YYYY-MM-DD-explanation-<slug>.html`) and report the file's path, so the reviewer can read the explanation beside the PR.
+- When the diff changes runtime behavior a static explanation can't make intuitive — lifecycles, concurrency, protocols, migrations, multi-step flows — also build a micro-world (Geoffrey Litt, "Understanding is the new bottleneck"): a throwaway interactive page or script the reviewer drives, triggering events and watching state move, saved next to the explainer. It is a review artifact, not shipped code; skip it for diffs a reader can fully get from prose.
