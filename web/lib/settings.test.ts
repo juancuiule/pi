@@ -39,9 +39,22 @@ const capabilities: Capabilities = {
     },
   ],
   skills: [
-    { name: "convert", description: "", modelInvocable: true },
-    { name: "notes", description: "", modelInvocable: true },
+    {
+      name: "convert",
+      description: "",
+      modelInvocable: true,
+      files: ["SKILL.md"],
+      body: "",
+    },
+    {
+      name: "notes",
+      description: "",
+      modelInvocable: true,
+      files: ["SKILL.md"],
+      body: "",
+    },
   ],
+  skillProblems: [],
   mcp: [],
 };
 

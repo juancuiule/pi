@@ -2,14 +2,20 @@
 
 import type { ConversationSummary } from "effect-pi/api";
 import {
+  BookOpen,
+  Gauge,
   LoaderCircle,
+  MessageSquare,
   Monitor,
   Moon,
   Plus,
+  Settings,
   ShieldAlert,
   Sun,
 } from "lucide-react";
 import { useTheme } from "next-themes";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -22,13 +28,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { parseConversationId } from "@/lib/conversation-id";
 import { relativeTime } from "@/lib/format";
 import { useConversations, useInfo } from "@/lib/queries";
 import { useConversationStore } from "@/lib/store";
 import { useMounted } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 
-import { CapabilitiesSheet } from "./capabilities-sheet";
 import { SANDBOX_INFO } from "./sandbox-badge";
 
 /** A clock that re-renders every 30s so relative timestamps stay fresh. */
@@ -45,6 +51,13 @@ const THEMES = [
   { value: "system", label: "System", icon: Monitor },
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
+] as const;
+
+const PAGES = [
+  { href: "/", label: "Conversations", icon: MessageSquare },
+  { href: "/skills", label: "Skills", icon: BookOpen },
+  { href: "/capacity", label: "Capacity", icon: Gauge },
+  { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
 /** The spinner a row gets while its Seat is busy: Resuming ahead of Running; neither when an approval waits. */
@@ -105,15 +118,12 @@ const ThemeToggle = () => {
   );
 };
 
-export const Sidebar = ({
-  selectedId,
-  onSelect,
-  onNew,
-}: {
-  selectedId: number | undefined;
-  onSelect: (id: number) => void;
-  onNew: () => void;
-}) => {
+export const Sidebar = () => {
+  const router = useRouter();
+  const pathname = usePathname();
+  const param = useSearchParams().get("c");
+  // A conversation is current only on the chat route.
+  const selectedId = pathname === "/" ? parseConversationId(param) : undefined;
   const { data } = useConversations();
   const { data: info } = useInfo();
   const resuming = useConversationStore((store) => store.resuming);
@@ -164,7 +174,7 @@ export const Sidebar = ({
                 <button
                   type="button"
                   aria-current={selected ? "page" : undefined}
-                  onClick={() => onSelect(conversation.id)}
+                  onClick={() => router.push(`/?c=${conversation.id}`)}
                   className={cn(
                     "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2",
                     selected && "bg-accent text-accent-foreground font-medium"
@@ -225,7 +235,7 @@ export const Sidebar = ({
       <div className="px-2">
         <Button
           variant="outline"
-          onClick={onNew}
+          onClick={() => router.push("/")}
           className="w-full justify-start"
         >
           <Plus />
@@ -250,8 +260,30 @@ export const Sidebar = ({
           </Button>
         </div>
       )}
+      <nav aria-label="Pages" className="border-border border-t px-2 py-2">
+        <ul className="flex flex-col gap-0.5">
+          {PAGES.map(({ href, label, icon: Icon }) => (
+            <li key={href}>
+              <Link
+                href={href}
+                aria-current={pathname === href ? "page" : undefined}
+                className={cn(
+                  "hover:bg-muted focus-visible:ring-ring/50 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors duration-150 outline-none focus-visible:ring-2",
+                  pathname === href &&
+                    "bg-accent text-accent-foreground font-medium"
+                )}
+              >
+                <Icon
+                  aria-hidden
+                  className="text-muted-foreground size-4 shrink-0"
+                />
+                {label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
       <div className="border-border flex flex-col gap-1.5 border-t p-2">
-        <CapabilitiesSheet conversationId={selectedId} />
         <span
           className="text-muted-foreground block truncate font-mono text-xs"
           title={info?.model}

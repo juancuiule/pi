@@ -1,5 +1,5 @@
-// Text to put in whichever composer is on screen, such as `/skill:<name> ` chosen in the capabilities sheet. The
-// mounted composer takes it once, and registers its textarea so the sheet can focus it when it closes.
+// Text to put in whichever composer is on screen, such as `/skill:<name> ` chosen on the skills page. A composer
+// takes each offered draft once, including one offered before it mounted, and registers its textarea to focus.
 import { useEffect } from "react";
 import type { RefObject } from "react";
 import { create } from "zustand";
@@ -24,17 +24,8 @@ export const useDraft = create<Draft>()((set, get) => ({
 }));
 
 /**
- * Where the sheet sends focus when it closes (its `finalFocus`): the composer after a skill was picked, so typing
- * continues the request; otherwise `true`, the sheet's default of returning to its trigger.
- */
-export const focusAfterSheet = (
-  picked: boolean,
-  target: HTMLElement | null | undefined
-): HTMLElement | true => (picked && target ? target : true);
-
-/**
- * Hand every draft offered while the caller is mounted to `onDraft`, once, and register `target` as the composer to
- * focus. `onDraft` should be stable (a setState).
+ * Hand every draft offered to `onDraft`, once: one waiting from before the caller mounted, then each later offer.
+ * `target` is registered as the composer to focus. `onDraft` should be stable (a setState).
  */
 export const useTakeDraft = (
   onDraft: (text: string) => void,
@@ -42,6 +33,11 @@ export const useTakeDraft = (
 ): void => {
   useEffect(() => {
     useDraft.setState({ target });
+    const pending = useDraft.getState().take();
+    if (pending !== undefined) {
+      onDraft(pending);
+      target.current?.focus();
+    }
     const unsubscribe = useDraft.subscribe((state) => {
       if (state.draft === undefined) {
         return;

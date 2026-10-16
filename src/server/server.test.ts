@@ -14,7 +14,7 @@ import type { AgentError } from "../agents/agents.ts";
 import { Artifacts } from "../artifacts/artifacts.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
-import { Skills } from "../skills/skills.ts";
+import { Skills, SkillSource } from "../skills/skills.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
@@ -58,6 +58,16 @@ describe("HTTP API", () => {
     const echo = fakeMcpServer("test", [
       { name: "echo", call: () => ({ content: [] }) },
     ]);
+    const skills = Skills.layer.pipe(
+      Layer.provide(
+        SkillSource.memory({
+          "convert/SKILL.md":
+            "---\nname: convert\ndescription: Convert units.\n---\n\n# Convert\n\nDo the thing.\n",
+          "convert/references/factors.md": "mile → km: 1.609344",
+          "broken/SKILL.md": "---\nname: broken\n---\nNo description.",
+        })
+      )
+    );
     const capabilities = await Effect.runPromise(
       Effect.gen(function* () {
         const client = yield* HttpApiClient.make(Api);
@@ -66,14 +76,25 @@ describe("HTTP API", () => {
         Effect.provide(
           serverWith(
             fauxAgents([fauxAssistantMessage([fauxText("ok")])], {
-              skills: Skills.directory("skills"),
+              skills,
               mcp: [echo],
             }).layer
           )
         )
       )
     );
-    expect(capabilities.skills.map((s) => s.name)).toContain("unit-conversion");
+    expect(capabilities.skills).toStrictEqual([
+      {
+        name: "convert",
+        description: "Convert units.",
+        modelInvocable: true,
+        files: ["SKILL.md", "references/factors.md"],
+        body: "\n# Convert\n\nDo the thing.\n",
+      },
+    ]);
+    expect(capabilities.skillProblems).toStrictEqual([
+      "broken: description: is required",
+    ]);
     expect(capabilities.mcp).toStrictEqual([
       {
         name: "test",
