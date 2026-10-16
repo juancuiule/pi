@@ -29,6 +29,11 @@
   --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  /* Conversation status dots: fixed signal colors, except paused which stays a quiet gray in both themes. */
+  --color-status-waiting: #fcc500;
+  --color-status-error: #fc1400;
+  --color-status-live: #0cc084;
+  --color-status-paused: var(--muted-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
