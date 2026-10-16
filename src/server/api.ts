@@ -189,8 +189,14 @@ export const Capabilities = Schema.Struct({
       name: Schema.String,
       description: Schema.String,
       modelInvocable: Schema.Boolean,
+      /** Every file in the skill's folder, `SKILL.md` first. */
+      files: Schema.Array(Schema.String),
+      /** The SKILL.md body after its frontmatter, for the console's skills page. */
+      body: Schema.String,
     })
   ),
+  /** Skill folders the catalog skipped and why. */
+  skillProblems: Schema.Array(Schema.String),
   mcp: Schema.Array(
     Schema.Struct({
       name: Schema.String,

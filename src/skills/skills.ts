@@ -31,6 +31,7 @@ import {
   formatSkillHints,
   formatSkillMessage,
   parseSkillCommand,
+  parseSkillFile,
   SKILL_FILE,
   skillInstructions,
   skillMentions,
@@ -137,6 +138,8 @@ export class Skills extends Context.Service<
       file?: string,
       sandboxDir?: string
     ) => Effect.Effect<string, SkillSourceError | SkillFileNotFound>;
+    /** The SKILL.md body after its frontmatter, for the console's skills page. */
+    readonly body: (skill: Skill) => Effect.Effect<string, SkillSourceError>;
     /**
      * `/skill:<name> <request>` forces that skill: its instructions go in the message (see `formatSkillMessage`).
      * `/skill:<name>` anywhere else is a hint: the message keeps it and gains a `<skill_hints>` block with the
@@ -356,9 +359,15 @@ export class Skills extends Context.Service<
         }).pipe(Effect.onError(() => Effect.ignore(removeStaging)));
       });
 
+      const body = (skill: Skill) =>
+        readText(skill.id, SKILL_FILE).pipe(
+          Effect.map((text) => parseSkillFile(text).body)
+        );
+
       return Skills.of({
         catalog,
         read,
+        body,
         expand,
         install,
         replace,

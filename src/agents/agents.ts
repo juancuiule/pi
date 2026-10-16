@@ -187,7 +187,13 @@ export interface Capabilities {
     readonly description: string;
     /** False for skills with `disable-model-invocation`: only `/skill:<name>` loads them. */
     readonly modelInvocable: boolean;
+    /** Every file in the skill's folder, `SKILL.md` first. */
+    readonly files: readonly string[];
+    /** The SKILL.md body after its frontmatter, for the console's skills page. */
+    readonly body: string;
   }[];
+  /** Skill folders the catalog skipped and why. */
+  readonly skillProblems: readonly string[];
   readonly mcp: readonly McpServerState[];
 }
 
@@ -1783,24 +1789,39 @@ export class Agents extends Context.Service<
 
         // The skills a new conversation would get. A source that cannot be read is a defect here (a 500).
         const capabilities = catalog.pipe(
-          Effect.map((current): Capabilities => ({
-            skills: current.skills.map((skill) => ({
-              name: skill.name,
-              description: skill.description,
-              modelInvocable: !skill.disableModelInvocation,
-            })),
-            mcp: mcp.servers,
-            extensions: installed.map((extension): ExtensionInfo => ({
-              name: extension.name,
-              levels: levelsOf(extension),
-              tools: (extension.tools ?? []).map(toolInfo),
-              sections: (extension.sections ?? []).map(
-                (section) => section.key
+          Effect.flatMap((current) =>
+            Effect.map(
+              Effect.all(
+                current.skills.map((skill) =>
+                  skills.body(skill).pipe(
+                    Effect.map((body) => ({
+                      name: skill.name,
+                      description: skill.description,
+                      modelInvocable: !skill.disableModelInvocation,
+                      files: skill.files,
+                      body,
+                    })),
+                    Effect.mapError((cause) => new AgentError({ cause }))
+                  )
+                )
               ),
-              hooks: extension.hooks?.length ?? 0,
-              locked: isLocked(extension),
-            })),
-          })),
+              (infos): Capabilities => ({
+                skills: infos,
+                skillProblems: current.problems,
+                mcp: mcp.servers,
+                extensions: installed.map((extension): ExtensionInfo => ({
+                  name: extension.name,
+                  levels: levelsOf(extension),
+                  tools: (extension.tools ?? []).map(toolInfo),
+                  sections: (extension.sections ?? []).map(
+                    (section) => section.key
+                  ),
+                  hooks: extension.hooks?.length ?? 0,
+                  locked: isLocked(extension),
+                })),
+              })
+            )
+          ),
           Effect.orDie
         );
 
