@@ -39,7 +39,6 @@ const server = (responses: FauxResponseStep[]) =>
 
 const ok = [fauxAssistantMessage([fauxText("ok")])];
 
-/** Polls `f` until true, giving up after ~10 seconds. */
 const until = (f: () => boolean) =>
   Effect.suspend(() => (f() ? Effect.succeed(true) : Effect.fail(false))).pipe(
     Effect.retry({ schedule: Schedule.spaced("50 millis"), times: 200 }),
@@ -54,7 +53,6 @@ interface TestSocket {
   readonly close: () => void;
 }
 
-/** A WebSocket to the shell route, collecting PTY output into `output` and control frames into `controls`. */
 const open = (url: string) =>
   Effect.callback<TestSocket, Error>((resume) => {
     const ws = new NodeWS.WebSocket(url);

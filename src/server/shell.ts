@@ -23,24 +23,24 @@ const sizeOf = (request: HttpServerRequest.HttpServerRequest) => {
   };
 };
 
-/** A client text frame is a control message; anything that is not `resize` is ignored. */
 const resizeOf = (text: string) => {
+  let message: unknown;
   try {
-    const message: unknown = JSON.parse(text);
-    if (
-      typeof message === "object" &&
-      message !== null &&
-      "type" in message &&
-      message.type === "resize" &&
-      "columns" in message &&
-      typeof message.columns === "number" &&
-      "rows" in message &&
-      typeof message.rows === "number"
-    ) {
-      return { columns: message.columns, rows: message.rows };
-    }
+    message = JSON.parse(text);
   } catch {
-    // Not JSON: ignore.
+    return;
+  }
+  if (
+    typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    message.type === "resize" &&
+    "columns" in message &&
+    typeof message.columns === "number" &&
+    "rows" in message &&
+    typeof message.rows === "number"
+  ) {
+    return { columns: message.columns, rows: message.rows };
   }
 };
 
