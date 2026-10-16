@@ -523,7 +523,11 @@ const ArtifactGroup = HttpApiGroup.make("artifacts").add(
 
 const InfoGroup = HttpApiGroup.make("info").add(
   HttpApiEndpoint.get("get", "/info", {
-    success: Schema.Struct({ model: Schema.String }),
+    success: Schema.Struct({
+      model: Schema.String,
+      /** The server's own URL, for things the console cannot reach through its rewrite, like the shell socket. */
+      apiUrl: Schema.String,
+    }),
   }),
   HttpApiEndpoint.get("capabilities", "/capabilities", {
     success: Capabilities,

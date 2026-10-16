@@ -81,6 +81,7 @@ import {
   ConversationNotFound,
   InvalidSetting,
   InvalidUpgrade,
+  SandboxUnavailable,
 } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
@@ -88,6 +89,7 @@ import type {
   SandboxChoice,
   SandboxInfo,
   SandboxKind,
+  SandboxShell,
 } from "../sandbox/sandbox.ts";
 import { SandboxDoc, SandboxError } from "../sandbox/sandbox.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
@@ -403,6 +405,26 @@ export interface Seat {
    */
   readonly changes: Effect.Effect<
     Stream.Stream<number, AgentError>,
+    AgentError
+  >;
+  /**
+   * A live interactive shell in this Seat's Sandbox, open until the caller's scope closes. `SandboxUnavailable`
+   * when there is none: Level `none`, or mid-Upgrade while it is replaced.
+   */
+  shell(size: {
+    readonly columns: number;
+    readonly rows: number;
+  }): Effect.Effect<
+    SandboxShell,
+    SandboxError | SandboxUnavailable,
+    Scope.Scope
+  >;
+  /**
+   * This Seat's Sandbox as it comes, goes, and is replaced (Upgrade, Pause), starting with the current one.
+   * Single-use, and must be run; finishing or interrupting it stops its watch.
+   */
+  readonly sandboxChanges: Effect.Effect<
+    Stream.Stream<SandboxInfo | undefined, AgentError>,
     AgentError
   >;
 }
@@ -1539,6 +1561,22 @@ export class Agents extends Context.Service<
             }
           );
 
+          const shell = Effect.fn("Seat.shell")(function* (size: {
+            readonly columns: number;
+            readonly rows: number;
+          }) {
+            const target = machine?.sandbox;
+            if (target === undefined) {
+              return yield* new SandboxUnavailable({ id: Number(id) });
+            }
+            return yield* workspaces.shell(target, size);
+          });
+
+          const sandboxChanges = watchStream(
+            () => harness.watchDoc(SandboxDoc, id, context),
+            (doc) => doc?.sandbox
+          );
+
           return {
             id,
             get sandbox() {
@@ -1556,6 +1594,8 @@ export class Agents extends Context.Service<
             pendingApprovals,
             running,
             changes,
+            shell,
+            sandboxChanges,
           } satisfies Seat;
         });
 

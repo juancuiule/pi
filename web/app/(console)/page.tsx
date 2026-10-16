@@ -38,10 +38,10 @@ import { useConversationEvents } from "@/lib/use-conversation-events";
 import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
 
 // wterm loads its WASM at runtime, so the terminal never renders on the server.
-const TerminalPanel = dynamic(
+const SandboxPanel = dynamic(
   async () => {
-    const mod = await import("@/components/console/terminal-panel");
-    return mod.TerminalPanel;
+    const mod = await import("@/components/console/sandbox-panel");
+    return mod.SandboxPanel;
   },
   { ssr: false }
 );
@@ -384,7 +384,12 @@ const Console = () => {
                       resuming={resuming}
                     />
                   ) : (
-                    <TerminalPanel state={state} resuming={resuming} />
+                    <SandboxPanel
+                      id={conversation.id}
+                      live={!seatlessOf(conversation)}
+                      state={state}
+                      resuming={resuming}
+                    />
                   )}
                 </div>
               </ResizablePanel>

@@ -3,7 +3,7 @@
 import { defineDoc } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Context, Schema } from "effect";
-import type { Effect } from "effect";
+import type { Effect, Scope, Stream } from "effect";
 
 /**
  * `shell`: a Linux userland for bash and file tools.
@@ -48,6 +48,19 @@ export class SandboxError extends Schema.TaggedError<SandboxError>()(
   }
 ) {}
 
+/** An interactive PTY in a Sandbox: the console's shell tab is one of these. */
+export interface SandboxShell {
+  /** Terminal bytes the PTY produces, ending when the shell exits. */
+  readonly output: Stream.Stream<Uint8Array, SandboxError>;
+  /** Bytes to the shell's stdin. */
+  readonly write: (bytes: Uint8Array) => Effect.Effect<void, SandboxError>;
+  /** Change the PTY's window size. */
+  readonly resize: (
+    columns: number,
+    rows: number
+  ) => Effect.Effect<void, SandboxError>;
+}
+
 export class Sandboxes extends Context.Service<
   Sandboxes,
   {
@@ -61,5 +74,13 @@ export class Sandboxes extends Context.Service<
     remove(sandbox: SandboxInfo): Effect.Effect<void, SandboxError>;
     /** The execution environment of a sandbox, for the harness. Called for every tool call, so it is cheap. */
     env(sandbox: SandboxInfo): ExecutionEnv;
+    /**
+     * An interactive shell in a Sandbox, killed when the scope closes. A backend without PTYs still answers: the
+     * shell then works line-by-line, without job control.
+     */
+    shell(
+      sandbox: SandboxInfo,
+      options: { readonly columns: number; readonly rows: number }
+    ): Effect.Effect<SandboxShell, SandboxError, Scope.Scope>;
   }
 >()("effect-pi/Sandboxes") {}
