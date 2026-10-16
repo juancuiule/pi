@@ -23,6 +23,7 @@ const summary: ConversationSummary = {
 
 const state: ConversationState = {
   pending: [],
+  hydrated: true,
   entries: [
     entry(1, [
       {

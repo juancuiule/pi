@@ -76,6 +76,11 @@ describe(applyEvent, () => {
     expect(after.running).toBeFalsy();
   });
 
+  it("is hydrated once a snapshot lands", () => {
+    expect(initialState.hydrated).toBeFalsy();
+    expect(fold([snapshot([])]).hydrated).toBeTruthy();
+  });
+
   it("streams text deltas into the in-flight message, then commits it once", () => {
     const final = entry(5, assistant("Hello"));
     const state = fold([
