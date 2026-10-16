@@ -476,6 +476,8 @@ export const ArtifactVersionInfo = Schema.Struct({
 /** A page the agent wrote for the person, with its versions (see docs/plans/artifacts.md). */
 export const ArtifactInfo = Schema.Struct({
   id: Schema.String,
+  /** The conversation the artifact belongs to; clients need it to build view/render/source URLs. */
+  conversation: Schema.Number,
   title: Schema.String,
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
@@ -497,9 +499,9 @@ const ArtifactVersionQuery = {
 const NoArtifact = ArtifactNotFound.pipe(HttpApiSchema.status(404));
 
 const ArtifactGroup = HttpApiGroup.make("artifacts").add(
-  // A conversation's artifacts, with their versions.
+  // A conversation's artifacts, or without `conversation` every conversation's, most recently updated first.
   HttpApiEndpoint.get("list", "/artifacts", {
-    query: { conversation: Schema.FiniteFromString },
+    query: ArtifactScope,
     success: Schema.Array(ArtifactInfo),
   }),
   // One artifact: its title and every version.
