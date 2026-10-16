@@ -72,3 +72,18 @@ export class EmptyMessage extends Schema.TaggedError<EmptyMessage>()(
   "EmptyMessage",
   {}
 ) {}
+
+/** No artifact with this id in the conversation it was asked for. */
+export class ArtifactNotFound extends Schema.TaggedError<ArtifactNotFound>()(
+  "ArtifactNotFound",
+  { id: Schema.String }
+) {}
+
+/**
+ * A page or change `artifact_create`/`artifact_update` cannot take: over the size cap, more edits than allowed, or
+ * a `find` that is missing or not unique. `reason` is the sentence the model reads.
+ */
+export class ArtifactRefused extends Schema.TaggedError<ArtifactRefused>()(
+  "ArtifactRefused",
+  { reason: Schema.String }
+) {}
