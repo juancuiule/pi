@@ -157,6 +157,8 @@ export class Conversations extends Context.Service<
       SubmissionRecord,
       SeatError | SkillNotFound | AttachmentError
     >;
+    /** The Conversation's Seat when it has one; a paused or archived Conversation has none. Never resumes. */
+    seat(id: number): Effect.Effect<Seat | undefined>;
     /** Give a paused Conversation a Seat; for one that has a Seat, cancel a Pause waiting for its Run. */
     resume(id: number): Effect.Effect<ConversationSummary, SeatError>;
     /** Free a Conversation's Seat: at once when idle, otherwise once the current Run ends. */
@@ -631,6 +633,7 @@ export class Conversations extends Context.Service<
           create,
           list,
           send,
+          seat: (id) => Effect.sync(() => live.get(id)?.seat),
           resume,
           pause,
           stop,

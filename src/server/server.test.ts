@@ -21,12 +21,12 @@ import { localSandboxes } from "../testing/sandboxes.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { echoModel } from "./faux.ts";
-import { ApiLayer } from "./handlers.ts";
+import { apiLayer } from "./handlers.ts";
 
 const serverWith = (
   agents: Layer.Layer<Agents | Capacity | Attachments | Artifacts, AgentError>
 ) =>
-  HttpRouter.serve(ApiLayer, {
+  HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1" }), {
     disableListenLog: true,
     disableLogger: true,
   }).pipe(

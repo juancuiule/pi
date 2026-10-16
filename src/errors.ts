@@ -43,6 +43,12 @@ export class InvalidUpgrade extends Schema.TaggedError<InvalidUpgrade>()(
   }
 ) {}
 
+/** The Conversation has no Sandbox to run a shell in: Level none, or the Sandbox is being replaced. */
+export class SandboxUnavailable extends Schema.TaggedError<SandboxUnavailable>()(
+  "SandboxUnavailable",
+  { id: Schema.Number }
+) {}
+
 /** A settings change that cannot be applied: an unknown name, a locked extension, or one the Level does not allow. */
 export class InvalidSetting extends Schema.TaggedError<InvalidSetting>()(
   "InvalidSetting",
