@@ -38,6 +38,7 @@ import {
 
 import { useOpenMenu } from "./console-shell";
 import { ConversationActions } from "./conversation-actions";
+import { ConversationSettings } from "./conversation-settings";
 import { ResumingNotice } from "./resuming-notice";
 import { SandboxBadge } from "./sandbox-badge";
 import { WaitingNotice } from "./waiting-notice";
@@ -227,6 +228,7 @@ export const ConversationHeader = ({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <ConversationSettings conversationId={conversation.id} />
         <ConversationActions conversation={conversation} />
       </header>
       <WaitingNotice conversation={conversation} />

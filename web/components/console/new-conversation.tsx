@@ -64,7 +64,7 @@ export const NewConversation = ({
   const [approvals, setApprovals] = useState(true);
   const [prompt, setPrompt] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
-  // A skill picked in the capabilities sheet lands here.
+  // A skill picked on the skills page lands here.
   useTakeDraft(setPrompt, textarea);
   const create = useCreateConversation();
   // Staged uploads: the create claims them.
