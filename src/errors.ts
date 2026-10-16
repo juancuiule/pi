@@ -85,6 +85,12 @@ export class ArtifactNotFound extends Schema.TaggedError<ArtifactNotFound>()(
   { id: Schema.String }
 ) {}
 
+/** No readable file or directory at this path in the Conversation's Workspace, or the path escapes it. */
+export class WorkspaceFileNotFound extends Schema.TaggedError<WorkspaceFileNotFound>()(
+  "WorkspaceFileNotFound",
+  { path: Schema.String }
+) {}
+
 /**
  * A page or change `artifact_create`/`artifact_update` cannot take: over the size cap, more edits than allowed, or
  * a `find` that is missing or not unique. `reason` is the sentence the model reads.

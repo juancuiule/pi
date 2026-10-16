@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
 import {
   fauxAssistantMessage,
@@ -728,5 +731,126 @@ describe("HTTP API", () => {
     });
     expect(result.lib.body.length).toBeGreaterThan(100_000);
     expect(result.view.versions).toHaveLength(1);
+  });
+
+  it("serves a conversation's workspace files, confined to the workspace", async () => {
+    const agents = fauxAgents([
+      fauxAssistantMessage([fauxText("one")]),
+      fauxAssistantMessage([fauxText("two")]),
+    ]);
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "shell", prompt: "hi" },
+        });
+        const [dir] = [...agents.sandboxes.stored];
+        if (dir === undefined) {
+          return yield* Effect.die(new Error("no workspace storage"));
+        }
+        mkdirSync(path.join(dir, "sub"));
+        writeFileSync(path.join(dir, "REPORT.md"), "# Report\n\nHello.\n");
+        writeFileSync(path.join(dir, "sub", "notes.txt"), "deep\n");
+        writeFileSync(path.join(dir, "blob.bin"), Buffer.from([0, 1, 2]));
+        const list = (file?: string) =>
+          client.files.list({
+            params: { id: created.id },
+            query: file === undefined ? {} : { path: file },
+          });
+        const content = (file: string) =>
+          client.files.content({
+            params: { id: created.id },
+            query: { path: file },
+          });
+        const listing = yield* list();
+        const sub = yield* list("sub");
+        const tree = yield* client.files.tree({ params: { id: created.id } });
+        const onFile = yield* Effect.flip(list("REPORT.md"));
+        const report = yield* content("REPORT.md");
+        const deep = yield* content("sub/notes.txt");
+        const binary = yield* content("blob.bin");
+        const missing = yield* Effect.flip(content("nope.md"));
+        const escaped = yield* Effect.flip(content("../REPORT.md"));
+        const absolute = yield* Effect.flip(content("/etc/hostname"));
+        const onDir = yield* Effect.flip(content("sub"));
+        // Stop returns once nothing runs, so the Pause closes the Seat at once.
+        yield* client.conversations.stop({ params: { id: created.id } });
+        yield* client.conversations.pause({ params: { id: created.id } });
+        const paused = yield* Effect.flip(list());
+        const none = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hi" },
+        });
+        const levelNone = yield* Effect.flip(
+          client.files.list({ params: { id: none.id }, query: {} })
+        );
+        return {
+          listing,
+          sub,
+          tree,
+          onFile,
+          report,
+          deep,
+          binary,
+          missing,
+          escaped,
+          absolute,
+          onDir,
+          paused,
+          levelNone,
+        };
+      }).pipe(Effect.provide(serverWith(agents.layer)))
+    );
+    expect(result.listing).toMatchObject({
+      truncated: false,
+      entries: [
+        { name: "sub", path: "sub", kind: "directory" },
+        { name: "blob.bin", path: "blob.bin", kind: "file" },
+        { name: "REPORT.md", path: "REPORT.md", kind: "file" },
+      ],
+    });
+    expect(result.sub.entries).toMatchObject([
+      { name: "notes.txt", path: "sub/notes.txt", kind: "file" },
+    ]);
+    expect(result.tree).toStrictEqual({
+      truncated: false,
+      // Depth-first, directories first, a trailing "/" on directories.
+      paths: ["sub/", "sub/notes.txt", "blob.bin", "REPORT.md"],
+    });
+    expect([result.report, result.deep, result.binary]).toStrictEqual([
+      {
+        path: "REPORT.md",
+        size: 17,
+        truncated: false,
+        binary: false,
+        text: "# Report\n\nHello.\n",
+      },
+      {
+        path: "sub/notes.txt",
+        size: 5,
+        truncated: false,
+        binary: false,
+        text: "deep\n",
+      },
+      { path: "blob.bin", size: 3, truncated: false, binary: true },
+    ]);
+    expect(
+      [
+        result.onFile,
+        result.missing,
+        result.escaped,
+        result.absolute,
+        result.onDir,
+        result.paused,
+        result.levelNone,
+      ].map((failed) => failed._tag)
+    ).toStrictEqual([
+      "WorkspaceFileNotFound",
+      "WorkspaceFileNotFound",
+      "WorkspaceFileNotFound",
+      "WorkspaceFileNotFound",
+      "WorkspaceFileNotFound",
+      "SandboxUnavailable",
+      "SandboxUnavailable",
+    ]);
   });
 });

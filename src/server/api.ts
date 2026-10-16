@@ -20,7 +20,9 @@ import {
   EmptyMessage,
   InvalidSetting,
   InvalidUpgrade,
+  SandboxUnavailable,
   SkillNotFound,
+  WorkspaceFileNotFound,
 } from "../errors.ts";
 
 export type { AssistantMessage, Message, Usage } from "@earendil-works/pi-ai";
@@ -48,7 +50,9 @@ export {
   EmptyMessage,
   InvalidSetting,
   InvalidUpgrade,
+  SandboxUnavailable,
   SkillNotFound,
+  WorkspaceFileNotFound,
 } from "../errors.ts";
 
 export const SandboxChoice = Schema.Literals(["none", "shell", "desktop"]);
@@ -474,6 +478,9 @@ const ArtifactVersionQuery = {
 };
 
 const NoArtifact = ArtifactNotFound.pipe(HttpApiSchema.status(404));
+const NoWorkspaceFile = WorkspaceFileNotFound.pipe(HttpApiSchema.status(404));
+/** The conversation has no Sandbox to read files through: Level none, paused, or archived. */
+const NoSandbox = SandboxUnavailable.pipe(HttpApiSchema.status(409));
 
 const ArtifactGroup = HttpApiGroup.make("artifacts").add(
   // A conversation's artifacts, with their versions.
@@ -521,6 +528,55 @@ const ArtifactGroup = HttpApiGroup.make("artifacts").add(
   })
 );
 
+/** A file or directory in a Conversation's Workspace, as the console's Files tab lists it. */
+export const WorkspaceFileEntry = Schema.Struct({
+  name: Schema.String,
+  /** The path from the Workspace's root: `a/b.md`; a root entry's is its `name`. */
+  path: Schema.String,
+  kind: Schema.Literals(["file", "directory", "symlink"]),
+  size: Schema.Number,
+  mtimeMs: Schema.Number,
+});
+export type WorkspaceFileEntry = typeof WorkspaceFileEntry.Type;
+
+const FileGroup = HttpApiGroup.make("files").add(
+  // One directory of the Workspace, directories first; `path` defaults to the root. 500 entries at most.
+  HttpApiEndpoint.get("list", "/conversations/:id/files", {
+    params: ById,
+    query: { path: Schema.optionalKey(Schema.String) },
+    success: Schema.Struct({
+      entries: Schema.Array(WorkspaceFileEntry),
+      /** True when the directory holds more than fits in one listing. */
+      truncated: Schema.Boolean,
+    }),
+    error: [NotFound, NoWorkspaceFile, NoSandbox],
+  }),
+  // One file's text for the console's viewer, capped (truncated); `binary` flags non-text files.
+  HttpApiEndpoint.get("content", "/conversations/:id/files/content", {
+    params: ById,
+    query: { path: Schema.String },
+    success: Schema.Struct({
+      path: Schema.String,
+      size: Schema.Number,
+      truncated: Schema.Boolean,
+      binary: Schema.Boolean,
+      text: Schema.optionalKey(Schema.String),
+    }),
+    error: [NotFound, NoWorkspaceFile, NoSandbox],
+  }),
+  // The whole Workspace as one path list for the console's file tree: display order, directories with a
+  // trailing "/", 4000 paths at most.
+  HttpApiEndpoint.get("tree", "/conversations/:id/files/tree", {
+    params: ById,
+    success: Schema.Struct({
+      paths: Schema.Array(Schema.String),
+      /** True when the Workspace holds more than fits in one listing. */
+      truncated: Schema.Boolean,
+    }),
+    error: [NotFound, NoWorkspaceFile, NoSandbox],
+  })
+);
+
 const InfoGroup = HttpApiGroup.make("info").add(
   HttpApiEndpoint.get("get", "/info", {
     success: Schema.Struct({
@@ -542,5 +598,6 @@ export const Api = HttpApi.make("effect-pi")
   .add(ConversationGroup)
   .add(AttachmentGroup)
   .add(ArtifactGroup)
+  .add(FileGroup)
   .add(InfoGroup)
   .prefix("/api");

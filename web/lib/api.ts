@@ -76,6 +76,12 @@ export const apiError = (error: unknown): string => {
       case "ConversationArchived": {
         return "This conversation is archived. Unarchive it to continue.";
       }
+      case "WorkspaceFileNotFound": {
+        return "The file isn't in the workspace (anymore).";
+      }
+      case "SandboxUnavailable": {
+        return "The conversation's sandbox isn't running.";
+      }
       default: {
         return uploadError(error) ?? String(error._tag);
       }

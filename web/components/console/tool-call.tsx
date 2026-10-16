@@ -1,7 +1,13 @@
 "use client";
 
 import type { ApprovalChoice, Message } from "effect-pi/api";
-import { CircleAlert, Info, LoaderCircle, TriangleAlert } from "lucide-react";
+import {
+  CircleAlert,
+  FileSearch,
+  Info,
+  LoaderCircle,
+  TriangleAlert,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { createElement, useState } from "react";
 import type { ReactNode } from "react";
@@ -15,6 +21,11 @@ import {
   CodeBlockCopyButton,
   CodeBlockLine,
 } from "@/components/ui/code-block";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   TraceCollapsible,
   TraceCollapsibleContent,
@@ -31,11 +42,13 @@ import { toolResultEntryOf, toolResultOf } from "@/lib/conversation-state";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
 import type { ToolDiagnostic } from "@/lib/diagnostics";
 import { diagnosticsOf, visibleResultContent } from "@/lib/diagnostics";
+import { useOpenFile } from "@/lib/file-context";
 import { formatDuration } from "@/lib/format";
 import { questionsOf } from "@/lib/questions";
 import { editHunksOf, isEditConfirmation, patchOf } from "@/lib/tool-input";
 import { toolSummary } from "@/lib/tool-summary";
 import { cn } from "@/lib/utils";
+import { filePathOf } from "@/lib/workspace-files";
 
 import { EditPreview, FilePreview, PatchPreview } from "./file-blocks";
 import { AnsweredQuestions, QuestionForm } from "./question-form";
@@ -490,6 +503,8 @@ export const ToolCall = ({
   call: ToolCallBlock;
   state: ConversationState;
 }) => {
+  const openFile = useOpenFile();
+  const filePath = filePathOf(call.name, call.arguments);
   const tool = state.tools[call.id];
   const resultEntry = toolResultEntryOf(state, call.id);
   const toolResult = toolResultOf(state, call.id);
@@ -515,37 +530,63 @@ export const ToolCall = ({
   const elapsed = elapsedOf(step, toolResult);
 
   return (
-    <TraceCollapsible open={open} onOpenChange={setOpen}>
-      <TraceCollapsibleTrigger>
-        <TraceLine status={LINE_STATUS[step]}>
-          <TraceIcon>{stateIcon(step, Icon)}</TraceIcon>
-          <TraceTitle>
-            <span className="text-foreground/80 font-mono font-medium">
-              {call.name}
-            </span>
-            {summary === "" ? null : (
-              <span className="font-mono"> {summary}</span>
+    <div className="group/tool-call flex items-start">
+      <TraceCollapsible
+        open={open}
+        onOpenChange={setOpen}
+        className="min-w-0 flex-1"
+      >
+        <TraceCollapsibleTrigger>
+          <TraceLine status={LINE_STATUS[step]}>
+            <TraceIcon>{stateIcon(step, Icon)}</TraceIcon>
+            <TraceTitle>
+              <span className="text-foreground/80 font-mono font-medium">
+                {call.name}
+              </span>
+              {summary === "" ? null : (
+                <span className="font-mono"> {summary}</span>
+              )}
+            </TraceTitle>
+            {labelNode === undefined && elapsed === undefined ? null : (
+              <TraceDescription>
+                {labelNode}
+                {labelNode !== undefined && elapsed !== undefined
+                  ? " · "
+                  : null}
+                {elapsed}
+              </TraceDescription>
             )}
-          </TraceTitle>
-          {labelNode === undefined && elapsed === undefined ? null : (
-            <TraceDescription>
-              {labelNode}
-              {labelNode !== undefined && elapsed !== undefined ? " · " : null}
-              {elapsed}
-            </TraceDescription>
-          )}
-        </TraceLine>
-      </TraceCollapsibleTrigger>
-      <TraceCollapsibleContent>
-        <CallBody
-          call={call}
-          tool={tool}
-          toolResult={toolResult}
-          diagnostics={diagnostics}
-          pendingKey={approval.awaiting ? approval.key : undefined}
-          step={step}
-        />
-      </TraceCollapsibleContent>
-    </TraceCollapsible>
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent>
+          <CallBody
+            call={call}
+            tool={tool}
+            toolResult={toolResult}
+            diagnostics={diagnostics}
+            pendingKey={approval.awaiting ? approval.key : undefined}
+            step={step}
+          />
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+      {/* A workspace path the call names opens in the file pane beside the chat. */}
+      {filePath === undefined || openFile === undefined ? null : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Open ${filePath}`}
+                onClick={() => openFile({ path: filePath })}
+              >
+                <FileSearch />
+              </Button>
+            }
+          />
+          <TooltipContent>Open file</TooltipContent>
+        </Tooltip>
+      )}
+    </div>
   );
 };

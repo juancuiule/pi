@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { ArtifactPanel } from "@/components/console/artifact-panel";
 import { ConversationHeader } from "@/components/console/conversation-header";
 import { DesktopPanel } from "@/components/console/desktop-panel";
+import { FilePanel } from "@/components/console/file-panel";
 import { MessageInput } from "@/components/console/message-input";
 import { NewConversation } from "@/components/console/new-conversation";
 import { Transcript } from "@/components/console/transcript";
@@ -27,6 +28,7 @@ import { latestArtifactCall } from "@/lib/artifacts";
 import type { OpenArtifact } from "@/lib/artifacts";
 import { parseConversationId } from "@/lib/conversation-id";
 import type { ConversationState } from "@/lib/conversation-state";
+import { OpenFileContext } from "@/lib/file-context";
 import {
   useConversationAction,
   useConversations,
@@ -36,6 +38,7 @@ import {
 import { useConversationStore, useResuming } from "@/lib/store";
 import { useConversationEvents } from "@/lib/use-conversation-events";
 import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
+import type { OpenFile } from "@/lib/workspace-files";
 
 // wterm loads its WASM at runtime, so the terminal never renders on the server.
 const SandboxPanel = dynamic(
@@ -151,6 +154,19 @@ const useArtifactPanel = (
   return [artifact, setArtifact];
 };
 
+/** The workspace file open beside the chat; tool calls and the Files tab open it, switching a conversation closes it. */
+const useFilePanel = (
+  selectedId: number | undefined
+): [OpenFile | undefined, (file: OpenFile | undefined) => void] => {
+  const [file, setFile] = useState<OpenFile | undefined>();
+  const [fileConversation, setFileConversation] = useState(selectedId);
+  if (fileConversation !== selectedId) {
+    setFileConversation(selectedId);
+    setFile(undefined);
+  }
+  return [file, setFile];
+};
+
 /** On desktop an artifact is a third pane after the main one; dragging it shut closes it. */
 const ArtifactResizablePanel = ({
   artifact,
@@ -180,6 +196,43 @@ const ArtifactResizablePanel = ({
         <ArtifactPanel
           key={`${conversation}:${artifact.id}`}
           artifact={artifact}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      </ResizablePanel>
+    </>
+  );
+};
+
+/** On desktop an open file is a pane between the main one and the sandbox's, like an artifact. */
+const FileResizablePanel = ({
+  file,
+  conversation,
+  onClose,
+}: {
+  file: OpenFile | undefined;
+  conversation: number | undefined;
+  onClose: () => void;
+}) => {
+  if (file === undefined || conversation === undefined) {
+    return null;
+  }
+  return (
+    <>
+      <ResizableHandle />
+      <ResizablePanel
+        defaultSize="30%"
+        minSize="15%"
+        collapsible
+        onResize={(size) => {
+          if (size.asPercentage === 0) {
+            onClose();
+          }
+        }}
+      >
+        <FilePanel
+          key={`${conversation}:${file.path}`}
+          file={file}
           conversation={conversation}
           onClose={onClose}
         />
@@ -222,6 +275,46 @@ const ArtifactSheet = ({
         <ArtifactPanel
           key={`${conversation}:${artifact.id}`}
           artifact={artifact}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      )}
+    </SheetContent>
+  </Sheet>
+);
+
+/** Below the desktop breakpoint an open file is a Sheet instead of a pane. */
+const FileSheet = ({
+  file,
+  conversation,
+  isDesktop,
+  onClose,
+}: {
+  file: OpenFile | undefined;
+  conversation: number | undefined;
+  isDesktop: boolean | null;
+  onClose: () => void;
+}) => (
+  <Sheet
+    open={
+      isDesktop === false && file !== undefined && conversation !== undefined
+    }
+    onOpenChange={(open) => {
+      if (!open) {
+        onClose();
+      }
+    }}
+  >
+    <SheetContent
+      side="right"
+      showCloseButton={false}
+      className="w-full sm:max-w-2xl"
+    >
+      <SheetTitle className="sr-only">Workspace file</SheetTitle>
+      {file === undefined || conversation === undefined ? null : (
+        <FilePanel
+          key={`${conversation}:${file.path}`}
+          file={file}
           conversation={conversation}
           onClose={onClose}
         />
@@ -293,6 +386,7 @@ const Console = () => {
     !(readOnly && state.entries.length > 0);
 
   const [artifact, setArtifact] = useArtifactPanel(selectedId, state);
+  const [file, setFile] = useFilePanel(selectedId);
 
   const toggleSidePanel = () => {
     const panel = sidePanel.current;
@@ -356,54 +450,67 @@ const Console = () => {
 
   return (
     <OpenArtifactContext.Provider value={setArtifact}>
-      <title>{pageTitle(conversation)}</title>
-      {isDesktop === true ? (
-        // Nested inside the console shell's page panel: main, then an open artifact, then the sandbox.
-        <ResizablePanelGroup orientation="horizontal" className="h-full">
-          <ResizablePanel minSize="30%">{main}</ResizablePanel>
-          <ArtifactResizablePanel
-            artifact={artifact}
-            conversation={selectedId}
-            onClose={() => setArtifact(undefined)}
-          />
-          {showSandbox ? (
-            <>
-              <ResizableHandle />
-              <ResizablePanel
-                panelRef={sidePanel}
-                defaultSize="35%"
-                minSize="15%"
-                collapsible
-                onResize={(size) => setSideCollapsed(size.asPercentage === 0)}
-              >
-                <div key={selectedId} className="h-full min-h-0">
-                  {conversation.sandbox === "desktop" ? (
-                    <DesktopPanel
-                      vncUrl={conversation.vncUrl}
-                      paused={seatlessOf(conversation)}
-                      resuming={resuming}
-                    />
-                  ) : (
-                    <SandboxPanel
-                      id={conversation.id}
-                      live={!seatlessOf(conversation)}
-                      state={state}
-                      resuming={resuming}
-                    />
-                  )}
-                </div>
-              </ResizablePanel>
-            </>
-          ) : null}
-        </ResizablePanelGroup>
-      ) : null}
-      {isDesktop === false ? main : null}
-      <ArtifactSheet
-        artifact={artifact}
-        conversation={selectedId}
-        isDesktop={isDesktop}
-        onClose={() => setArtifact(undefined)}
-      />
+      <OpenFileContext.Provider value={setFile}>
+        <title>{pageTitle(conversation)}</title>
+        {isDesktop === true ? (
+          // Nested inside the console shell's page panel: main, then open pages and files, then the sandbox.
+          <ResizablePanelGroup orientation="horizontal" className="h-full">
+            <ResizablePanel minSize="30%">{main}</ResizablePanel>
+            <ArtifactResizablePanel
+              artifact={artifact}
+              conversation={selectedId}
+              onClose={() => setArtifact(undefined)}
+            />
+            <FileResizablePanel
+              file={file}
+              conversation={selectedId}
+              onClose={() => setFile(undefined)}
+            />
+            {showSandbox ? (
+              <>
+                <ResizableHandle />
+                <ResizablePanel
+                  panelRef={sidePanel}
+                  defaultSize="35%"
+                  minSize="15%"
+                  collapsible
+                  onResize={(size) => setSideCollapsed(size.asPercentage === 0)}
+                >
+                  <div key={selectedId} className="h-full min-h-0">
+                    {conversation.sandbox === "desktop" ? (
+                      <DesktopPanel
+                        vncUrl={conversation.vncUrl}
+                        paused={seatlessOf(conversation)}
+                        resuming={resuming}
+                      />
+                    ) : (
+                      <SandboxPanel
+                        id={conversation.id}
+                        live={!seatlessOf(conversation)}
+                        state={state}
+                        resuming={resuming}
+                      />
+                    )}
+                  </div>
+                </ResizablePanel>
+              </>
+            ) : null}
+          </ResizablePanelGroup>
+        ) : null}
+        {isDesktop === false ? main : null}
+        <ArtifactSheet
+          artifact={artifact}
+          conversation={selectedId}
+          isDesktop={isDesktop}
+          onClose={() => setArtifact(undefined)}
+        />
+        <FileSheet
+          file={file}
+          conversation={selectedId}
+          isDesktop={isDesktop}
+          onClose={() => setFile(undefined)}
+        />
+      </OpenFileContext.Provider>
     </OpenArtifactContext.Provider>
   );
 };

@@ -28,6 +28,7 @@ import {
   MemoryStorage,
   watchEvents,
 } from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import {
   Cause,
   Context,
@@ -419,6 +420,11 @@ export interface Seat {
     SandboxError | SandboxUnavailable,
     Scope.Scope
   >;
+  /**
+   * The execution environment of this Seat's Sandbox, for host-side reads of the Workspace's files.
+   * `SandboxUnavailable` when there is none: Level `none`, or mid-Upgrade while it is replaced.
+   */
+  readonly env: Effect.Effect<ExecutionEnv, SandboxUnavailable>;
   /**
    * This Seat's Sandbox as it comes, goes, and is replaced (Upgrade, Pause), starting with the current one.
    * Single-use, and must be run; finishing or interrupting it stops its watch.
@@ -1572,6 +1578,13 @@ export class Agents extends Context.Service<
             return yield* workspaces.shell(target, size);
           });
 
+          const env = Effect.suspend(() => {
+            const target = machine?.sandbox;
+            return target === undefined
+              ? Effect.fail(new SandboxUnavailable({ id: Number(id) }))
+              : Effect.succeed(workspaces.env(target));
+          });
+
           const sandboxChanges = watchStream(
             () => harness.watchDoc(SandboxDoc, id, context),
             (doc) => doc?.sandbox
@@ -1595,6 +1608,7 @@ export class Agents extends Context.Service<
             running,
             changes,
             shell,
+            env,
             sandboxChanges,
           } satisfies Seat;
         });
