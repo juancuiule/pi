@@ -1,8 +1,10 @@
 // A conversation's interactive shell, served as a WebSocket upgrade on
 // `/api/conversations/:id/shell`: binary frames carry the PTY in both directions, a text frame
 // `{"type":"resize","columns":n,"rows":n}` resizes it, and the server sends `{"type":"closed","reason":...}`
-// before its CloseEvent when the shell exits or the Sandbox goes away. The upgrade request is an ordinary
-// request first, so the `loopbackOnly` middleware merged into the same router answers 403 before this runs.
+// before its CloseEvent when the shell session ends or the Sandbox goes away. The PTY is a session owned by
+// the Sandbox's lifetime (Seat.shell), so a socket dropping detaches this client without killing the shell —
+// a reconnect lands back in it with scrollback replayed. The upgrade request is an ordinary request first,
+// so the `loopbackOnly` middleware merged into the same router answers 403 before this runs.
 import { Deferred, Effect, Exit, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Socket } from "effect/socket";
@@ -21,24 +23,24 @@ const sizeOf = (request: HttpServerRequest.HttpServerRequest) => {
   };
 };
 
-/** A client text frame is a control message; anything that is not `resize` is ignored. */
 const resizeOf = (text: string) => {
+  let message: unknown;
   try {
-    const message: unknown = JSON.parse(text);
-    if (
-      typeof message === "object" &&
-      message !== null &&
-      "type" in message &&
-      message.type === "resize" &&
-      "columns" in message &&
-      typeof message.columns === "number" &&
-      "rows" in message &&
-      typeof message.rows === "number"
-    ) {
-      return { columns: message.columns, rows: message.rows };
-    }
+    message = JSON.parse(text);
   } catch {
-    // Not JSON: ignore.
+    return;
+  }
+  if (
+    typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    message.type === "resize" &&
+    "columns" in message &&
+    typeof message.columns === "number" &&
+    "rows" in message &&
+    typeof message.rows === "number"
+  ) {
+    return { columns: message.columns, rows: message.rows };
   }
 };
 
@@ -82,12 +84,15 @@ const session = Effect.gen(function* () {
         );
 
       // Level `none`, or a Sandbox mid-replacement: there is nothing to run a shell in.
-      const opened = yield* Effect.exit(seat.shell(sizeOf(request)));
+      const size = sizeOf(request);
+      const opened = yield* Effect.exit(seat.shell(size));
       if (Exit.isFailure(opened)) {
         yield* close("unavailable");
         return;
       }
       const shell = opened.value;
+      // The PTY is shared and seat-scoped, so a later attach adopts the newest client's size.
+      yield* Effect.ignore(shell.resize(size.columns, size.rows));
       const done = yield* Deferred.make<string>();
       const finish = (reason: string) =>
         Effect.ignore(Deferred.succeed(done, reason));
@@ -99,12 +104,20 @@ const session = Effect.gen(function* () {
           )
         );
 
-      // PTY → client; the stream ends when the shell exits.
+      // PTY → client; the stream ends when the shell session ends, and `ended` says how: the shell
+      // exiting is "exited", the Sandbox closing underneath it (Upgrade, Pause) is "sandbox". A doc
+      // watch could not tell them apart — `exited` would race the change's delivery.
       yield* Stream.runForEach(shell.output, (chunk) =>
         writer.write(chunk)
       ).pipe(
         onEnd("exited", "the sandbox shell's output"),
-        Effect.andThen(finish("exited")),
+        Effect.andThen(
+          shell.ended.pipe(
+            Effect.flatMap((end) =>
+              finish(end === "close" ? "sandbox" : "exited")
+            )
+          )
+        ),
         Effect.forkChild
       );
 
@@ -124,7 +137,8 @@ const session = Effect.gen(function* () {
       );
 
       // Client → PTY: binary frames are stdin, a text frame is a control
-      // message. The reader ends when the client goes away.
+      // message. The reader ends when the client goes away — that only ends this
+      // client's view; the session keeps running for the next attach.
       const read = reader.pull.pipe(
         Effect.flatMap((frames) =>
           Effect.forEach(

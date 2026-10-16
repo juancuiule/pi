@@ -89,9 +89,9 @@ import type {
   SandboxChoice,
   SandboxInfo,
   SandboxKind,
-  SandboxShell,
 } from "../sandbox/sandbox.ts";
 import { SandboxDoc, SandboxError } from "../sandbox/sandbox.ts";
+import type { ShellSession } from "../sandbox/shell-session.ts";
 import {
   checkSoftware,
   LEVEL_RANK,
@@ -458,17 +458,15 @@ export interface Seat {
     AgentError
   >;
   /**
-   * A live interactive shell in this Seat's Sandbox, open until the caller's scope closes. `SandboxUnavailable`
-   * when there is none: Level `none`, or mid-Upgrade while it is replaced.
+   * The shared interactive shell session of this Seat's Sandbox, living for the Sandbox's lifetime rather
+   * than the caller's: each caller gets an attach whose `output` replays recent scrollback then follows
+   * live, and `write`/`resize` reach the same PTY. `SandboxUnavailable` when there is no Sandbox: Level
+   * `none`, or mid-Upgrade while it is replaced.
    */
   shell(size: {
     readonly columns: number;
     readonly rows: number;
-  }): Effect.Effect<
-    SandboxShell,
-    SandboxError | SandboxUnavailable,
-    Scope.Scope
-  >;
+  }): Effect.Effect<ShellSession, SandboxError | SandboxUnavailable>;
   /**
    * This Seat's Sandbox as it comes, goes, and is replaced (Upgrade, Pause), starting with the current one.
    * Single-use, and must be run; finishing or interrupting it stops its watch.
@@ -1257,7 +1255,11 @@ export class Agents extends Context.Service<
           let level: SandboxChoice = workspace?.level ?? "none";
           let software: readonly SoftwareId[] = workspace?.software ?? [];
           let machine:
-            | { readonly scope: Scope.Closeable; readonly sandbox: SandboxInfo }
+            | {
+                readonly scope: Scope.Closeable;
+                readonly sandbox: SandboxInfo;
+                shell?: ShellSession;
+              }
             | undefined;
           let levelClaim: Scope.Closeable | undefined;
           let closing = false;
@@ -1700,15 +1702,28 @@ export class Agents extends Context.Service<
             }
           );
 
+          // The session lives on `machine.scope` — the Sandbox's lifetime — so a socket detaching does not
+          // kill the PTY; `upgrading` serializes it with Upgrade and the Seat's finalizer like `upgrade` does.
           const shell = Effect.fn("Seat.shell")(function* (size: {
             readonly columns: number;
             readonly rows: number;
           }) {
-            const target = machine?.sandbox;
-            if (target === undefined) {
-              return yield* new SandboxUnavailable({ id: Number(id) });
-            }
-            return yield* workspaces.shell(target, size);
+            return yield* upgrading.withPermit(
+              Effect.gen(function* () {
+                const target = machine;
+                if (closing || target === undefined) {
+                  return yield* new SandboxUnavailable({ id: Number(id) });
+                }
+                let session = target.shell;
+                if (session === undefined || !(yield* session.alive)) {
+                  session = yield* workspaces
+                    .shell(target.sandbox, size)
+                    .pipe(Scope.provide(target.scope));
+                  target.shell = session;
+                }
+                return session;
+              })
+            );
           });
 
           const sandboxChanges = watchStream(

@@ -12,9 +12,10 @@ import type {
   SandboxError,
   SandboxInfo,
   SandboxKind,
-  SandboxShell,
   WorkspaceMount,
 } from "../sandbox/sandbox.ts";
+import type { ShellSession } from "../sandbox/shell-session.ts";
+import { shellSession } from "../sandbox/shell-session.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
 
 /**
@@ -81,13 +82,15 @@ export class Workspaces extends Context.Service<
     /** The execution environment of a Sandbox, for the harness; cheap, called for every tool call. */
     env(sandbox: SandboxInfo): ExecutionEnv;
     /**
-     * A live interactive shell in a Sandbox, ending when its scope closes; unlike `env`, it is a
-     * real PTY, not a request/reply channel, so it is not for tool calls.
+     * A persistent interactive shell session in a Sandbox, ending when its scope closes; unlike `env`,
+     * it is a real PTY, not a request/reply channel, so it is not for tool calls. Each run of the
+     * session's `output` replays recent scrollback then follows live — callers attach and detach
+     * freely — and `alive` reports the PTY's end so the owner can start a fresh session.
      */
     shell(
       sandbox: SandboxInfo,
       size: { readonly columns: number; readonly rows: number }
-    ): Effect.Effect<SandboxShell, SandboxError, Scope.Scope>;
+    ): Effect.Effect<ShellSession, SandboxError, Scope.Scope>;
   }
 >()("effect-pi/Workspaces") {
   static readonly layer = Layer.effect(
@@ -125,7 +128,8 @@ export class Workspaces extends Context.Service<
         sandbox,
         discard: storage.remove,
         env: sandboxes.env,
-        shell: sandboxes.shell,
+        shell: (info, size) =>
+          Effect.flatMap(sandboxes.shell(info, size), shellSession),
       });
     })
   );
