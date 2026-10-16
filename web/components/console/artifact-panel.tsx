@@ -36,12 +36,10 @@ const Loading = () => (
  * is reloaded; a page that keeps trying is replaced with a notice (local-harness's ArtifactFrame, ported).
  */
 const ArtifactFrame = ({ src, title }: { src: string; title: string }) => {
-  // Loads are counted per frame (per src and reload); each remount starts the count over by itself.
   const loads = useRef({ frame: "", count: 0 });
   const [attempts, setAttempts] = useState(0);
   const [prevSrc, setPrevSrc] = useState(src);
   if (prevSrc !== src) {
-    // A different page gets a fresh chance.
     setPrevSrc(src);
     setAttempts(0);
   }
@@ -68,7 +66,6 @@ const ArtifactFrame = ({ src, title }: { src: string; title: string }) => {
         key={frame}
         src={src}
         title={title}
-        // oxlint-disable-next-line react/iframe-missing-sandbox -- allow-scripts only, deliberately no allow-same-origin
         sandbox="allow-scripts"
         referrerPolicy="no-referrer"
         onLoad={() => {
@@ -96,7 +93,6 @@ const SourceCode = ({ html }: { html: string }) => {
       </CodeBlockActions>
       <CodeBlockContent wrap lineNumbers className="min-h-0 flex-1">
         {lines.map((line, index) => (
-          // oxlint-disable-next-line react/no-array-index-key -- lines have no id; the source only grows by version
           <CodeBlockLine key={index}>{line}</CodeBlockLine>
         ))}
       </CodeBlockContent>
@@ -187,11 +183,9 @@ export const ArtifactPanel = ({
           query: { conversation },
         })
       ),
-    // The agent updates its own pages while the panel is open, like its own settings.
     refetchInterval: 2000,
   });
   const latest = data?.versions.at(-1)?.version;
-  // Which version is on screen: the one opened or picked, following to the newest when it was the latest.
   const [picked, setPicked] = useState<number | undefined>(artifact.version);
   const [seenLatest, setSeenLatest] = useState(latest);
   if (latest !== seenLatest) {

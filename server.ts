@@ -44,7 +44,6 @@ const AttachmentsLive = Attachments.local({
   limits: config.attachments,
 });
 
-// Artifacts' pages are tables of their own in the same SQLite file.
 const ArtifactsLive = Artifacts.local({ database: config.paths.db });
 
 // One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).

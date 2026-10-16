@@ -130,7 +130,6 @@ const useArtifactPanel = (
   state: ConversationState
 ): [OpenArtifact | undefined, (artifact: OpenArtifact | undefined) => void] => {
   const [artifact, setArtifact] = useState<OpenArtifact | undefined>();
-  // A different conversation drops the open page: artifacts belong to one.
   const [artifactConversation, setArtifactConversation] = useState(selectedId);
   if (artifactConversation !== selectedId) {
     setArtifactConversation(selectedId);
@@ -152,7 +151,6 @@ const useArtifactPanel = (
     const latest = latestArtifactCall(state.entries);
     if (latest !== undefined && latest.callId !== seen.current.callId) {
       seen.current.callId = latest.callId;
-      // oxlint-disable-next-line react/set-state-in-effect -- a committed artifact result is the panel's open trigger
       setArtifact({ id: latest.id, version: latest.version });
     }
   }, [selectedId, state]);

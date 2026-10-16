@@ -130,8 +130,6 @@ describe("HTTP API", () => {
       ["edit", true],
       ["bash", true],
     ]);
-    // A chat runs with the calculator, the workspace tool, the locked attachments and artifacts, and tracing;
-    // nothing that needs a sandbox.
     expect([
       agent.extensions.flatMap((each) =>
         each.enabled

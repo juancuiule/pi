@@ -74,6 +74,33 @@ const occurrences = (html: string, find: string) =>
 const quoted = (find: string) =>
   find.length > 60 ? `"${find.slice(0, 57)}..."` : `"${find}"`;
 
+/** Fail with the first reason `edits` cannot apply to `html`; each `find` must occur exactly once. */
+const checkEdits = (html: string, edits: readonly ArtifactEdit[]) => {
+  if (edits.length > ARTIFACT_MAX_EDITS) {
+    return Effect.fail(
+      refused(
+        `A call can carry at most ${ARTIFACT_MAX_EDITS} edits; this one has ${edits.length}.`
+      )
+    );
+  }
+  for (const edit of edits) {
+    const found = occurrences(html, edit.find);
+    if (edit.find === "" || found === 0) {
+      return Effect.fail(
+        refused(`The text to find is not in the page: ${quoted(edit.find)}`)
+      );
+    }
+    if (found > 1) {
+      return Effect.fail(
+        refused(
+          `The text to find occurs ${found} times in the page; make it longer so it occurs once: ${quoted(edit.find)}`
+        )
+      );
+    }
+  }
+  return Effect.void;
+};
+
 export class Artifacts extends Context.Service<
   Artifacts,
   {
@@ -148,7 +175,6 @@ export class Artifacts extends Context.Service<
           input: { title: string; html: string; callId: string }
         ) {
           yield* checkSize(input.html);
-          // A replayed call finds the version it already wrote instead of adding another.
           const replayed = records.versionByCallId(
             input.callId,
             conversationId
@@ -205,26 +231,7 @@ export class Artifacts extends Context.Service<
           const current = records.latest(id);
           let html: string;
           if ("edits" in change) {
-            if (change.edits.length > ARTIFACT_MAX_EDITS) {
-              return yield* refused(
-                `A call can carry at most ${ARTIFACT_MAX_EDITS} edits; this one has ${change.edits.length}.`
-              );
-            }
-            // Every `find` must occur exactly once, checked on the page as it is now; nothing is applied
-            // until all of them pass.
-            for (const edit of change.edits) {
-              const found = occurrences(current?.html ?? "", edit.find);
-              if (edit.find === "" || found === 0) {
-                return yield* refused(
-                  `The text to find is not in the page: ${quoted(edit.find)}`
-                );
-              }
-              if (found > 1) {
-                return yield* refused(
-                  `The text to find occurs ${found} times in the page; make it longer so it occurs once: ${quoted(edit.find)}`
-                );
-              }
-            }
+            yield* checkEdits(current?.html ?? "", change.edits);
             html = current?.html ?? "";
             for (const edit of change.edits) {
               // A function replacement: "$" sequences in `replace` stay literal.

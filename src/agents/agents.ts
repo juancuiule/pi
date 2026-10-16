@@ -589,7 +589,6 @@ export class Agents extends Context.Service<
         // Read and search over the conversation's attachments; always on, so a file once sent stays readable.
         const attachmentsExt = attachmentsExtension(attachments);
         registry.install(attachmentsExt);
-        // The pages the agent writes for the person; always on, at every Level.
         const artifactsExt = artifactsExtension(artifacts);
         registry.install(artifactsExt);
         // `ask_user`: questions as a form in the console.
@@ -914,6 +913,9 @@ export class Agents extends Context.Service<
             }, context)
           );
 
+        const backfillAlwaysOnExtensions = (id: ConversationId) =>
+          addExtensions(id, [attachmentsExt, artifactsExt]);
+
         // An Upgrade, recorded in the conversation and on its span for Langfuse.
         const recordUpgrade = (
           id: ConversationId,
@@ -1119,8 +1121,7 @@ export class Agents extends Context.Service<
             return yield* new ConversationArchived({ id: Number(id) });
           }
           yield* locked(id, ensureModel(id));
-          // A conversation from before attachments or artifacts gets their always-on extensions.
-          yield* locked(id, addExtensions(id, [attachmentsExt, artifactsExt]));
+          yield* locked(id, backfillAlwaysOnExtensions(id));
           const workspace = yield* attempt(() =>
             harness.snapshot(WorkspaceDoc, id, context)
           );

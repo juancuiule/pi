@@ -101,7 +101,6 @@ describe("artifacts", () => {
             edits: [{ find: "z", replace: "x" }],
           })
         );
-        // One bad pair keeps the whole call out: version 1 is still the only page.
         const mixed = yield* Effect.exit(
           artifacts.update(1, created.id, {
             callId: "c4",
@@ -193,7 +192,6 @@ describe("artifacts", () => {
             ),
             yield* Effect.exit(artifacts.remove(2, theirs.id)),
             yield* Effect.exit(artifacts.view(2, mine.id)),
-            // Conversation 1's artifact is still there.
             yield* Effect.exit(artifacts.view(1, theirs.id)),
           ],
           remaining: (yield* artifacts.list(2)).length,

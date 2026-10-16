@@ -168,7 +168,6 @@ const Step = ({
     return <Thinking thinking={block.thinking} streaming={streaming} />;
   }
   if (block.type === "toolCall") {
-    // Artifact calls get a card that opens the page beside the chat, not an inspectable trace row.
     return block.name.startsWith("artifact_") ? (
       <ArtifactCard call={block} state={state} />
     ) : (

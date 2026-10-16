@@ -70,7 +70,6 @@ describe(latestArtifactCall, () => {
           title: "A",
         })
       ),
-      // Another tool's details may share the shape; the call name still gates it.
       entry(
         4,
         toolResult("c3", "read", { id: "art_x", version: 9, title: "no" })
