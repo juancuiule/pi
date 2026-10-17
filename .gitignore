@@ -6,6 +6,7 @@ web/.next/
 web/next-env.d.ts
 data/
 docs/superpowers
+docs/plans
 
 # Local agent tooling (installed skills, not project source)
 .claude/
