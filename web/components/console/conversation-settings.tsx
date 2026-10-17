@@ -33,8 +33,9 @@ export const ConversationSettings = ({
   const { data: agent } = useConversationAgent(conversationId, open);
   const configure = useConfigure(conversationId);
   const reset = useResetSettings(conversationId);
-  const save = (change: SettingsChange) =>
+  const save = (change: SettingsChange, onSuccess?: () => void) =>
     configure.mutate(change, {
+      onSuccess,
       onError: (error) => toast.error(error.message),
     });
 
@@ -96,7 +97,11 @@ export const ConversationSettings = ({
                       size="xs"
                       className="self-start"
                       disabled={configure.isPending}
-                      onClick={() => save({ refreshSkills: "all" })}
+                      onClick={() =>
+                        save({ refreshSkills: "all" }, () =>
+                          toast.success("Skills re-synced")
+                        )
+                      }
                     >
                       Re-sync skills
                     </Button>

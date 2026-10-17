@@ -82,6 +82,10 @@ export const SkillEditor = ({
   const origin = data?.origin;
   const binary = data?.binaryFiles ?? [];
   const pending = save.isPending || remove.isPending;
+  // While the folder loads there is nothing to edit or save: saving would PUT an empty one, and adding a file
+  // would seed `edited` with just it, wiping the real files when the data lands.
+  const loading = !creating && data === undefined;
+  const busy = pending || loading;
   const put = (file: string, content: string) =>
     setEdited({ ...files, [file]: content });
   const drop = (file: string) =>
@@ -131,7 +135,7 @@ export const SkillEditor = ({
             id={`skill-file-${file}`}
             value={files[file] ?? ""}
             onChange={(event) => put(file, event.target.value)}
-            disabled={pending || (!creating && data === undefined)}
+            disabled={busy}
           />
         </div>
       ))}
@@ -149,6 +153,11 @@ export const SkillEditor = ({
           if (file === "") {
             return;
           }
+          if (file in files) {
+            setError(`A file named ${file} already exists.`);
+            return;
+          }
+          setError(undefined);
           setEdited({ ...files, [file]: "" });
           setNewFile("");
         }}
@@ -159,13 +168,14 @@ export const SkillEditor = ({
           onChange={(event) => setNewFile(event.target.value)}
           placeholder="references/guide.md"
           aria-label="New file path"
+          disabled={busy}
           className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-7 min-w-0 flex-1 rounded-md border px-2 font-mono text-xs outline-none focus-visible:ring-3"
         />
         <Button
           type="submit"
           variant="outline"
           size="sm"
-          disabled={pending || newFile.trim() === ""}
+          disabled={busy || newFile.trim() === ""}
         >
           <Plus aria-hidden className="size-3.5" />
           Add file
@@ -181,9 +191,7 @@ export const SkillEditor = ({
           variant="outline"
           size="sm"
           disabled={
-            pending ||
-            binary.length > 0 ||
-            (creating && skillName.trim() === "")
+            busy || binary.length > 0 || (creating && skillName.trim() === "")
           }
           onClick={() => {
             setError(undefined);
