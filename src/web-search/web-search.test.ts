@@ -383,6 +383,7 @@ describe("the web extension", () => {
           const before = offeredIn(yield* seat.ask("What do you have?"));
           expect(before.tools).toContain("web_search");
           expect(before.system).toContain("web_search");
+          expect(before.system).toContain("Today is ");
 
           yield* agents.configure(id, { extensions: { web: false } });
           const after = offeredIn(yield* seat.ask("And now?"));

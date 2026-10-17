@@ -18,7 +18,7 @@ import {
   formatSearch,
   outcomeOf,
   QUERY_MAX_CHARS,
-  WEB_SEARCH_SECTION,
+  webSearchSection,
 } from "./format.ts";
 import type { RawResponse, SearchOutcome } from "./format.ts";
 import { searxngSearch, WebSearchError } from "./searxng.ts";
@@ -221,7 +221,7 @@ export const webSearchExtension = (
 ): Extension =>
   defineExtension({
     name: "web",
-    sections: [section("web_search", () => WEB_SEARCH_SECTION)],
+    sections: [section("web_search", () => webSearchSection(new Date()))],
     tools: [
       withApproval(
         defineTool({

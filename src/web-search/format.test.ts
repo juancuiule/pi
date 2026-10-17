@@ -11,6 +11,7 @@ import {
   formatSearch,
   outcomeOf,
   QUERY_MAX_CHARS,
+  webSearchSection,
 } from "./format.ts";
 import type { RawResponse } from "./format.ts";
 
@@ -226,6 +227,15 @@ describe(formatSearch, () => {
       unresponsive: [],
     });
     expect(text).toContain('query="a &quot;quote&quot; &lt;tag&gt;"');
+  });
+});
+
+describe(webSearchSection, () => {
+  it("names today, so relative times resolve against it", () => {
+    const section = webSearchSection(new Date("2026-10-16T12:00:00"));
+
+    expect(section).toContain("Today is Friday, October 16, 2026");
+    expect(section).toContain("Use web_search to look up anything");
   });
 });
 
