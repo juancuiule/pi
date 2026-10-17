@@ -1,0 +1,13 @@
+# SearXNG, the metasearch engine behind the `web_search` tool (src/web-search/): the server sends it a query, and it
+# queries the public engines and merges their results. Bound to localhost. SEARXNG_SECRET comes from .env here,
+# written by init-env.ts (`pnpm searxng:up`). The image is pinned to a dated tag; update it deliberately.
+services:
+  searxng:
+    image: docker.io/searxng/searxng:2026.10.13-22c64b8d3
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:8081:8080
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET}

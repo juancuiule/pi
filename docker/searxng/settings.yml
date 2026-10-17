@@ -1,0 +1,58 @@
+# SearXNG's settings: only what differs from its defaults (use_default_settings). server.secret_key is a placeholder:
+# the SEARXNG_SECRET env (docker/searxng/.env, written by init-env.ts) overrides whatever the file says.
+use_default_settings: true
+
+server:
+  secret_key: "placeholder-overridden-by-SEARXNG_SECRET"
+  # A private instance: the bot limiter protects public instances and would block this server itself (it would also
+  # need Valkey). With it off there is nothing for public_instance to gate.
+  limiter: false
+  public_instance: false
+
+search:
+  # json is off by default; a disabled format answers 403.
+  formats:
+    - html
+    - json
+
+outgoing:
+  # One slow engine must not hold a whole search.
+  request_timeout: 3.0
+
+# The engines a `general` search asks, measured from this host's network (2026-10): google cse, mojeek and
+# startpage answer reliably, duckduckgo is intermittent but supplies `answers`; bing, brave and qwant refuse every
+# request from this address (connection error, too many requests, access denied), so they stay off. The
+# encyclopedias answer nothing here but cost nothing. Re-enable a refused engine if the network changes.
+engines:
+  - name: google cse
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: startpage
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: wikidata
+    disabled: false
+  - name: bing
+    disabled: true
+  - name: brave
+    disabled: true
+  - name: qwant
+    disabled: true
+  - name: currency
+    disabled: true
+  - name: lingva
+    disabled: true
+  - name: dictzone
+    disabled: true
+  - name: mymemory translated
+    disabled: true
+  - name: bing images
+    disabled: true
+  - name: bing news
+    disabled: true
+  - name: bing videos
+    disabled: true
