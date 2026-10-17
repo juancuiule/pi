@@ -77,19 +77,30 @@ export const ConversationSettings = ({
                       : ` · prompt sections: ${agent.sections.join(", ")}`}
                     . Changes apply from the agent&rsquo;s next model request.
                   </p>
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    className="self-start"
-                    disabled={reset.isPending}
-                    onClick={() =>
-                      reset.mutate(undefined, {
-                        onError: (error) => toast.error(error.message),
-                      })
-                    }
-                  >
-                    Reset to defaults
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      className="self-start"
+                      disabled={reset.isPending}
+                      onClick={() =>
+                        reset.mutate(undefined, {
+                          onError: (error) => toast.error(error.message),
+                        })
+                      }
+                    >
+                      Reset to defaults
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      className="self-start"
+                      disabled={configure.isPending}
+                      onClick={() => save({ refreshSkills: "all" })}
+                    >
+                      Re-sync skills
+                    </Button>
+                  </div>
                   <SettingsPanel
                     settings={agent}
                     approvals={{

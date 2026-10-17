@@ -89,6 +89,9 @@ export const apiError = (error: unknown): string => {
       case "SkillNotFound": {
         return skillError(error);
       }
+      case "InvalidSkill": {
+        return "message" in error ? String(error.message) : "Invalid skill.";
+      }
       case "InvalidUpgrade":
       case "InvalidSetting":
       case "InvalidDomain": {

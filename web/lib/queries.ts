@@ -78,6 +78,54 @@ export const useRemoveDomain = () => {
   });
 };
 
+/** One skill's folder — text contents plus the binary files' names — for the /skills editor. */
+export const useSkill = (name: string | undefined) =>
+  useQuery({
+    queryKey: ["skill", name],
+    queryFn: () =>
+      runApi((c) => c.skills.get({ params: { name: name ?? "" } })),
+    enabled: name !== undefined,
+  });
+
+// A skill write changes the catalog; refetch it even though it never goes stale on its own.
+const invalidateSkill = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  name: string
+) =>
+  Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: ["capabilities"],
+      refetchType: "all",
+    }),
+    queryClient.invalidateQueries({ queryKey: ["skill", name] }),
+  ]);
+
+/** Create a skill or replace one wholesale: `files` is every file its folder will hold. */
+export const useSaveSkill = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      files,
+    }: {
+      name: string;
+      files: Record<string, string>;
+    }) =>
+      runApi((c) => c.skills.save({ params: { name }, payload: { files } })),
+    onSuccess: (_saved, { name }) => invalidateSkill(queryClient, name),
+  });
+};
+
+/** Delete a skill's org copy — gone, or reverted to the builtin it shadowed. */
+export const useDeleteSkill = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      runApi((c) => c.skills.remove({ params: { name } })),
+    onSuccess: (_result, name) => invalidateSkill(queryClient, name),
+  });
+};
+
 /** What one conversation runs with now; fetched while `enabled`, e.g. while the Capabilities sheet is open. */
 export const useConversationAgent = (
   id: number | undefined,
