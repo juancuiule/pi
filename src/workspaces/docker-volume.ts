@@ -14,6 +14,7 @@ const ADAPTER = "docker-volume";
 /** Docker volume storage; `labels` are added to every volume it creates, beside `effect-pi.workspace`. */
 export const storage = (labels: readonly string[] = []) =>
   WorkspaceStorage.of({
+    adapter: ADAPTER,
     create: Effect.gen(function* () {
       const name = `effect-pi-workspace-${randomUUID().slice(0, 8)}`;
       yield* docker([

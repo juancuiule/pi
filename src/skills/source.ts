@@ -25,16 +25,13 @@ const fail = (message: string) => (cause: unknown) =>
 /** The writable namespace; the `org` name can never be a builtin folder. */
 const ORG = "org";
 
-/** A folder's file path: `/`-joined segments of plain names — no `..`, empties or `\` (checkKey's rule). */
+/** A folder's file path: `/`-joined segments of plain names — no `.`-names (list skips them), `..`, empties or `\`. */
 export const isSkillFile = (file: string): boolean =>
   file
     .split("/")
     .every(
       (segment) =>
-        segment !== "" &&
-        segment !== "." &&
-        segment !== ".." &&
-        !segment.includes("\\")
+        segment !== "" && !segment.startsWith(".") && !segment.includes("\\")
     );
 
 /** A folder id is a single file segment; `a/b` or `..` would escape the source's org root. */

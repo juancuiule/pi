@@ -136,6 +136,7 @@ export const localSandboxes = (
   const storage = Layer.succeed(
     WorkspaceStorage,
     WorkspaceStorage.of({
+      adapter: "directory",
       create: Effect.sync(() => {
         const dir = mkdtempSync(path.join(tmpdir(), "effect-pi-workspace-"));
         stored.add(dir);

@@ -67,7 +67,7 @@ const ensureBuckets = async () => {
   );
   return objects;
 };
-export const store = await ensureBuckets();
+const store = await ensureBuckets();
 
 const NodeContext = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 

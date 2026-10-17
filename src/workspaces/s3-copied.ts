@@ -154,45 +154,53 @@ export const layer = (options: {
         const tar = `/tmp/effect-pi-${reason}-${randomUUID().slice(0, 8)}.tar`;
         yield* Effect.tryPromise({
           try: async () => {
-            const packed = await env.exec(
-              `tar cf ${tar} --exclude=./.attachments --exclude=./.skills -C ${env.cwd} .`,
-              {},
-              BACKGROUND_CONTEXT
-            );
-            if (!packed.ok) {
-              throw packed.error;
-            }
-            if (packed.value.exitCode !== 0) {
-              throw new Error(`tar cf exited ${packed.value.exitCode}`);
-            }
-            const reader = getOrThrow(
-              await env.openBinaryReader(tar, {}, BACKGROUND_CONTEXT)
-            );
-            const chunks = (async function* () {
-              try {
-                for (let offset = 0; ;) {
-                  // oxlint-disable-next-line no-await-in-loop -- positional reads must stay in order
-                  const read = await reader.read(
-                    offset,
-                    CHUNK,
-                    BACKGROUND_CONTEXT
-                  );
-                  const chunk = getOrThrow(read);
-                  if (chunk.length === 0) {
-                    return;
-                  }
-                  offset += chunk.length;
-                  yield chunk;
-                }
-              } finally {
-                await reader.close(BACKGROUND_CONTEXT);
+            try {
+              const packed = await env.exec(
+                `tar cf ${tar} --exclude=./.attachments --exclude=./.skills -C ${env.cwd} .`,
+                {},
+                BACKGROUND_CONTEXT
+              );
+              if (!packed.ok) {
+                throw packed.error;
               }
-            })();
-            await store.put(
-              bucket,
-              keyOf(ref.id),
-              Readable.from(chunks).pipe(createZstdCompress())
-            );
+              if (packed.value.exitCode !== 0) {
+                throw new Error(`tar cf exited ${packed.value.exitCode}`);
+              }
+              const reader = getOrThrow(
+                await env.openBinaryReader(tar, {}, BACKGROUND_CONTEXT)
+              );
+              const chunks = (async function* () {
+                try {
+                  for (let offset = 0; ;) {
+                    // oxlint-disable-next-line no-await-in-loop -- positional reads must stay in order
+                    const read = await reader.read(
+                      offset,
+                      CHUNK,
+                      BACKGROUND_CONTEXT
+                    );
+                    const chunk = getOrThrow(read);
+                    if (chunk.length === 0) {
+                      return;
+                    }
+                    offset += chunk.length;
+                    yield chunk;
+                  }
+                } finally {
+                  await reader.close(BACKGROUND_CONTEXT);
+                }
+              })();
+              await store.put(
+                bucket,
+                keyOf(ref.id),
+                Readable.from(chunks).pipe(createZstdCompress())
+              );
+            } finally {
+              try {
+                await env.exec(`rm -f ${tar}`, {}, BACKGROUND_CONTEXT);
+              } catch {
+                // The temporary tar is inside the Sandbox; leaving it is harmless.
+              }
+            }
           },
           catch: (cause) =>
             new SandboxError({
@@ -200,12 +208,10 @@ export const layer = (options: {
               cause,
             }),
         });
-        yield* Effect.ignore(
-          Effect.promise(() => env.exec(`rm -f ${tar}`, {}, BACKGROUND_CONTEXT))
-        );
       });
 
       return WorkspaceStorage.of({
+        adapter: ADAPTER,
         create: Effect.gen(function* () {
           const id = randomUUID();
           yield* options.cache.create(id);

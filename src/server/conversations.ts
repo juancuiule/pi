@@ -93,6 +93,8 @@ interface Live {
   /** Set by Pause during a Run: the Seat closes once the Run ends, unless a `send` comes first. */
   pausing: boolean;
   lastActivity: number;
+  /** Set when a run-end checkpoint is in flight, so every `refresh` caller does not queue another. */
+  checkpointed: boolean;
   /** Held by sends and by `close`, so no send is admitted after the scope starts closing. */
   readonly lock: Semaphore.Semaphore;
   /** Serializes `refresh`. */
@@ -307,8 +309,30 @@ export class Conversations extends Context.Service<
         const refresh = (entry: Live) =>
           entry.seat.running.pipe(
             Effect.tap((value) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
+                const was = entry.running;
                 entry.running = value;
+                if (value) {
+                  entry.checkpointed = false;
+                } else if (was && !entry.pausing && !entry.checkpointed) {
+                  const { sandbox, storage } = entry.seat;
+                  if (sandbox !== undefined && storage !== undefined) {
+                    entry.checkpointed = true;
+                    // A checkpoint after each Run bounds what a crash loses; a Pause's closing save
+                    // takes over instead, and the release joins this fiber through the storage lock.
+                    // Any refresh can observe the transition, so the checkpoint lives here, not in
+                    // the changes stream alone (a `stop` refresh could otherwise eat it).
+                    yield* workspaces.save(storage, sandbox, "checkpoint").pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning(
+                          `Workspace checkpoint of conversation ${entry.seat.id} failed`,
+                          cause
+                        )
+                      ),
+                      Effect.forkIn(layerScope)
+                    );
+                  }
+                }
               })
             ),
             Effect.orDie,
@@ -362,24 +386,7 @@ export class Conversations extends Context.Service<
             Stream.runForEach(() =>
               Effect.gen(function* () {
                 entry.lastActivity = yield* Clock.currentTimeMillis;
-                const wasRunning = entry.running;
                 const running = yield* refresh(entry);
-                if (wasRunning && !running && !entry.pausing) {
-                  const { sandbox, storage } = entry.seat;
-                  if (sandbox !== undefined && storage !== undefined) {
-                    // A checkpoint after each Run bounds what a crash loses; a Pause's closing save
-                    // takes over instead, and the release joins this fiber through the storage lock.
-                    yield* workspaces.save(storage, sandbox, "checkpoint").pipe(
-                      Effect.catchCause((cause) =>
-                        Effect.logWarning(
-                          `Workspace checkpoint of conversation ${id} failed`,
-                          cause
-                        )
-                      ),
-                      Effect.forkIn(layerScope)
-                    );
-                  }
-                }
                 if (!running && entry.pausing) {
                   // Forked into the layer's scope: closing the Seat's own scope interrupts this fiber.
                   yield* close(id).pipe(Effect.forkIn(layerScope));
@@ -445,6 +452,7 @@ export class Conversations extends Context.Service<
                 scope,
                 running: false,
                 pausing: false,
+                checkpointed: false,
                 lastActivity: yield* Clock.currentTimeMillis,
                 lock: yield* Semaphore.make(1),
                 reading: yield* Semaphore.make(1),

@@ -6,10 +6,9 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Context, Effect, Exit, Layer, Ref, Semaphore } from "effect";
 import type { Scope } from "effect";
 
-import { Sandboxes } from "../sandbox/sandbox.ts";
+import { Sandboxes, SandboxError } from "../sandbox/sandbox.ts";
 import type {
   SandboxChoice,
-  SandboxError,
   SandboxInfo,
   SandboxKind,
   WorkspaceMount,
@@ -55,6 +54,8 @@ export type SaveReason = "pause" | "checkpoint";
 export class WorkspaceStorage extends Context.Service<
   WorkspaceStorage,
   {
+    /** What this adapter writes as `StorageRef.adapter`; opening a Workspace recorded under another fails. */
+    readonly adapter: string;
     /** Make empty storage for a new Workspace. */
     readonly create: Effect.Effect<StorageRef, SandboxError>;
     /** Delete a Workspace's files, ignoring ones already gone. */
@@ -158,6 +159,14 @@ export class Workspaces extends Context.Service<
         readonly software?: readonly SoftwareId[] | undefined;
         readonly storage?: StorageRef | undefined;
       }) {
+        if (
+          workspace.storage !== undefined &&
+          workspace.storage.adapter !== storage.adapter
+        ) {
+          return yield* new SandboxError({
+            message: `workspace is stored under ${workspace.storage.adapter}, not ${storage.adapter}`,
+          });
+        }
         const files = workspace.storage ?? (yield* storage.create);
         // A failed restore leaves the mount half-populated; `restored` keeps the release from saving
         // that over a good snapshot.

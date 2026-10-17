@@ -274,6 +274,59 @@ describe("s3-copied workspace storage", () => {
     expect([puts, maxActive]).toStrictEqual([2, 1]);
   });
 
+  it("keeps the cache when the closing save fails, so the files are not lost twice", async () => {
+    const inner = memory();
+    const failing: ObjectStore = {
+      ...inner,
+      put: () => Promise.reject(new Error("store is down")),
+    };
+    const { root, store, layer } = setup(failing);
+
+    const files = await Effect.runPromise(
+      Effect.gen(function* () {
+        const storageService = yield* WorkspaceStorage;
+        const workspaces = yield* Workspaces;
+        const ref = yield* storageService.create;
+        const scope = yield* Scope.make();
+        yield* workspaces
+          .sandbox({ level: "shell", storage: ref })
+          .pipe(Scope.provide(scope));
+        populate(root, ref.id);
+        yield* Scope.close(scope, Exit.void);
+        return ref;
+      }).pipe(Effect.provide(layer))
+    );
+
+    // The save failed and nothing was stored, but the cache survived: the files can still be saved.
+    await expect(store.list(BUCKET, `${files.id}/`)).resolves.toStrictEqual([]);
+    expect(
+      existsSync(path.join(cacheDir(root, files.id), "note.txt"))
+    ).toBeTruthy();
+  });
+
+  it("refuses a Workspace recorded under another adapter", async () => {
+    const { layer } = setup();
+
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const workspaces = yield* Workspaces;
+        return yield* Effect.exit(
+          Effect.scoped(
+            workspaces.sandbox({
+              level: "shell",
+              storage: {
+                adapter: "docker-volume",
+                id: "effect-pi-workspace-x",
+              },
+            })
+          )
+        );
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(Exit.isFailure(exit)).toBeTruthy();
+  });
+
   it("deletes the snapshot and the cache on discard", async () => {
     const { root, store, layer } = setup();
 

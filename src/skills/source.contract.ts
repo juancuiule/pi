@@ -172,7 +172,7 @@ export const sourceContract = (options: {
       ).toBe("builtin");
     });
 
-    it.each(["../escape", "a/b", "", "..", ".", "has\\backslash"])(
+    it.each(["../escape", "a/b", "", "..", ".", ".hidden", "has\\backslash"])(
       "rejects put and remove of the folder id %j",
       async (id) => {
         const put = await Effect.runPromise(
@@ -194,32 +194,39 @@ export const sourceContract = (options: {
       }
     );
 
-    it.each(["../x.md", "a/../x.md", "a//b.md", "a\\b.md", ".", "..", ""])(
-      "rejects put of the file path %j",
-      async (file) => {
-        const id = folderId();
-        const failed = await Effect.runPromise(
-          Effect.service(SkillSource).pipe(
-            Effect.flatMap((source) =>
-              source.put(id, { "SKILL.md": "x", [file]: "v" })
-            ),
-            Effect.flip,
-            Effect.provide(layer)
-          )
-        );
-        expect(failed).toMatchObject({ _tag: "SkillSourceError" });
-        // Nothing was written: the folder never appears.
-        const folders = await use((source) => source.list);
-        expect(folders.some((folder) => folder.id === id)).toBe(false);
-        const read = await Effect.runPromise(
-          Effect.service(SkillSource).pipe(
-            Effect.flatMap((source) => source.read(folderId(), file)),
-            Effect.flip,
-            Effect.provide(layer)
-          )
-        );
-        expect(read).toMatchObject({ _tag: "SkillSourceError" });
-      }
-    );
+    it.each([
+      "../x.md",
+      "a/../x.md",
+      "a//b.md",
+      "a\\b.md",
+      ".",
+      "..",
+      ".hidden.md",
+      "a/.hidden.md",
+      "",
+    ])("rejects put of the file path %j", async (file) => {
+      const id = folderId();
+      const failed = await Effect.runPromise(
+        Effect.service(SkillSource).pipe(
+          Effect.flatMap((source) =>
+            source.put(id, { "SKILL.md": "x", [file]: "v" })
+          ),
+          Effect.flip,
+          Effect.provide(layer)
+        )
+      );
+      expect(failed).toMatchObject({ _tag: "SkillSourceError" });
+      // Nothing was written: the folder never appears.
+      const folders = await use((source) => source.list);
+      expect(folders.some((folder) => folder.id === id)).toBe(false);
+      const read = await Effect.runPromise(
+        Effect.service(SkillSource).pipe(
+          Effect.flatMap((source) => source.read(folderId(), file)),
+          Effect.flip,
+          Effect.provide(layer)
+        )
+      );
+      expect(read).toMatchObject({ _tag: "SkillSourceError" });
+    });
   });
 };
