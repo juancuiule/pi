@@ -453,7 +453,7 @@ describe("the artifact tools", () => {
     expect(
       [
         "/api/artifact-libs/chart.umd.js",
-        "/api/artifact-libs/mermaid.min.js",
+        "/api/artifact-libs/pele.global.js",
       ].map((lib) => system.includes(lib))
     ).toStrictEqual([true, true]);
     expect(system).toContain("300 KB");

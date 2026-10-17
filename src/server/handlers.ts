@@ -302,7 +302,7 @@ const artifactCsp = (domains: readonly string[]) =>
  */
 const ARTIFACT_LIBS: Record<string, string> = {
   "chart.umd.js": "chart.js",
-  "mermaid.min.js": "mermaid",
+  "pele.global.js": "pele",
 };
 
 /** An artifact's wire shape; the wire names its owner `conversation`, like the query param. */
