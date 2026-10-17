@@ -57,36 +57,37 @@ describe("SkillSource.directory with a separate org root", () => {
     rmSync(orgRoot, { recursive: true, force: true });
   });
 
+  const layer = () =>
+    SkillSource.directory(root, orgRoot).pipe(Layer.provide(nodeContext));
+  const use = <A>(
+    f: (source: SkillSource["Service"]) => Effect.Effect<A, SkillSourceError>
+  ) =>
+    Effect.runPromise(
+      Effect.flatMap(Effect.service(SkillSource), f).pipe(
+        Effect.provide(layer())
+      )
+    );
+
   it("writes and removes org folders under orgRoot, never under root", async () => {
     root = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-root-"));
     orgRoot = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-org-"));
     mkdirSync(path.join(root, "kept"), { recursive: true });
     writeFileSync(path.join(root, "kept", "SKILL.md"), "builtin");
-    // A folder named org under root stays skipped, not a namespace of its own.
-    mkdirSync(path.join(root, "org", "fake"), { recursive: true });
-    writeFileSync(path.join(root, "org", "fake", "SKILL.md"), "fake");
-
-    const layer = SkillSource.directory(root, orgRoot).pipe(
-      Layer.provide(nodeContext)
-    );
-    const use = <A>(
-      f: (source: SkillSource["Service"]) => Effect.Effect<A, SkillSourceError>
-    ) =>
-      Effect.runPromise(
-        Effect.flatMap(Effect.service(SkillSource), f).pipe(
-          Effect.provide(layer)
-        )
-      );
 
     await use((source) => source.put("made", { "SKILL.md": "org" }));
+    // A second put over an existing folder goes through the staging swap.
+    await use((source) =>
+      source.put("made", { "SKILL.md": "org2", "extra.md": "e" })
+    );
     await use((source) => source.put("kept", { "SKILL.md": "shadow" }));
     const shadowing = await use((source) => source.list);
     // The writes went to orgRoot; root gained nothing but the seeded folders.
     const writes = {
       orgMade: existsSync(path.join(orgRoot, "made", "SKILL.md")),
       orgKept: existsSync(path.join(orgRoot, "kept", "SKILL.md")),
+      // Staging and backup dirs are gone: every entry is a skill folder.
+      orgEntries: readdirSync(orgRoot).toSorted(),
       root: readdirSync(root).toSorted(),
-      rootOrg: readdirSync(path.join(root, "org")),
     };
     await use((source) => source.remove("made"));
     await use((source) => source.remove("kept"));
@@ -108,11 +109,50 @@ describe("SkillSource.directory with a separate org root", () => {
       writes: {
         orgMade: true,
         orgKept: true,
-        root: ["kept", "org"],
-        rootOrg: ["fake"],
+        orgEntries: ["kept", "made"],
+        root: ["kept"],
       },
       after: [["kept", "builtin"]],
       keptText: "builtin",
+    });
+  });
+
+  it("migrates a legacy root/org into the org root, losing to a folder already there", async () => {
+    root = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-root-"));
+    orgRoot = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-org-"));
+    mkdirSync(path.join(root, "kept"), { recursive: true });
+    writeFileSync(path.join(root, "kept", "SKILL.md"), "builtin");
+    // Checkout-era org skills under root/org: "old" moves over, "clash" loses to the newer copy.
+    for (const [id, text] of [
+      ["old", "legacy"],
+      ["clash", "legacy"],
+    ]) {
+      mkdirSync(path.join(root, "org", id), { recursive: true });
+      writeFileSync(path.join(root, "org", id, "SKILL.md"), text);
+    }
+    mkdirSync(path.join(orgRoot, "clash"), { recursive: true });
+    writeFileSync(path.join(orgRoot, "clash", "SKILL.md"), "wins");
+
+    const folders = await use((source) => source.list);
+
+    expect({
+      folders: folders.map(idAndOrigin),
+      oldText: new TextDecoder().decode(
+        await use((source) => source.read("old", "SKILL.md"))
+      ),
+      clashText: new TextDecoder().decode(
+        await use((source) => source.read("clash", "SKILL.md"))
+      ),
+      root: readdirSync(root).toSorted(),
+    }).toStrictEqual({
+      folders: [
+        ["clash", "org"],
+        ["kept", "builtin"],
+        ["old", "org"],
+      ],
+      oldText: "legacy",
+      clashText: "wins",
+      root: ["kept"],
     });
   });
 });

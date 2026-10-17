@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
@@ -209,7 +210,10 @@ describe("HTTP API", () => {
   });
 
   it("expands /skill: on create and refuses an unknown skill on send", async () => {
-    const skills = Skills.directory("skills");
+    const skills = Skills.directory(
+      "skills",
+      mkdtempSync(path.join(tmpdir(), "effect-pi-skills-org-"))
+    );
     const agents = fauxAgents(
       [
         fauxAssistantMessage([fauxText("one")]),

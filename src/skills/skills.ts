@@ -23,7 +23,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Cause, Context, Effect, Exit, Layer, Schema } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Schema, Semaphore } from "effect";
 
 import { withApproval } from "../approvals.ts";
 import { SkillNotFound } from "../errors.ts";
@@ -226,6 +226,9 @@ export class Skills extends Context.Service<
     Skills,
     Effect.gen(function* () {
       const source = yield* SkillSource;
+      // The outcome of a save or remove is computed from a list: serialize the two, or a racing writer could
+      // turn the other's "created" into an "updated" — or lose a folder between the read and the write.
+      const writing = yield* Semaphore.make(1);
       const decoder = new TextDecoder();
       const readText = (id: string, file: string) =>
         source
@@ -261,33 +264,41 @@ export class Skills extends Context.Service<
       ) {
         // Validate fully before anything is written: a folder that fails leaves the source untouched.
         const skill = yield* checkSkillFiles(name, files);
-        const listed = (yield* source.list).find(
-          (folder) => folder.id === name
+        const outcome = yield* writing.withPermit(
+          Effect.gen(function* () {
+            const listed = (yield* source.list).find(
+              (folder) => folder.id === name
+            );
+            yield* source.put(name, files);
+            if (listed === undefined) {
+              return "created" as const;
+            }
+            return listed.origin === "builtin"
+              ? ("shadowed" as const)
+              : ("updated" as const);
+          })
         );
-        let outcome: SkillSaveOutcome = "updated";
-        if (listed === undefined) {
-          outcome = "created";
-        } else if (listed.origin === "builtin") {
-          outcome = "shadowed";
-        }
-        yield* source.put(name, files);
         return { skill, outcome };
       });
 
       const remove = Effect.fnUntraced(function* (name: string) {
-        const listed = (yield* source.list).find(
-          (folder) => folder.id === name
+        return yield* writing.withPermit(
+          Effect.gen(function* () {
+            const listed = (yield* source.list).find(
+              (folder) => folder.id === name
+            );
+            if (listed === undefined) {
+              return "missing" as const;
+            }
+            if (listed.origin === "builtin") {
+              return "unchanged" as const;
+            }
+            yield* source.remove(name);
+            return listed.origin === "org"
+              ? ("removed" as const)
+              : ("reverted" as const);
+          })
         );
-        if (listed === undefined) {
-          return "missing" as const;
-        }
-        if (listed.origin === "builtin") {
-          return "unchanged" as const;
-        }
-        yield* source.remove(name);
-        return listed.origin === "org"
-          ? ("removed" as const)
-          : ("reverted" as const);
       });
 
       const folder = Effect.fnUntraced(function* (id: string) {
@@ -475,10 +486,10 @@ export class Skills extends Context.Service<
     })
   );
 
-  /** Skills from folders under `root` on the host. */
-  static readonly directory = (root: string) =>
+  /** Skills from folders under `root` on the host; `orgRoot` keeps the writable overlay outside it. */
+  static readonly directory = (root: string, orgRoot?: string) =>
     Skills.layer.pipe(
-      Layer.provide(SkillSource.directory(root)),
+      Layer.provide(SkillSource.directory(root, orgRoot)),
       Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))
     );
 

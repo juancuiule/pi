@@ -23,7 +23,13 @@ import {
 import { Agents } from "./agents.ts";
 import { SETTINGS_ENTRY } from "./settings.ts";
 
-const withSkills = { skills: Skills.directory("skills") };
+// An empty org root: a developer's leftover skills/org/ would otherwise leak into these tests.
+const withSkills = {
+  skills: Skills.directory(
+    "skills",
+    mkdtempSync(path.join(tmpdir(), "effect-pi-skills-org-"))
+  ),
+};
 
 const create = (
   options: Partial<Parameters<(typeof Agents)["Service"]["create"]>[0]> = {}

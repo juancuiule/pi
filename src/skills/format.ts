@@ -5,12 +5,20 @@ import { parse as parseYaml } from "yaml";
 
 import { InvalidSkill } from "../errors.ts";
 import { toXml } from "../prompt/xml.ts";
-import { isSkillFile } from "./source.ts";
 import type { SkillOrigin } from "./source.ts";
 
 export { InvalidSkill } from "../errors.ts";
 
 export const SKILL_FILE = "SKILL.md";
+
+/** A folder's file path: `/`-joined segments of plain names — no `.`-names (list skips them), `..`, empties or `\`. */
+export const isSkillFile = (file: string): boolean =>
+  file
+    .split("/")
+    .every(
+      (segment) =>
+        segment !== "" && !segment.startsWith(".") && !segment.includes("\\")
+    );
 
 // The name rule, also checked on the wire in src/server/api.ts, which cannot import this module.
 export const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;

@@ -7,6 +7,7 @@ import { Context, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import type { PlatformError } from "effect";
 
 import type { ObjectStore } from "../storage/object-store.ts";
+import { isSkillFile, SKILL_FILE } from "./format.ts";
 
 /**
  * Which namespace a folder's listed copy comes from: `builtin`, `org`, or `overridden` for an org folder
@@ -31,15 +32,6 @@ const fail = (message: string) => (cause: unknown) =>
 
 /** The writable namespace; the `org` name can never be a builtin folder. */
 const ORG = "org";
-
-/** A folder's file path: `/`-joined segments of plain names — no `.`-names (list skips them), `..`, empties or `\`. */
-export const isSkillFile = (file: string): boolean =>
-  file
-    .split("/")
-    .every(
-      (segment) =>
-        segment !== "" && !segment.startsWith(".") && !segment.includes("\\")
-    );
 
 /** A folder id is a single file segment; `a/b` or `..` would escape the source's org root. */
 const isSkillId = (id: string): boolean => isSkillFile(id) && !id.includes("/");
@@ -192,6 +184,40 @@ export class SkillSource extends Context.Service<
         const path = yield* Path.Path;
         const orgDir = orgRoot ?? path.join(root, ORG);
 
+        // The checkout-era layout kept org skills at `<root>/org`: move its folders under orgDir, a legacy one
+        // losing to an org folder of the same id. Compared as strings — orgDir is the join when orgRoot is unset.
+        // A failure only warns: the next boot tries again, and the unmigrated folders are no worse than lost.
+        const legacy = path.join(root, ORG);
+        if (orgDir !== legacy) {
+          yield* Effect.gen(function* () {
+            if (!(yield* fs.exists(legacy))) {
+              return;
+            }
+            for (const child of yield* fs.readDirectory(legacy)) {
+              const from = path.join(legacy, child);
+              if ((yield* fs.stat(from)).type !== "Directory") {
+                continue;
+              }
+              const to = path.join(orgDir, child);
+              if (yield* fs.exists(to)) {
+                yield* fs.remove(from, { recursive: true });
+              } else {
+                yield* fs.makeDirectory(orgDir, { recursive: true });
+                yield* fs.rename(from, to);
+              }
+            }
+            yield* fs.remove(legacy, { recursive: true });
+            yield* Effect.logWarning(`Migrated ${legacy} into ${orgDir}`);
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Could not migrate ${legacy} into ${orgDir}`,
+                cause
+              )
+            )
+          );
+        }
+
         // The folders directly under a directory, by id.
         const foldersIn = (
           dir: string
@@ -249,13 +275,18 @@ export class SkillSource extends Context.Service<
               return Effect.fail(invalid);
             }
             const dir = path.join(orgDir, id);
+            // A concurrent list sees the old folder or the new one, never a half-written one: write to a
+            // dot-prefixed staging dir (foldersIn skips it), then swap.
+            const staging = path.join(orgDir, `.${id}.staging`);
+            const previous = path.join(orgDir, `.${id}.previous`);
             return Effect.gen(function* () {
-              yield* fs.remove(dir, { recursive: true, force: true });
+              yield* fs.remove(staging, { recursive: true, force: true });
+              yield* fs.remove(previous, { recursive: true, force: true });
               yield* Effect.forEach(
                 Object.entries(files),
                 ([file, contents]) =>
                   Effect.gen(function* () {
-                    const target = path.join(dir, file);
+                    const target = path.join(staging, file);
                     yield* fs.makeDirectory(path.dirname(target), {
                       recursive: true,
                     });
@@ -263,6 +294,11 @@ export class SkillSource extends Context.Service<
                   }),
                 { concurrency: 8, discard: true }
               );
+              if (yield* fs.exists(dir)) {
+                yield* fs.rename(dir, previous);
+              }
+              yield* fs.rename(staging, dir);
+              yield* fs.remove(previous, { recursive: true, force: true });
             }).pipe(Effect.mapError(fail(`Could not write ${ORG}/${id}`)));
           },
           remove: (id) =>
@@ -406,11 +442,27 @@ export class SkillSource extends Context.Service<
           }
           return Effect.tryPromise({
             try: async () => {
-              await store.removePrefix(bucket, orgKey(id));
+              // The folder is never absent: write first (SKILL.md last, so the old copy still reads as valid
+              // until the final key lands), then remove the keys the new folder does not have.
               await Promise.all(
-                Object.entries(files).map(([file, contents]) =>
-                  store.put(bucket, orgKey(id, file), bytesOf(contents))
-                )
+                Object.entries(files)
+                  .filter(([file]) => file !== SKILL_FILE)
+                  .map(([file, contents]) =>
+                    store.put(bucket, orgKey(id, file), bytesOf(contents))
+                  )
+              );
+              const skill = files[SKILL_FILE];
+              if (skill !== undefined) {
+                await store.put(bucket, orgKey(id, SKILL_FILE), bytesOf(skill));
+              }
+              const kept = new Set(
+                Object.keys(files).map((file) => orgKey(id, file))
+              );
+              const stale = await store.list(bucket, orgKey(id));
+              await Promise.all(
+                stale
+                  .filter(({ key }) => !kept.has(key))
+                  .map(({ key }) => store.remove(bucket, key))
               );
             },
             catch: fail(`Could not write ${ORG}/${id}`),

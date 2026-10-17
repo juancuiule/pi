@@ -82,11 +82,11 @@ describe("Skills.catalog", () => {
   });
 });
 
-const catalogOf = (dir: string) =>
+const catalogOf = (dir: string, orgRoot?: string) =>
   Effect.runPromise(
     Effect.service(Skills).pipe(
       Effect.flatMap((service) => service.catalog),
-      Effect.provide(Skills.directory(dir))
+      Effect.provide(Skills.directory(dir, orgRoot))
     )
   );
 
@@ -126,7 +126,11 @@ describe("Skills.directory", () => {
   });
 
   it("loads the repository's own skills without problems", async () => {
-    const { skills, problems } = await catalogOf("skills");
+    // A hermetic org root: a developer's leftover skills/org/ must not leak in.
+    const { skills, problems } = await catalogOf(
+      "skills",
+      mkdtempSync(path.join(tmpdir(), "effect-pi-skills-org-"))
+    );
 
     expect({
       names: skills.map((skill) => skill.name),
