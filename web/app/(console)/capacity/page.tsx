@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/console/page-header";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { CapacityShortage } from "@/lib/api";
+import { conversationTitleOf } from "@/lib/artifacts";
 import { holdersOf, shortageText, waitingShortage } from "@/lib/capacity";
 import { useMakeRoom } from "@/lib/capacity-context";
 import {
@@ -96,9 +97,7 @@ const CapacityPage = () => {
                 <ul className="flex flex-col gap-2">
                   {resource.waiting.map((id) => {
                     const waiting = waitingShortage(usage, id);
-                    const title =
-                      conversations?.find((each) => each.id === id)?.title ??
-                      `#${id}`;
+                    const title = conversationTitleOf(conversations, id);
                     return (
                       <li
                         key={id}

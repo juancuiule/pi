@@ -1,7 +1,9 @@
 // Artifacts in the console: sandboxed HTML pages the agent writes (docs/plans/artifacts.md). A committed
 // `artifact_create`/`artifact_update` result carries `{ id, version, title }` in its `details` — the card and the
 // panel read it from there, the way `patchOf` reads an edit's patch.
-import type { EntryRecord } from "effect-pi/api";
+import type { ConversationSummary, EntryRecord } from "effect-pi/api";
+
+import { parseConversationId } from "./conversation-id";
 
 /** The artifact a committed `artifact_*` result points at. */
 export interface ArtifactRef {
@@ -39,6 +41,45 @@ export const artifactRenderUrl = (
   `/api/artifacts/${encodeURIComponent(id)}/render?conversation=${conversation}${
     version === undefined ? "" : `&v=${version}`
   }`;
+
+/** The `/artifacts` URL that opens an artifact in the page's own panel; `version` pins the shown version. */
+export const artifactUrl = (
+  conversation: number,
+  id: string,
+  version?: number
+): string =>
+  `/artifacts?c=${conversation}&artifact=${encodeURIComponent(id)}${
+    version === undefined ? "" : `&v=${version}`
+  }`;
+
+/**
+ * The artifact `/artifacts?c=<conversation>&artifact=<id>[&v]` names, when `c` is an integer and `artifact` is
+ * non-empty; an absent or non-integer `v` leaves `version` unset, following the latest.
+ */
+export const openArtifactOf = (params: {
+  get(name: string): string | null;
+}): { artifact: OpenArtifact; conversation: number } | undefined => {
+  const conversation = parseConversationId(params.get("c"));
+  const id = params.get("artifact");
+  if (conversation === undefined || id === null || id === "") {
+    return undefined;
+  }
+  const v = params.get("v");
+  const version = v === null ? undefined : Number(v);
+  return {
+    conversation,
+    artifact:
+      version !== undefined && Number.isInteger(version)
+        ? { id, version }
+        : { id },
+  };
+};
+
+/** A conversation's title, or `#<id>` when it is not in the loaded list. */
+export const conversationTitleOf = (
+  conversations: readonly ConversationSummary[] | undefined,
+  id: number
+): string => conversations?.find((each) => each.id === id)?.title ?? `#${id}`;
 
 /**
  * The newest committed `artifact_*` tool result in the transcript, tagged with its call id so the console opens

@@ -8,7 +8,10 @@ import type { ReactNode } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { toast } from "sonner";
 
-import { ArtifactPanel } from "@/components/console/artifact-panel";
+import {
+  ArtifactResizablePanel,
+  ArtifactSheet,
+} from "@/components/console/artifact-panel";
 import { ConversationHeader } from "@/components/console/conversation-header";
 import { DesktopPanel } from "@/components/console/desktop-panel";
 import { MessageInput } from "@/components/console/message-input";
@@ -20,7 +23,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { AnswersContext, ApprovalContext } from "@/lib/approval-context";
 import { OpenArtifactContext } from "@/lib/artifact-context";
 import { latestArtifactCall } from "@/lib/artifacts";
@@ -150,85 +152,6 @@ const useArtifactPanel = (
   }, [selectedId, state]);
   return [artifact, setArtifact];
 };
-
-/** On desktop an artifact is a third pane after the main one; dragging it shut closes it. */
-const ArtifactResizablePanel = ({
-  artifact,
-  conversation,
-  onClose,
-}: {
-  artifact: OpenArtifact | undefined;
-  conversation: number | undefined;
-  onClose: () => void;
-}) => {
-  if (artifact === undefined || conversation === undefined) {
-    return null;
-  }
-  return (
-    <>
-      <ResizableHandle />
-      <ResizablePanel
-        defaultSize="30%"
-        minSize="15%"
-        collapsible
-        onResize={(size) => {
-          if (size.asPercentage === 0) {
-            onClose();
-          }
-        }}
-      >
-        <ArtifactPanel
-          key={`${conversation}:${artifact.id}`}
-          artifact={artifact}
-          conversation={conversation}
-          onClose={onClose}
-        />
-      </ResizablePanel>
-    </>
-  );
-};
-
-/** Below the desktop breakpoint the same panel is a Sheet instead. */
-const ArtifactSheet = ({
-  artifact,
-  conversation,
-  isDesktop,
-  onClose,
-}: {
-  artifact: OpenArtifact | undefined;
-  conversation: number | undefined;
-  isDesktop: boolean | null;
-  onClose: () => void;
-}) => (
-  <Sheet
-    open={
-      isDesktop === false &&
-      artifact !== undefined &&
-      conversation !== undefined
-    }
-    onOpenChange={(open) => {
-      if (!open) {
-        onClose();
-      }
-    }}
-  >
-    <SheetContent
-      side="right"
-      showCloseButton={false}
-      className="w-full sm:max-w-2xl"
-    >
-      <SheetTitle className="sr-only">Artifact page</SheetTitle>
-      {artifact === undefined || conversation === undefined ? null : (
-        <ArtifactPanel
-          key={`${conversation}:${artifact.id}`}
-          artifact={artifact}
-          conversation={conversation}
-          onClose={onClose}
-        />
-      )}
-    </SheetContent>
-  </Sheet>
-);
 
 const NotFound = ({ onNew }: { onNew: () => void }) => (
   <div className="flex h-full flex-col items-center justify-center gap-2 p-6">

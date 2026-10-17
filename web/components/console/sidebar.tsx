@@ -4,6 +4,7 @@ import type { ConversationSummary } from "effect-pi/api";
 import {
   BookOpen,
   Gauge,
+  LayoutTemplate,
   LoaderCircle,
   MessageSquare,
   Monitor,
@@ -16,7 +17,7 @@ import {
 import { useTheme } from "next-themes";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -33,20 +34,11 @@ import { relativeTime } from "@/lib/format";
 import { useConversations, useInfo } from "@/lib/queries";
 import { useConversationStore } from "@/lib/store";
 import { useMounted } from "@/lib/use-media-query";
+import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 
 import { SANDBOX_INFO } from "./sandbox-badge";
 import { StatusDot } from "./status-dot";
-
-/** A clock that re-renders every 30s so relative timestamps stay fresh. */
-const useNow = (): number => {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-  return now;
-};
 
 const THEMES = [
   { value: "system", label: "System", icon: Monitor },
@@ -57,6 +49,7 @@ const THEMES = [
 const PAGES = [
   { href: "/", label: "Conversations", icon: MessageSquare },
   { href: "/skills", label: "Skills", icon: BookOpen },
+  { href: "/artifacts", label: "Artifacts", icon: LayoutTemplate },
   { href: "/capacity", label: "Capacity", icon: Gauge },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
