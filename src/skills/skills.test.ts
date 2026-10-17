@@ -136,6 +136,142 @@ describe("Skills.directory", () => {
   });
 });
 
+describe("Skills.save", () => {
+  const wrote = { "SKILL.md": skillFile("made", "Made by the agent.") };
+
+  it("reports created, shadowed and updated", async () => {
+    const files: Record<string, string> = {
+      "builtin/kept/SKILL.md": skillFile("kept", "Built in."),
+    };
+    const outcomes = await withSkills(files, (service) =>
+      Effect.gen(function* () {
+        const created = yield* service.save("made", wrote);
+        const shadowed = yield* service.save("kept", {
+          "SKILL.md": skillFile("kept", "Overridden."),
+        });
+        const updated = yield* service.save("made", {
+          "SKILL.md": skillFile("made", "Made again."),
+        });
+        return [created.outcome, shadowed.outcome, updated.outcome];
+      })
+    );
+    expect(outcomes).toStrictEqual(["created", "shadowed", "updated"]);
+    // The builtin copy is untouched; the org folder shadows it.
+    expect(files["builtin/kept/SKILL.md"]).toContain("Built in.");
+    expect(files["org/kept/SKILL.md"]).toContain("Overridden.");
+    expect(files["org/made/SKILL.md"]).toContain("Made again.");
+  });
+
+  it.for([
+    ["an empty folder", "made", {}, "files is empty"],
+    ["no SKILL.md", "made", { "notes.md": "x" }, "must include SKILL.md"],
+    [
+      "a bad file path",
+      "made",
+      { ...wrote, "../outside.md": "no" },
+      "not a valid skill file path",
+    ],
+    [
+      "a mismatched frontmatter name",
+      "made",
+      { "SKILL.md": skillFile("other", "Mismatch.") },
+      "names other, not made",
+    ],
+    [
+      "broken frontmatter",
+      "made",
+      { "SKILL.md": "---\nname: made\n---\nNo description." },
+      "description: is required",
+    ],
+  ] as const)(
+    "refuses %s and writes nothing",
+    async ([_label, name, files, message]) => {
+      const source: Record<string, string> = {};
+      const failed = await Effect.runPromise(
+        Effect.service(Skills).pipe(
+          Effect.flatMap((service) => service.save(name, files)),
+          Effect.flip,
+          Effect.provide(skillsFrom(source))
+        )
+      );
+      expect(failed).toMatchObject({ _tag: "InvalidSkill" });
+      expect(failed.message).toContain(message);
+      expect(Object.keys(source)).toStrictEqual([]);
+    }
+  );
+
+  it("refuses a name that is not a skill name and writes nothing", async () => {
+    const source: Record<string, string> = {};
+    const failed = await Effect.runPromise(
+      Effect.service(Skills).pipe(
+        Effect.flatMap((service) => service.save("Made_Skill", wrote)),
+        Effect.flip,
+        Effect.provide(skillsFrom(source))
+      )
+    );
+    expect(failed).toMatchObject({ _tag: "InvalidSkill" });
+    expect(Object.keys(source)).toStrictEqual([]);
+  });
+});
+
+describe("Skills.remove", () => {
+  it("removes org folders, reverts overridden ones, and leaves the rest alone", async () => {
+    const files: Record<string, string> = {
+      "builtin/builtin-only/SKILL.md": skillFile("builtin-only", "Built in."),
+      "org/custom/SKILL.md": skillFile("custom", "Org made."),
+      "builtin/shadowed/SKILL.md": skillFile("shadowed", "Built in."),
+      "org/shadowed/SKILL.md": skillFile("shadowed", "Org copy."),
+    };
+    const outcomes = await withSkills(files, (service) =>
+      Effect.all([
+        service.remove("custom"),
+        service.remove("shadowed"),
+        service.remove("builtin-only"),
+        service.remove("nope"),
+      ])
+    );
+    expect(outcomes).toStrictEqual([
+      "removed",
+      "reverted",
+      "unchanged",
+      "missing",
+    ]);
+    expect(Object.keys(files).toSorted()).toStrictEqual([
+      "builtin/builtin-only/SKILL.md",
+      "builtin/shadowed/SKILL.md",
+    ]);
+  });
+});
+
+describe("Skills.folder", () => {
+  it("reads a listed folder's files with its origin", async () => {
+    const result = await withSkills(
+      {
+        "builtin/kept/SKILL.md": "builtin skill",
+        "builtin/kept/extra.md": "builtin extra",
+        "org/kept/SKILL.md": "org skill",
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const overridden = yield* service.folder("kept");
+          const missing = yield* service.folder("nope");
+          return { overridden, missing };
+        })
+    );
+    expect(result.missing).toBeUndefined();
+    expect(result.overridden?.origin).toBe("overridden");
+    // An org folder shadows the builtin one as a whole: the listed files are the org copy's.
+    expect(
+      Object.fromEntries(
+        Object.entries(result.overridden?.files ?? {}).map(([file, bytes]) => [
+          file,
+          new TextDecoder().decode(bytes),
+        ])
+      )
+    ).toStrictEqual({ "SKILL.md": "org skill" });
+  });
+});
+
 const expand = (prompt: string) =>
   withSkills(CONVERT, (service) =>
     service.catalog.pipe(

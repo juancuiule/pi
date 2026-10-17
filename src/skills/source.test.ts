@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -10,6 +17,7 @@ import { memory as memoryStore } from "../storage/object-store.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 import { sourceContract } from "./source.contract.ts";
 import { convergeBuiltin, SkillSource } from "./source.ts";
+import type { SkillSourceError } from "./source.ts";
 
 const nodeContext = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 
@@ -36,6 +44,79 @@ describe("SkillSource.directory", () => {
   });
 });
 
+const idAndOrigin = (folder: { id: string; origin: string }) => [
+  folder.id,
+  folder.origin,
+];
+
+describe("SkillSource.directory with a separate org root", () => {
+  let root = "";
+  let orgRoot = "";
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(orgRoot, { recursive: true, force: true });
+  });
+
+  it("writes and removes org folders under orgRoot, never under root", async () => {
+    root = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-root-"));
+    orgRoot = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-org-"));
+    mkdirSync(path.join(root, "kept"), { recursive: true });
+    writeFileSync(path.join(root, "kept", "SKILL.md"), "builtin");
+    // A folder named org under root stays skipped, not a namespace of its own.
+    mkdirSync(path.join(root, "org", "fake"), { recursive: true });
+    writeFileSync(path.join(root, "org", "fake", "SKILL.md"), "fake");
+
+    const layer = SkillSource.directory(root, orgRoot).pipe(
+      Layer.provide(nodeContext)
+    );
+    const use = <A>(
+      f: (source: SkillSource["Service"]) => Effect.Effect<A, SkillSourceError>
+    ) =>
+      Effect.runPromise(
+        Effect.flatMap(Effect.service(SkillSource), f).pipe(
+          Effect.provide(layer)
+        )
+      );
+
+    await use((source) => source.put("made", { "SKILL.md": "org" }));
+    await use((source) => source.put("kept", { "SKILL.md": "shadow" }));
+    const shadowing = await use((source) => source.list);
+    // The writes went to orgRoot; root gained nothing but the seeded folders.
+    const writes = {
+      orgMade: existsSync(path.join(orgRoot, "made", "SKILL.md")),
+      orgKept: existsSync(path.join(orgRoot, "kept", "SKILL.md")),
+      root: readdirSync(root).toSorted(),
+      rootOrg: readdirSync(path.join(root, "org")),
+    };
+    await use((source) => source.remove("made"));
+    await use((source) => source.remove("kept"));
+    const after = await use((source) => source.list);
+    const keptText = new TextDecoder().decode(
+      await use((source) => source.read("kept", "SKILL.md"))
+    );
+
+    expect({
+      shadowing: shadowing.map(idAndOrigin),
+      writes,
+      after: after.map(idAndOrigin),
+      keptText,
+    }).toStrictEqual({
+      shadowing: [
+        ["kept", "overridden"],
+        ["made", "org"],
+      ],
+      writes: {
+        orgMade: true,
+        orgKept: true,
+        root: ["kept", "org"],
+        rootOrg: ["fake"],
+      },
+      after: [["kept", "builtin"]],
+      keptText: "builtin",
+    });
+  });
+});
+
 describe("SkillSource.memory", () => {
   const files: Record<string, string | Uint8Array> = {};
   sourceContract({
@@ -57,7 +138,9 @@ describe("SkillSource.memory", () => {
         Effect.provide(SkillSource.memory(bare))
       )
     );
-    expect(folders).toStrictEqual([{ id: "plain", files: ["SKILL.md"] }]);
+    expect(folders).toStrictEqual([
+      { id: "plain", files: ["SKILL.md"], origin: "overridden" },
+    ]);
     const text = await Effect.runPromise(
       Effect.flatMap(Effect.service(SkillSource), (source) =>
         source.read("plain", "SKILL.md")

@@ -8,10 +8,17 @@ import type { PlatformError } from "effect";
 
 import type { ObjectStore } from "../storage/object-store.ts";
 
+/**
+ * Which namespace a folder's listed copy comes from: `builtin`, `org`, or `overridden` for an org folder
+ * shadowing a builtin one of the same id.
+ */
+export type SkillOrigin = "builtin" | "org" | "overridden";
+
 /** One folder: its id in the source and every file in it, relative to it with `/` separators. */
 export interface SkillFolder {
   readonly id: string;
   readonly files: readonly string[];
+  readonly origin: SkillOrigin;
 }
 
 export class SkillSourceError extends Schema.TaggedError<SkillSourceError>()(
@@ -90,6 +97,18 @@ const groupKeys = (tails: readonly string[]): Map<string, string[]> => {
   );
 };
 
+/** A folder's provenance from the two namespaces that share ids. */
+const originOf = (
+  id: string,
+  builtin: ReadonlyMap<string, unknown>,
+  org: ReadonlyMap<string, unknown>
+): SkillOrigin => {
+  if (!org.has(id)) {
+    return "builtin";
+  }
+  return builtin.has(id) ? "overridden" : "org";
+};
+
 /** Builtin folders overlaid by org ones: an org folder replaces the builtin folder of its id. */
 const merged = (
   builtin: Map<string, string[]>,
@@ -100,7 +119,7 @@ const merged = (
     byId.set(id, files);
   }
   return [...byId]
-    .map(([id, files]) => ({ id, files }))
+    .map(([id, files]) => ({ id, files, origin: originOf(id, builtin, org) }))
     .toSorted((a, b) => a.id.localeCompare(b.id));
 };
 
@@ -161,64 +180,50 @@ export class SkillSource extends Context.Service<
   }
 >()("effect-pi/skills/SkillSource") {
   /**
-   * Folders under `root` on the host; a missing `root` has none. Top-level folders are builtin and `root/org/*`
-   * the org overlay, which `put` writes and `remove` deletes. Entries starting with `.` are skipped.
+   * Folders under `root` on the host; a missing `root` has none. Top-level folders are builtin and the org
+   * overlay — `root/org/*` by default, `orgRoot` when given, so the writable copy can live outside the checkout —
+   * is what `put` writes and `remove` deletes. Entries starting with `.` are skipped.
    */
-  static readonly directory = (root: string) =>
+  static readonly directory = (root: string, orgRoot?: string) =>
     Layer.effect(
       SkillSource,
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const orgRoot = path.join(root, ORG);
+        const orgDir = orgRoot ?? path.join(root, ORG);
 
-        // The folders directly under a directory.
+        // The folders directly under a directory, by id.
         const foldersIn = (
           dir: string
-        ): Effect.Effect<SkillFolder[], SkillSourceError> =>
+        ): Effect.Effect<Map<string, string[]>, SkillSourceError> =>
           Effect.gen(function* () {
+            const byId = new Map<string, string[]>();
             if (!(yield* fs.exists(dir))) {
-              return [];
+              return byId;
             }
             const entries = (yield* fs.readDirectory(dir)).toSorted();
-            const folders = yield* Effect.forEach(
+            yield* Effect.forEach(
               entries,
               (id) =>
                 Effect.gen(function* () {
                   const target = path.join(dir, id);
                   const info = yield* fs.stat(target);
-                  return id.startsWith(".") || info.type !== "Directory"
-                    ? []
-                    : [
-                        {
-                          id,
-                          files: (yield* listFiles(
-                            fs,
-                            path,
-                            target,
-                            ""
-                          )).toSorted(),
-                        },
-                      ];
+                  if (!id.startsWith(".") && info.type === "Directory") {
+                    byId.set(
+                      id,
+                      (yield* listFiles(fs, path, target, "")).toSorted()
+                    );
+                  }
                 }),
               { concurrency: 8 }
             );
-            return folders.flat();
+            return byId;
           }).pipe(Effect.mapError(fail(`Could not list skills in ${dir}`)));
 
         const list = Effect.gen(function* () {
-          const byId = new Map<string, SkillFolder>();
-          for (const folder of yield* foldersIn(root)) {
-            if (folder.id !== ORG) {
-              byId.set(folder.id, folder);
-            }
-          }
-          for (const folder of yield* foldersIn(orgRoot)) {
-            byId.set(folder.id, folder);
-          }
-          return [...byId.values()].toSorted((a, b) =>
-            a.id.localeCompare(b.id)
-          );
+          const builtin = yield* foldersIn(root);
+          builtin.delete(ORG);
+          return merged(builtin, yield* foldersIn(orgDir));
         });
 
         return SkillSource.of({
@@ -231,7 +236,7 @@ export class SkillSource extends Context.Service<
               return invalidFile(file);
             }
             return Effect.gen(function* () {
-              const orgFile = path.join(orgRoot, id, file);
+              const orgFile = path.join(orgDir, id, file);
               const target = (yield* fs.exists(orgFile))
                 ? orgFile
                 : path.join(root, id, file);
@@ -243,7 +248,7 @@ export class SkillSource extends Context.Service<
             if (invalid !== undefined) {
               return Effect.fail(invalid);
             }
-            const dir = path.join(orgRoot, id);
+            const dir = path.join(orgDir, id);
             return Effect.gen(function* () {
               yield* fs.remove(dir, { recursive: true, force: true });
               yield* Effect.forEach(
@@ -263,7 +268,7 @@ export class SkillSource extends Context.Service<
           remove: (id) =>
             isSkillId(id)
               ? fs
-                  .remove(path.join(orgRoot, id), {
+                  .remove(path.join(orgDir, id), {
                     recursive: true,
                     force: true,
                   })

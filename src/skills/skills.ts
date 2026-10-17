@@ -26,7 +26,9 @@ import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Context, Effect, Layer, Schema } from "effect";
 
 import { SkillNotFound } from "../errors.ts";
+import type { InvalidSkill } from "../errors.ts";
 import {
+  checkSkillFiles,
   decodeSkill,
   formatSkillHints,
   formatSkillMessage,
@@ -39,10 +41,24 @@ import {
 } from "./format.ts";
 import type { Skill } from "./format.ts";
 import { SkillSource } from "./source.ts";
-import type { SkillSourceError } from "./source.ts";
+import type { SkillOrigin, SkillSourceError } from "./source.ts";
 
 export type { Skill } from "./format.ts";
+export type { SkillOrigin } from "./source.ts";
 export { SkillSource, SkillSourceError } from "./source.ts";
+
+/** What writing a skill's org folder did: created it, replaced the org copy, or shadowed a builtin one. */
+export type SkillSaveOutcome = "created" | "updated" | "shadowed";
+
+/**
+ * What deleting a skill's org copy did: `removed` when the folder is gone, `reverted` when the builtin copy it
+ * shadowed shows again. `unchanged` (builtin-only) and `missing` (unknown) write nothing.
+ */
+export type SkillRemoveOutcome =
+  | "removed"
+  | "reverted"
+  | "unchanged"
+  | "missing";
 
 /** Where sandboxed conversations find their skills, relative to the sandbox's working directory. */
 export const SANDBOX_SKILLS_DIR = ".skills";
@@ -130,6 +146,33 @@ export class Skills extends Context.Service<
     /** The source's skills now: every folder with a valid SKILL.md, and why the others were skipped. */
     readonly catalog: Effect.Effect<SkillCatalog, SkillSourceError>;
     /**
+     * Create or replace the org folder `name` with `files` (the whole folder, text only), after it passes
+     * `checkSkillFiles` — a folder that fails is never written. `outcome` says what the write did.
+     */
+    readonly save: (
+      name: string,
+      files: Readonly<Record<string, string>>
+    ) => Effect.Effect<
+      { readonly skill: Skill; readonly outcome: SkillSaveOutcome },
+      InvalidSkill | SkillSourceError
+    >;
+    /** Delete `name`'s org copy; the outcome says what changed, and builtin folders are never touched. */
+    readonly remove: (
+      name: string
+    ) => Effect.Effect<SkillRemoveOutcome, SkillSourceError>;
+    /**
+     * A folder's merged contents — the org copy's files, with any unshadowed builtin ones — or `undefined` when
+     * no folder lists `id`. For the console's editor.
+     */
+    readonly folder: (id: string) => Effect.Effect<
+      | {
+          readonly origin: SkillOrigin;
+          readonly files: Record<string, Uint8Array>;
+        }
+      | undefined,
+      SkillSourceError
+    >;
+    /**
      * What the `skill` tool returns: a bundled file, or SKILL.md with a header listing the other files. `sandboxDir`
      * is the skill's folder in the sandbox, when there is one.
      */
@@ -209,6 +252,57 @@ export class Skills extends Context.Service<
           }
         }
         return { skills, problems };
+      });
+
+      const save = Effect.fnUntraced(function* (
+        name: string,
+        files: Readonly<Record<string, string>>
+      ) {
+        // Validate fully before anything is written: a folder that fails leaves the source untouched.
+        const skill = yield* checkSkillFiles(name, files);
+        const listed = (yield* source.list).find(
+          (folder) => folder.id === name
+        );
+        let outcome: SkillSaveOutcome = "updated";
+        if (listed === undefined) {
+          outcome = "created";
+        } else if (listed.origin === "builtin") {
+          outcome = "shadowed";
+        }
+        yield* source.put(name, files);
+        return { skill, outcome };
+      });
+
+      const remove = Effect.fnUntraced(function* (name: string) {
+        const listed = (yield* source.list).find(
+          (folder) => folder.id === name
+        );
+        if (listed === undefined) {
+          return "missing" as const;
+        }
+        if (listed.origin === "builtin") {
+          return "unchanged" as const;
+        }
+        yield* source.remove(name);
+        return listed.origin === "org"
+          ? ("removed" as const)
+          : ("reverted" as const);
+      });
+
+      const folder = Effect.fnUntraced(function* (id: string) {
+        const listed = (yield* source.list).find((each) => each.id === id);
+        if (listed === undefined) {
+          return;
+        }
+        const files = yield* Effect.forEach(
+          listed.files,
+          (file) =>
+            source
+              .read(id, file)
+              .pipe(Effect.map((bytes) => [file, bytes] as const)),
+          { concurrency: 8 }
+        );
+        return { origin: listed.origin, files: Object.fromEntries(files) };
       });
 
       const read = Effect.fnUntraced(function* (
@@ -366,6 +460,9 @@ export class Skills extends Context.Service<
 
       return Skills.of({
         catalog,
+        save,
+        remove,
+        folder,
         read,
         body,
         expand,
