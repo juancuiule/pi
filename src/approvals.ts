@@ -65,6 +65,15 @@ export const approvalKey = (
   callId: string
 ): string => `${String(conversationId)}:${callId}`;
 
+/**
+ * Whether a person still owes a decision: a pending entry without one. An entry with a committed decision
+ * (approve, deny or stop) is resolving, not waiting.
+ */
+export const waitingOnPerson = (
+  state: Pick<ApprovalState, "pending" | "decisions">
+): boolean =>
+  Object.keys(state.pending).some((key) => state.decisions[key] === undefined);
+
 const DENIED = "The user denied this tool call.";
 export const STOPPED = "Stopped by the user before approval.";
 

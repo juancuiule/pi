@@ -113,6 +113,7 @@ import { workspaceExtension } from "../tools/workspace.ts";
 import { makeAgentTracing } from "../tracing.ts";
 import { WebSearch, webSearchExtension } from "../web-search/web-search.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
+import { queueIfBusy, redecideQueuedMode } from "./admission.ts";
 import {
   applyChange,
   changesBetween,
@@ -406,10 +407,11 @@ export interface Seat {
     | InvalidUpgrade
   >;
   /**
-   * Send a prompt without waiting for the answer; it is queued as a follow-up while a Run is going. `/skill:` is
-   * expanded against the conversation's skills first, in the prompt only; then come the blocks of `attachments`,
-   * the conversation's unsent uploads, which are kept with it from then on. `requestId` deduplicates the
-   * submission, which carries it; resolved with the admitted submission's record.
+   * Send a prompt without waiting for the answer. While a Run is going it is queued: `steer` when the Run waits
+   * on a person (an approval or `ask_user` card), so the same Run consumes it once the card resolves, `followUp`
+   * while the Run works. `/skill:` is expanded against the conversation's skills first, in the prompt only; then
+   * come the blocks of `attachments`, the conversation's unsent uploads, which are kept with it from then on.
+   * `requestId` deduplicates the submission, which carries it; resolved with the admitted submission's record.
    */
   send(
     prompt: string,
@@ -1273,6 +1275,30 @@ export class Agents extends Context.Service<
           }
           yield* locked(id, ensureModel(id));
           yield* locked(id, backfillAlwaysOnExtensions(id));
+          // A Seat's closing abort can leave pending entries whose calls are gone; while nothing runs nobody can
+          // decide them, so they must not read as a person being waited on.
+          yield* locked(
+            id,
+            attempt(() =>
+              harness.commit(async (tx) => {
+                const live = await tx.doc(LiveDoc, id);
+                if (live.run !== undefined) {
+                  return;
+                }
+                const approvals = await tx.doc(ApprovalDoc, id);
+                if (
+                  Object.keys(approvals.pending).length === 0 &&
+                  Object.keys(approvals.decisions).length === 0 &&
+                  Object.keys(approvals.answers ?? {}).length === 0
+                ) {
+                  return;
+                }
+                approvals.pending = {};
+                approvals.decisions = {};
+                approvals.answers = {};
+              }, context)
+            )
+          );
           const workspace = yield* attempt(() =>
             harness.snapshot(WorkspaceDoc, id, context)
           );
@@ -1516,27 +1542,63 @@ export class Agents extends Context.Service<
           // sent from then on, and copied into the Sandbox) and released when it is not, so they can be sent again. The
           // admission and the commit cannot be interrupted apart; after a stop, the next start commits a claim whose
           // message was admitted (its submission carries the claim's id) and releases the others.
+          //
+          // With `busy: "steerWhenWaiting"` a send queues its own inbox item in one commit, so the queued mode reads
+          // committed waiting state rather than a snapshot from before `submit`: `steer` while the run waits on a
+          // person, `followUp` while it works. An idle conversation delegates to `handle.submit`, which owns the
+          // run-starting admission.
           const admit = Effect.fnUntraced(function* (
             text: string,
             ids: readonly string[],
-            whenBusy?: "followUp",
+            busy?: "steerWhenWaiting",
             requestId?: string
           ) {
             // What the person typed can never pass for a block the server appended.
             const typed = escapeAttachmentTags(text);
             // A message with attachments carries its claim's id, stored with the submission when it is admitted.
             const submit = (content: UserInput, token?: string) =>
-              attempt(() =>
-                handle.submit(
+              attempt(async () => {
+                if (busy !== "steerWhenWaiting") {
+                  return handle.submit(
+                    {
+                      type: "input",
+                      content,
+                      ...(token === undefined ? {} : { requestId: token }),
+                    },
+                    context
+                  );
+                }
+                harness.resume();
+                const queued = await handle.commit(
+                  (tx) => queueIfBusy(tx, id, content, token),
+                  context
+                );
+                if (queued !== "idle") {
+                  const known = await harness.submission(queued, context);
+                  if (known === undefined) {
+                    throw new Error(`Submission ${queued} does not exist`);
+                  }
+                  return known;
+                }
+                const submission = await handle.submit(
                   {
                     type: "input",
                     content,
-                    ...(whenBusy === undefined ? {} : { whenBusy }),
                     ...(token === undefined ? {} : { requestId: token }),
                   },
                   context
-                )
-              );
+                );
+                // A run that went busy waiting on a person between the commit above and this submit queued the
+                // item as `followUp`; while it is still queued, committed state decides its mode again.
+                const status = await submission.status(context);
+                if (status.status === "queued") {
+                  await handle.commit(
+                    (tx) => redecideQueuedMode(tx, id, submission.id),
+                    context
+                  );
+                }
+                return submission;
+              });
             if (ids.length === 0) {
               return yield* submit(typed, requestId);
             }
@@ -1604,11 +1666,11 @@ export class Agents extends Context.Service<
             // Skills read only what the person typed, never a file's text.
             const expanded = yield* expand(prompt, id);
             yield* annotate(expanded);
-            // Admitted without waiting: a busy conversation queues it as a follow-up, and the answer arrives as
-            // events.
+            // Admitted without waiting: a busy conversation queues it, steering the run when it waits on a person
+            // and as a follow-up while it works, and the answer arrives as events.
             const submission = yield* tracing.traced(
               id,
-              admit(expanded, attachmentIds, "followUp", requestId)
+              admit(expanded, attachmentIds, "steerWhenWaiting", requestId)
             );
             return yield* attempt(() => submission.status(context));
           });
