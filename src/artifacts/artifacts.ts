@@ -318,7 +318,7 @@ const KB = 1024;
 
 const SECTION = [
   `An artifact is a page the person sees beside this chat: use artifact_create for reports, charts, dashboards or interactive prototypes that are easier to read or use than text in a message. artifact_update changes one, either replacing the whole page or applying exact find/replace edits; every change is a new version the person can go back to.`,
-  "A page is one self-contained HTML document, at most 300 KB: inline styles and scripts only. It must not fetch anything — no external scripts, stylesheets, fonts or images, and no network calls. Two libraries are served locally:",
+  "A page is one self-contained HTML document, at most 300 KB: inline styles and scripts only. It must not fetch anything — no external scripts, stylesheets, fonts or images, and no network calls. To show an image that lives at a URL, put it in your message as markdown — `![caption](https://…)` renders it in the chat. Two libraries are served locally:",
   '<script src="/api/artifact-libs/chart.umd.js"></script> gives the Chart global.',
   '<script src="/api/artifact-libs/mermaid.min.js"></script> gives mermaid: call mermaid.initialize({ startOnLoad: false }), then render with mermaid.run or mermaid.render.',
   "The person sees the page the moment the call returns, so describe what it shows instead of pasting its HTML.",
