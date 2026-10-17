@@ -109,3 +109,12 @@ export class InvalidDomain extends Schema.TaggedError<InvalidDomain>()(
   "InvalidDomain",
   { domain: Schema.String, reason: Schema.String }
 ) {}
+
+/**
+ * A skill folder whose SKILL.md does not parse or a skill upload that cannot be taken: a bad name or file path,
+ * no SKILL.md, or invalid frontmatter. `message` is the sentence the caller reads.
+ */
+export class InvalidSkill extends Schema.TaggedError<InvalidSkill>()(
+  "InvalidSkill",
+  { message: Schema.String }
+) {}

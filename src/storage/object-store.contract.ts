@@ -106,6 +106,20 @@ export const storeContract = (
       expect(await store.list(bucket, "removing/")).toStrictEqual([]);
     });
 
+    it("removes exactly one key, not keys that extend it", async () => {
+      await store.put(bucket, "exact/gone", Uint8Array.of(1));
+      await store.put(bucket, "exact/gone2", Uint8Array.of(2));
+      await store.put(bucket, "exact/gone/kept", Uint8Array.of(3));
+
+      await store.remove(bucket, "exact/gone");
+
+      expect(await store.list(bucket, "exact/")).toStrictEqual([
+        { key: "exact/gone/kept", size: 1 },
+        { key: "exact/gone2", size: 1 },
+      ]);
+      await store.remove(bucket, "exact/missing");
+    });
+
     it("ensures a bucket idempotently", async () => {
       const other = `contract-${randomBytes(8).toString("hex")}`;
       await store.ensure(other);

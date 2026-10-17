@@ -19,6 +19,7 @@ import { HttpApiClient } from "effect/http-api";
 import type * as NetAddress from "effect/net/NetAddress";
 import { describe, expect, it } from "vitest";
 
+import { SkillSource } from "../skills/source.ts";
 import { fauxAgents } from "../testing/faux.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
@@ -34,6 +35,7 @@ const server = (responses: FauxResponseStep[]) =>
       Conversations.layer({ idleTimeoutMs: 60_000, sweepEveryMs: 60_000 })
     ),
     Layer.provide(fauxAgents(responses).layer),
+    Layer.provide(SkillSource.memory({})),
     Layer.provideMerge(NodeHttpServer.layerTest)
   );
 

@@ -20,6 +20,7 @@ import {
   EmptyMessage,
   InvalidDomain,
   InvalidSetting,
+  InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
@@ -54,6 +55,7 @@ export {
   EmptyMessage,
   InvalidDomain,
   InvalidSetting,
+  InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
@@ -555,6 +557,34 @@ const ArtifactGroup = HttpApiGroup.make("artifacts").add(
 
 const BadDomain = InvalidDomain.pipe(HttpApiSchema.status(400));
 
+const BadSkill = InvalidSkill.pipe(HttpApiSchema.status(400));
+
+// The name rule is SKILL_NAME in src/skills/format.ts; this module must stay free of runtime imports for web/.
+const SkillName = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, {
+    message:
+      "must be lowercase letters, digits and single hyphens, not at either end",
+  })
+);
+
+const SkillGroup = HttpApiGroup.make("skills").add(
+  // Create or replace an org skill's folder: `files` is every file it will hold, text only. `files` must include
+  // a SKILL.md whose frontmatter parses and names this skill.
+  HttpApiEndpoint.put("save", "/skills/:name", {
+    params: { name: SkillName },
+    payload: Schema.Struct({
+      files: Schema.Record(Schema.String, Schema.String),
+    }),
+    success: Schema.Struct({
+      name: Schema.String,
+      description: Schema.String,
+      /** Every file in the folder, `SKILL.md` first. */
+      files: Schema.Array(Schema.String),
+    }),
+    error: [BadSkill],
+  })
+);
+
 // The domains an artifact page may load images from, edited under Settings → Trusted domains; the render endpoint's
 // img-src lists them, and create/update refuse a page whose other references fetch anything.
 const TrustedDomainGroup = HttpApiGroup.make("trustedDomains").add(
@@ -646,6 +676,7 @@ export const Api = HttpApi.make("effect-pi")
   .add(AttachmentGroup)
   .add(ArtifactGroup)
   .add(TrustedDomainGroup)
+  .add(SkillGroup)
   .add(FileGroup)
   .add(InfoGroup)
   .prefix("/api");

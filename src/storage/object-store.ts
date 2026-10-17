@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 
 import {
   CreateBucketCommand,
+  DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
   HeadBucketCommand,
@@ -42,6 +43,8 @@ export interface ObjectStore {
     bucket: string,
     prefix: string
   ): Promise<readonly { key: string; size: number }[]>;
+  /** Delete exactly `key`; a missing key is a no-op. */
+  remove(bucket: string, key: string): Promise<void>;
   /** Delete everything under `prefix`. */
   removePrefix(bucket: string, prefix: string): Promise<void>;
   /** Create the bucket when it is missing. */
@@ -143,6 +146,9 @@ export const s3 = (options: {
       } while (token !== undefined);
       return keys;
     },
+    remove: async (bucket, key) => {
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    },
     removePrefix: async (bucket, prefix) => {
       let token: string | undefined;
       do {
@@ -241,6 +247,9 @@ export const memory = (): ObjectStore => {
         .filter(([key]) => key.startsWith(prefix))
         .map(([key, bytes]) => ({ key, size: bytes.length }))
         .toSorted((a, b) => a.key.localeCompare(b.key)),
+    remove: async (bucket, key) => {
+      bucketOf(bucket).delete(key);
+    },
     removePrefix: async (bucket, prefix) => {
       for (const key of bucketOf(bucket).keys()) {
         if (key.startsWith(prefix)) {

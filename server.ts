@@ -8,7 +8,12 @@ import "varlock/auto-load";
 import { createServer } from "node:http";
 
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
+import {
+  NodeFileSystem,
+  NodeHttpServer,
+  NodePath,
+  NodeRuntime,
+} from "@effect/platform-node";
 import { Duration, Effect, Layer } from "effect";
 import { HttpRouter, Multipart } from "effect/http";
 
@@ -31,6 +36,7 @@ import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
 import { shellRoute } from "./src/server/shell.ts";
 import { Skills } from "./src/skills/skills.ts";
+import { convergeBuiltin, SkillSource } from "./src/skills/source.ts";
 import { BUCKETS, s3 } from "./src/storage/object-store.ts";
 import * as DockerVolumes from "./src/workspaces/docker-volume.ts";
 
@@ -61,6 +67,29 @@ const ensureBuckets = async () => {
   return objects;
 };
 export const store = await ensureBuckets();
+
+const NodeContext = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
+
+// Under s3 the skills bucket's builtin/ prefix mirrors the repo's skills/ directory: converge it before serving,
+// so git stays the source of the built-in skills; org/ holds the skills the PUT endpoint wrote.
+if (store !== undefined) {
+  await Effect.runPromise(
+    convergeBuiltin({
+      store,
+      bucket: BUCKETS.skills,
+      dir: config.paths.skills,
+    }).pipe(Effect.provide(NodeContext))
+  );
+}
+
+// Locally the directory source serves both namespaces: skills/* are builtin, skills/org/* the writable overlay.
+const SkillSourceLive = (
+  store === undefined
+    ? SkillSource.directory(config.paths.skills)
+    : SkillSource.s3(store, BUCKETS.skills)
+).pipe(Layer.provide(NodeContext));
+
+const SkillsLive = Skills.layer.pipe(Layer.provide(SkillSourceLive));
 
 // Attachments' metadata is a table of its own in the same SQLite file; their bytes are in ATTACHMENTS_DIR, or the
 // attachments bucket when STORAGE=s3.
@@ -105,7 +134,7 @@ const AgentsLive = Agents.layer({
   traceAttachmentText: config.traceAttachmentText,
 }).pipe(
   Layer.provide(DockerVolumes.workspaces()),
-  Layer.provide(Skills.directory(config.paths.skills)),
+  Layer.provide(SkillsLive),
   Layer.provide(CapacityLive),
   Layer.provideMerge(AttachmentsLive),
   Layer.provideMerge(ArtifactsLive)
@@ -143,6 +172,8 @@ const ServerLive = HttpRouter.serve(
 ).pipe(
   Layer.provide(ConversationsLive),
   Layer.provide(AgentsLive),
+  // The skills group writes through the same source the Skills service reads.
+  Layer.provide(SkillSourceLive),
   Layer.provide(NodeHttpServerLayer),
   Layer.provide(UploadLimits),
   Layer.provide(LangfuseLayer)

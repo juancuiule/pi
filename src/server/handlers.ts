@@ -31,9 +31,12 @@ import {
   ArtifactNotFound,
   ConversationArchived,
   EmptyMessage,
+  InvalidSkill,
   SandboxUnavailable,
   WorkspaceFileNotFound,
 } from "../errors.ts";
+import { decodeSkill, SKILL_FILE } from "../skills/format.ts";
+import { isSkillFile, SkillSource } from "../skills/source.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";
@@ -584,6 +587,50 @@ const FilesHandlers = HttpApiBuilder.group(
   })
 );
 
+const SkillsHandlers = HttpApiBuilder.group(
+  Api,
+  "skills",
+  Effect.fnUntraced(function* (handlers) {
+    const source = yield* SkillSource;
+    return handlers.handle("save", ({ params, payload }) =>
+      Effect.gen(function* () {
+        const fileNames = Object.keys(payload.files);
+        if (fileNames.length === 0) {
+          return yield* new InvalidSkill({ message: "files is empty" });
+        }
+        for (const file of fileNames) {
+          if (!isSkillFile(file)) {
+            return yield* new InvalidSkill({
+              message: `${file} is not a valid skill file path`,
+            });
+          }
+        }
+        const text = payload.files[SKILL_FILE];
+        if (text === undefined) {
+          return yield* new InvalidSkill({
+            message: `files must include ${SKILL_FILE}`,
+          });
+        }
+        const skill = yield* decodeSkill(
+          { id: params.name, files: fileNames },
+          text
+        );
+        if (skill.name !== params.name) {
+          return yield* new InvalidSkill({
+            message: `${SKILL_FILE} names ${skill.name}, not ${params.name}`,
+          });
+        }
+        yield* source.put(params.name, payload.files);
+        return {
+          name: skill.name,
+          description: skill.description,
+          files: [...skill.files],
+        };
+      }).pipe(Effect.catchTag("SkillSourceError", Effect.die))
+    );
+  })
+);
+
 const TrustedDomainsHandlers = HttpApiBuilder.group(
   Api,
   "trustedDomains",
@@ -627,6 +674,7 @@ export const apiLayer = (options: { readonly apiUrl: string }) =>
         AttachmentsHandlers,
         ArtifactsHandlers,
         TrustedDomainsHandlers,
+        SkillsHandlers,
         FilesHandlers,
         infoHandlers(options.apiUrl)
       )

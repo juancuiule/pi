@@ -4,8 +4,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { s3 } from '../storage/object-store.ts';
-import type { ObjectStore } from '../storage/object-store.ts';
+import { s3 } from "../storage/object-store.ts";
+import type { ObjectStore } from "../storage/object-store.ts";
 
 const envFile = path.join(import.meta.dirname, "../../docker/seaweedfs/.env");
 
