@@ -1,10 +1,11 @@
-// Where attachments are kept: bytes in a `BlobStore` (a local directory; remote storage would be another one), and
+// Where attachments are kept: bytes in a `BlobStore` (a local directory or an ObjectStore bucket), and
 // metadata in an `attachments` table of its own in a SQLite file (the server's EFFECT_PI_DB). Records are written
 // once and only ever move from staged (no conversation) to a conversation, then to sent.
 import { mkdir, readFile, rm, writeFile, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import type { ObjectStore } from "../storage/object-store.ts";
 import type {
   AttachmentInfo,
   AttachmentKind,
@@ -22,8 +23,8 @@ export interface BlobStore {
   removeAll(id: string): Promise<void>;
 }
 
-/** Each key's segments must be plain names: no traversal out of the root. */
-const resolveKey = (root: string, key: string) => {
+/** Each key's segments must be plain names: no traversal out of the root or bucket. */
+const checkKey = (key: string) => {
   const segments = key.split("/");
   if (
     segments.some(
@@ -36,7 +37,19 @@ const resolveKey = (root: string, key: string) => {
   ) {
     throw new Error(`Invalid blob key: ${key}`);
   }
-  return path.join(root, ...segments);
+  return segments;
+};
+
+const resolveKey = (root: string, key: string) =>
+  path.join(root, ...checkKey(key));
+
+/**
+ * `removeAll` takes an attachment id rather than a key, so it can only ever delete one `att_…` folder or prefix.
+ */
+const checkId = (id: string) => {
+  if (!ATTACHMENT_ID.test(id)) {
+    throw new Error(`Invalid attachment id: ${id}`);
+  }
 };
 
 /** A BlobStore in a local directory, created on first write. */
@@ -59,10 +72,24 @@ export const directoryBlobs = (root: string): BlobStore => ({
     }
   },
   removeAll: async (id) => {
-    if (!ATTACHMENT_ID.test(id)) {
-      throw new Error(`Invalid attachment id: ${id}`);
-    }
+    checkId(id);
     await rm(path.join(root, id), { recursive: true, force: true });
+  },
+});
+
+/** A BlobStore in an ObjectStore bucket, under the same `<id>/<file>` keys; `put` streams a `{path}` file. */
+export const s3Blobs = (store: ObjectStore, bucket: string): BlobStore => ({
+  put: async (key, from) => {
+    checkKey(key);
+    await store.put(bucket, key, from);
+  },
+  get: async (key) => {
+    checkKey(key);
+    return await store.get(bucket, key);
+  },
+  removeAll: async (id) => {
+    checkId(id);
+    await store.removePrefix(bucket, `${id}/`);
   },
 });
 

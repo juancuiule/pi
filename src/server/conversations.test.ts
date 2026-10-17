@@ -11,6 +11,8 @@ import { SandboxError } from "../sandbox/sandbox.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
 import type { LocalSandboxes } from "../testing/sandboxes.ts";
+import { Workspaces, WorkspaceStorage } from "../workspaces/workspaces.ts";
+import type { SaveReason } from "../workspaces/workspaces.ts";
 import { Conversations, titleOf } from "./conversations.ts";
 
 const defaults = {
@@ -397,6 +399,59 @@ describe(Conversations, () => {
     );
 
     expect(sandboxes.live.size).toBe(0);
+  });
+
+  it("saves a Workspace checkpoint when a Run ends, then again when the Seat closes", async () => {
+    // A WorkspaceStorage that records saves, over the local sandboxes' directory storage.
+    const local = localSandboxes();
+    const saves: { readonly id: string; readonly reason: SaveReason }[] = [];
+    const recording = Layer.effect(
+      WorkspaceStorage,
+      Effect.gen(function* () {
+        const base = yield* WorkspaceStorage;
+        return WorkspaceStorage.of({
+          ...base,
+          save: (ref, _sandbox, reason) =>
+            Effect.sync(() => {
+              saves.push({ id: ref.id, reason });
+            }),
+        });
+      })
+    ).pipe(Layer.provide(local.storage));
+    const sandboxes: LocalSandboxes = {
+      ...local,
+      layer: Workspaces.layer.pipe(
+        Layer.provide(Layer.merge(local.sandboxes, recording))
+      ),
+    };
+    const { layer } = setup([answer("done")], { sandboxes });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "hi",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        yield* waitUntil(
+          Effect.sync(() => saves.some((save) => save.reason === "checkpoint"))
+        );
+        yield* conversations.pause(created.id);
+        yield* waitUntil(
+          Effect.sync(() => saves.some((save) => save.reason === "pause"))
+        );
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(saves.map((save) => save.reason)).toStrictEqual([
+      "checkpoint",
+      "pause",
+    ]);
   });
 
   it("leaks neither a sandbox nor a cap slot when a create is interrupted", async () => {

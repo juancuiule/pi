@@ -3,17 +3,21 @@
 import { Effect, Schema, SchemaIssue } from "effect";
 import { parse as parseYaml } from "yaml";
 
+import { InvalidSkill } from "../errors.ts";
 import { toXml } from "../prompt/xml.ts";
+
+export { InvalidSkill } from "../errors.ts";
 
 export const SKILL_FILE = "SKILL.md";
 
-const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+// The name rule, also checked on the wire in src/server/api.ts, which cannot import this module.
+export const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 
 /** A SKILL.md frontmatter under the Agent Skills specification. */
 export const SkillFrontmatter = Schema.Struct({
   name: Schema.String.check(
     Schema.isMaxLength(64, { message: "is longer than 64 characters" }),
-    Schema.isPattern(NAME, {
+    Schema.isPattern(SKILL_NAME, {
       message:
         "must be lowercase letters, digits and single hyphens, not at either end",
     })
@@ -42,11 +46,6 @@ export type Skill = {
 };
 
 const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
-
-export class InvalidSkill extends Schema.TaggedError<InvalidSkill>()(
-  "InvalidSkill",
-  { message: Schema.String }
-) {}
 
 /** The frontmatter and body of a SKILL.md; `undefined` frontmatter when it has none. */
 export const parseSkillFile = (

@@ -139,6 +139,47 @@ export type CoercedEnvSchema = {
   ATTACHMENTS_DIR: string;
   
   /**
+   * **STORAGE**  
+   * `local` keeps the directories above; `s3` stores objects in S3 (SeaweedFS locally, `pnpm seaweed:up`).  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M7.885%2010.23L12%203.463l4.116%206.769zm9.606%2011q-1.558%200-2.64-1.081t-1.082-2.64t1.082-2.649t2.64-1.09t2.649%201.09t1.09%202.649t-1.09%202.64t-2.649%201.082m-13.722-.5v-6.462h6.462v6.462z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  STORAGE: "local" | "s3";
+  
+  /**
+   * **WORKSPACE_STORAGE**  
+   * Where workspace files live; s3-copied copies them through the object store.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M7.885%2010.23L12%203.463l4.116%206.769zm9.606%2011q-1.558%200-2.64-1.081t-1.082-2.64t1.082-2.649t2.64-1.09t2.649%201.09t1.09%202.649t-1.09%202.64t-2.649%201.082m-13.722-.5v-6.462h6.462v6.462z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  WORKSPACE_STORAGE: "docker-volume" | "s3-copied";
+  
+  /**
+   * **S3_ENDPOINT**  
+   * The S3 endpoint; SeaweedFS's gateway port.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M24%2021V9h-2v14h8v-2zm-4-6v-4c0-1.103-.897-2-2-2h-6v14h2v-6h1.48l2.335%206h2.145l-2.333-6H18c1.103%200%202-.897%202-2m-6-4h4v4h-4zM8%2023H4c-1.103%200-2-.897-2-2V9h2v12h4V9h2v12c0%201.103-.897%202-2%202%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  S3_ENDPOINT: string;
+  
+  /**
+   * **S3_ACCESS_KEY_ID** 🔐 _sensitive_  
+   * Required when STORAGE=s3; docker/seaweedfs/init-env.ts generates them.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  S3_ACCESS_KEY_ID?: string;
+  
+  /**
+   * **S3_SECRET_ACCESS_KEY** 🔐 _sensitive_  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  S3_SECRET_ACCESS_KEY?: string;
+  
+  /**
+   * **SCREENSHOT_TTL_DAYS**  
+   * Days before objects in the screenshots bucket expire (a lifecycle rule set at startup).  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  SCREENSHOT_TTL_DAYS: number;
+  
+  /**
    * **ATTACHMENT_MAX_FILE_MB**  
    * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
    */
@@ -276,11 +317,11 @@ export type CoercedEnvSchema = {
   
 };
 
-type _CoercedEnvSchema_07233137 = CoercedEnvSchema;
+type _CoercedEnvSchema_b8aa3989 = CoercedEnvSchema;
 
 declare module 'varlock/env' {
-  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_07233137> {}
-  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_07233137, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SKILLS_DIR' | 'SCREENSHOTS_DIR' | 'ATTACHMENTS_DIR' | 'ATTACHMENT_MAX_FILE_MB' | 'ATTACHMENT_MAX_FILES' | 'ATTACHMENT_MAX_UNSENT_MB' | 'ATTACHMENT_MAX_PDF_PAGES' | 'ATTACHMENT_MAX_IMAGE_MEGAPIXELS' | 'ATTACHMENT_EXTRACT_TIMEOUT' | 'ATTACHMENT_EXTRACT_MEMORY_MB' | 'ATTACHMENT_EXTRACT_CONCURRENCY' | 'ATTACHMENT_UNSENT_TTL' | 'ATTACHMENT_INLINE_CHARS' | 'ATTACHMENT_READ_CHARS' | 'TRACE_ATTACHMENT_TEXT' | 'MCP_CONNECT_TIMEOUT' | 'SEARXNG_URL' | 'WEB_SEARCH_TIMEOUT' | 'WEB_SEARCH_CONCURRENCY' | 'WEB_SEARCH_LANGUAGE' | 'WEB_SEARCH_SAFESEARCH' | 'WEB_PORT' | 'API_URL'>> {}
+  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_b8aa3989> {}
+  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_b8aa3989, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SKILLS_DIR' | 'SCREENSHOTS_DIR' | 'ATTACHMENTS_DIR' | 'STORAGE' | 'WORKSPACE_STORAGE' | 'S3_ENDPOINT' | 'SCREENSHOT_TTL_DAYS' | 'ATTACHMENT_MAX_FILE_MB' | 'ATTACHMENT_MAX_FILES' | 'ATTACHMENT_MAX_UNSENT_MB' | 'ATTACHMENT_MAX_PDF_PAGES' | 'ATTACHMENT_MAX_IMAGE_MEGAPIXELS' | 'ATTACHMENT_EXTRACT_TIMEOUT' | 'ATTACHMENT_EXTRACT_MEMORY_MB' | 'ATTACHMENT_EXTRACT_CONCURRENCY' | 'ATTACHMENT_UNSENT_TTL' | 'ATTACHMENT_INLINE_CHARS' | 'ATTACHMENT_READ_CHARS' | 'TRACE_ATTACHMENT_TEXT' | 'MCP_CONNECT_TIMEOUT' | 'SEARXNG_URL' | 'WEB_SEARCH_TIMEOUT' | 'WEB_SEARCH_CONCURRENCY' | 'WEB_SEARCH_LANGUAGE' | 'WEB_SEARCH_SAFESEARCH' | 'WEB_PORT' | 'API_URL'>> {}
 }
 
 
@@ -290,11 +331,11 @@ export type EnvSchemaAsStrings = {
       : (NonNullable<CoercedEnvSchema[Property]> extends boolean ? ('true' | 'false') : string)
 };
 
-type _EnvSchemaAsStrings_07233137 = EnvSchemaAsStrings;
+type _EnvSchemaAsStrings_b8aa3989 = EnvSchemaAsStrings;
 declare global {
 
   // add types for global import.meta.env
-  interface ImportMetaEnv extends _EnvSchemaAsStrings_07233137 {}
+  interface ImportMetaEnv extends _EnvSchemaAsStrings_b8aa3989 {}
   interface ImportMeta {
     readonly env: ImportMetaEnv;
   }

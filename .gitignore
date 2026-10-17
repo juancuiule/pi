@@ -5,6 +5,7 @@ screenshots/
 web/.next/
 web/next-env.d.ts
 data/
+skills/org/
 docs/superpowers
 docs/plans
 
@@ -12,3 +13,4 @@ docs/plans
 .claude/
 .devin/
 .agents/
+docker/seaweedfs/s3.json

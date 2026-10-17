@@ -630,12 +630,17 @@ export class Attachments extends Context.Service<
       })
     );
 
-  /** Attachments in a local directory, with metadata in a SQLite file. */
-  static readonly local = (options: {
-    readonly directory: string;
-    readonly database: string;
-    readonly limits?: Partial<AttachmentLimits>;
-  }) =>
+  /** Attachments in a local directory or a given BlobStore, with metadata in a SQLite file. */
+  static readonly local = (
+    options: {
+      readonly database: string;
+      readonly limits?: Partial<AttachmentLimits>;
+      readonly sweepEveryMs?: number;
+    } & (
+      | { readonly directory: string; readonly blobs?: never }
+      | { readonly blobs: BlobStore; readonly directory?: never }
+    )
+  ) =>
     Layer.unwrap(
       Effect.acquireRelease(
         Effect.sync(() => sqliteRecords(options.database)),
@@ -643,9 +648,15 @@ export class Attachments extends Context.Service<
       ).pipe(
         Effect.map((records) =>
           Attachments.layer({
-            blobs: directoryBlobs(options.directory),
+            blobs:
+              options.blobs === undefined
+                ? directoryBlobs(options.directory)
+                : options.blobs,
             records,
             ...(options.limits === undefined ? {} : { limits: options.limits }),
+            ...(options.sweepEveryMs === undefined
+              ? {}
+              : { sweepEveryMs: options.sweepEveryMs }),
           })
         )
       )

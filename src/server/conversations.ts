@@ -49,6 +49,7 @@ import type {
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
+import { Workspaces } from "../workspaces/workspaces.ts";
 
 export type ConversationStatus = "running" | "idle" | "paused" | "archived";
 
@@ -92,6 +93,8 @@ interface Live {
   /** Set by Pause during a Run: the Seat closes once the Run ends, unless a `send` comes first. */
   pausing: boolean;
   lastActivity: number;
+  /** Set when a run-end checkpoint is in flight, so every `refresh` caller does not queue another. */
+  checkpointed: boolean;
   /** Held by sends and by `close`, so no send is admitted after the scope starts closing. */
   readonly lock: Semaphore.Semaphore;
   /** Serializes `refresh`. */
@@ -255,6 +258,7 @@ export class Conversations extends Context.Service<
         const agents = yield* Agents;
         const attachments = yield* Attachments;
         const capacity = yield* Capacity;
+        const workspaces = yield* Workspaces;
         const live = new Map<number, Live>();
         // A Seat mid-open, before `register` lands it in `live`: its Conversation is recorded already, so it
         // reads as paused. Look-ups wait on the gate instead of opening a second Seat or writing its Workspace;
@@ -305,8 +309,30 @@ export class Conversations extends Context.Service<
         const refresh = (entry: Live) =>
           entry.seat.running.pipe(
             Effect.tap((value) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
+                const was = entry.running;
                 entry.running = value;
+                if (value) {
+                  entry.checkpointed = false;
+                } else if (was && !entry.pausing && !entry.checkpointed) {
+                  const { sandbox, storage } = entry.seat;
+                  if (sandbox !== undefined && storage !== undefined) {
+                    entry.checkpointed = true;
+                    // A checkpoint after each Run bounds what a crash loses; a Pause's closing save
+                    // takes over instead, and the release joins this fiber through the storage lock.
+                    // Any refresh can observe the transition, so the checkpoint lives here, not in
+                    // the changes stream alone (a `stop` refresh could otherwise eat it).
+                    yield* workspaces.save(storage, sandbox, "checkpoint").pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning(
+                          `Workspace checkpoint of conversation ${entry.seat.id} failed`,
+                          cause
+                        )
+                      ),
+                      Effect.forkIn(layerScope)
+                    );
+                  }
+                }
               })
             ),
             Effect.orDie,
@@ -426,6 +452,7 @@ export class Conversations extends Context.Service<
                 scope,
                 running: false,
                 pausing: false,
+                checkpointed: false,
                 lastActivity: yield* Clock.currentTimeMillis,
                 lock: yield* Semaphore.make(1),
                 reading: yield* Semaphore.make(1),

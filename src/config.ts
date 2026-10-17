@@ -53,6 +53,32 @@ export const paths = {
   attachments: ENV.ATTACHMENTS_DIR,
 };
 
+/** The S3 endpoint and credentials when STORAGE=s3, `undefined` otherwise; missing credentials throw at startup. */
+const s3 = () => {
+  if (ENV.STORAGE !== "s3") {
+    if (ENV.WORKSPACE_STORAGE === "s3-copied") {
+      throw new Error("WORKSPACE_STORAGE=s3-copied needs STORAGE=s3");
+    }
+    return;
+  }
+  const accessKeyId = unset(ENV.S3_ACCESS_KEY_ID);
+  const secretAccessKey = unset(ENV.S3_SECRET_ACCESS_KEY);
+  if (accessKeyId === undefined || secretAccessKey === undefined) {
+    throw new Error(
+      "STORAGE=s3 needs S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY (docker/seaweedfs/init-env.ts generates them)"
+    );
+  }
+  return { endpoint: ENV.S3_ENDPOINT, accessKeyId, secretAccessKey };
+};
+
+/** Where objects (STORAGE) and workspace files (WORKSPACE_STORAGE) are kept, and the screenshots expiry in days. */
+export const storage = {
+  mode: ENV.STORAGE,
+  workspace: ENV.WORKSPACE_STORAGE,
+  screenshotTtlDays: ENV.SCREENSHOT_TTL_DAYS,
+  s3: s3(),
+};
+
 const MB = 1024 * 1024;
 
 /** Limits on attachments; sizes in bytes, durations in milliseconds. */

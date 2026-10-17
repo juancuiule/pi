@@ -8,7 +8,12 @@ import "varlock/auto-load";
 import { createServer } from "node:http";
 
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
+import {
+  NodeFileSystem,
+  NodeHttpServer,
+  NodePath,
+  NodeRuntime,
+} from "@effect/platform-node";
 import { Duration, Effect, Layer } from "effect";
 import { HttpRouter, Multipart } from "effect/http";
 
@@ -17,18 +22,25 @@ import { Agents } from "./src/agents/agents.ts";
 import { Artifacts } from "./src/artifacts/artifacts.ts";
 import { TrustedDomains } from "./src/artifacts/domains.ts";
 import { Attachments } from "./src/attachments/attachments.ts";
+import { s3Blobs } from "./src/attachments/store.ts";
 import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromConfig } from "./src/models.ts";
-import { saveScreenshotsTo } from "./src/screenshots.ts";
+import {
+  saveScreenshotsTo,
+  saveScreenshotsToBlobs,
+} from "./src/screenshots.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
 import { shellRoute } from "./src/server/shell.ts";
 import { Skills } from "./src/skills/skills.ts";
+import { convergeBuiltin, SkillSource } from "./src/skills/source.ts";
+import { BUCKETS, s3 } from "./src/storage/object-store.ts";
 import { WebSearch } from "./src/web-search/web-search.ts";
 import * as DockerVolumes from "./src/workspaces/docker-volume.ts";
+import * as S3Copied from "./src/workspaces/s3-copied.ts";
 
 const configured = await Effect.runPromise(modelFromConfig(config.model));
 const setup = configured ?? echoModel();
@@ -40,12 +52,61 @@ if (configured === undefined) {
 // creates the directory.
 const storage = await openNodeSqliteStorage(config.paths.db);
 
-// Attachments' metadata is a table of its own in the same SQLite file; their bytes are in ATTACHMENTS_DIR.
-const AttachmentsLive = Attachments.local({
-  directory: config.paths.attachments,
-  database: config.paths.db,
-  limits: config.attachments,
-});
+// With s3 storage the server owns its buckets: startup ensures all of them and the screenshots expiry, which
+// is also the connectivity check — an unreachable store fails here. STORAGE=local builds nothing.
+const ensureBuckets = async () => {
+  if (config.storage.s3 === undefined) {
+    return;
+  }
+  const objects = s3(config.storage.s3);
+  await Promise.all(
+    Object.values(BUCKETS).map((bucket) => objects.ensure(bucket))
+  );
+  await objects.setExpiration(
+    BUCKETS.screenshots,
+    config.storage.screenshotTtlDays
+  );
+  return objects;
+};
+const store = await ensureBuckets();
+
+const NodeContext = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
+
+// Under s3 the skills bucket's builtin/ prefix mirrors the repo's skills/ directory: converge it before serving,
+// so git stays the source of the built-in skills; org/ holds the skills the PUT endpoint wrote.
+if (store !== undefined) {
+  await Effect.runPromise(
+    convergeBuiltin({
+      store,
+      bucket: BUCKETS.skills,
+      dir: config.paths.skills,
+    }).pipe(Effect.provide(NodeContext))
+  );
+}
+
+// Locally the directory source serves both namespaces: skills/* are builtin, skills/org/* the writable overlay.
+const SkillSourceLive = (
+  store === undefined
+    ? SkillSource.directory(config.paths.skills)
+    : SkillSource.s3(store, BUCKETS.skills)
+).pipe(Layer.provide(NodeContext));
+
+const SkillsLive = Skills.layer.pipe(Layer.provide(SkillSourceLive));
+
+// Attachments' metadata is a table of its own in the same SQLite file; their bytes are in ATTACHMENTS_DIR, or the
+// attachments bucket when STORAGE=s3.
+const AttachmentsLive =
+  store === undefined
+    ? Attachments.local({
+        directory: config.paths.attachments,
+        database: config.paths.db,
+        limits: config.attachments,
+      })
+    : Attachments.local({
+        blobs: s3Blobs(store, BUCKETS.attachments),
+        database: config.paths.db,
+        limits: config.attachments,
+      });
 
 const TrustedDomainsLive = TrustedDomains.local({
   database: config.paths.db,
@@ -63,6 +124,13 @@ const ArtifactsLive = Layer.unwrap(
 // One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
 const CapacityLive = Capacity.layer(config.capacity);
 
+// Workspace files mount a Docker volume; s3-copied treats it as a cache and keeps the snapshot in the
+// workspaces bucket. Conversations needs the same layer for its run-end checkpoints, so it is merged in.
+const WorkspacesLive =
+  store !== undefined && config.storage.workspace === "s3-copied"
+    ? S3Copied.workspaces({ store })
+    : DockerVolumes.workspaces();
+
 // The `web` extension exists only with SEARXNG_URL set: no SearXNG, no `web_search` tool at all.
 const WebSearchLive =
   config.webSearch === undefined
@@ -72,13 +140,16 @@ const WebSearchLive =
 const AgentsLive = Agents.layer({
   ...setup,
   storage,
-  saveScreenshot: saveScreenshotsTo(config.paths.screenshots),
+  saveScreenshot:
+    store === undefined
+      ? saveScreenshotsTo(config.paths.screenshots)
+      : saveScreenshotsToBlobs(store, BUCKETS.screenshots),
   mcp: mcpServers,
   mcpConnectTimeoutMs: config.mcpConnectTimeoutMs,
   traceAttachmentText: config.traceAttachmentText,
 }).pipe(
-  Layer.provide(DockerVolumes.workspaces()),
-  Layer.provide(Skills.directory(config.paths.skills)),
+  Layer.provideMerge(WorkspacesLive),
+  Layer.provide(SkillsLive),
   Layer.provide(CapacityLive),
   Layer.provideMerge(AttachmentsLive),
   Layer.provideMerge(ArtifactsLive),
@@ -117,6 +188,8 @@ const ServerLive = HttpRouter.serve(
 ).pipe(
   Layer.provide(ConversationsLive),
   Layer.provide(AgentsLive),
+  // The skills group writes through the same source the Skills service reads.
+  Layer.provide(SkillSourceLive),
   Layer.provide(NodeHttpServerLayer),
   Layer.provide(UploadLimits),
   Layer.provide(LangfuseLayer)

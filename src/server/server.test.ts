@@ -23,6 +23,7 @@ import { Skills, SkillSource } from "../skills/skills.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
+import type { Workspaces } from "../workspaces/workspaces.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { echoModel } from "./faux.ts";
@@ -30,9 +31,10 @@ import { apiLayer } from "./handlers.ts";
 
 const serverWith = (
   agents: Layer.Layer<
-    Agents | Capacity | Attachments | Artifacts | TrustedDomains,
+    Agents | Capacity | Attachments | Artifacts | TrustedDomains | Workspaces,
     AgentError
-  >
+  >,
+  skillSource: Layer.Layer<SkillSource> = SkillSource.memory({})
 ) =>
   HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1" }), {
     disableListenLog: true,
@@ -45,6 +47,7 @@ const serverWith = (
       })
     ),
     Layer.provide(agents),
+    Layer.provide(skillSource),
     Layer.provideMerge(NodeHttpServer.layerTest)
   );
 
@@ -248,6 +251,125 @@ describe("HTTP API", () => {
     });
     // The rejected send queued nothing: only the first prompt reached the model.
     expect(agents.faux.state.callCount).toBe(1);
+  });
+
+  it("creates and updates org skills through PUT /api/skills/:name", async () => {
+    const files: Record<string, string> = {
+      "builtin/convert/SKILL.md":
+        "---\nname: convert\ndescription: Builtin convert.\n---\n\nBuiltin.\n",
+    };
+    const agents = fauxAgents([fauxAssistantMessage([fauxText("ok")])], {
+      skills: Skills.layer.pipe(Layer.provide(SkillSource.memory(files))),
+    });
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const saved = yield* client.skills.save({
+          params: { name: "uploaded" },
+          payload: {
+            files: {
+              "SKILL.md":
+                "---\nname: uploaded\ndescription: Uploaded skill.\n---\n\nDo it.\n",
+              "refs/guide.md": "reference",
+            },
+          },
+        });
+        // The org copy shadows the builtin folder of the same name.
+        const shadowed = yield* client.skills.save({
+          params: { name: "convert" },
+          payload: {
+            files: {
+              "SKILL.md":
+                "---\nname: convert\ndescription: Org convert.\n---\n\nOrg.\n",
+            },
+          },
+        });
+        const capabilities = yield* client.info.capabilities();
+        const listed = capabilities.skills.find((s) => s.name === "convert");
+        const noFile = yield* Effect.exit(
+          client.skills.save({
+            params: { name: "no-skill" },
+            payload: { files: { "notes.md": "x" } },
+          })
+        );
+        const badFrontmatter = yield* Effect.exit(
+          client.skills.save({
+            params: { name: "bad" },
+            payload: {
+              files: { "SKILL.md": "---\nname: bad\n---\nNo description." },
+            },
+          })
+        );
+        const mismatched = yield* Effect.exit(
+          client.skills.save({
+            params: { name: "renamed" },
+            payload: {
+              files: {
+                "SKILL.md":
+                  "---\nname: other\ndescription: Mismatch.\n---\n\nBody.\n",
+              },
+            },
+          })
+        );
+        const traversal = yield* Effect.exit(
+          client.skills.save({
+            params: { name: "escape" },
+            payload: {
+              files: {
+                "SKILL.md":
+                  "---\nname: escape\ndescription: Escape.\n---\n\nBody.\n",
+                "../outside.md": "no",
+              },
+            },
+          })
+        );
+        return {
+          saved,
+          shadowed,
+          listed,
+          noFile,
+          badFrontmatter,
+          mismatched,
+          traversal,
+        };
+      }).pipe(
+        Effect.provide(serverWith(agents.layer, SkillSource.memory(files)))
+      )
+    );
+
+    expect(result.saved).toStrictEqual({
+      name: "uploaded",
+      description: "Uploaded skill.",
+      files: ["SKILL.md", "refs/guide.md"],
+    });
+    expect(result.shadowed.description).toBe("Org convert.");
+    expect(files["org/uploaded/SKILL.md"]).toContain("name: uploaded");
+    expect(files["builtin/convert/SKILL.md"]).toContain("Builtin convert.");
+    expect(result.listed?.description).toBe("Org convert.");
+    for (const rejected of [
+      result.noFile,
+      result.badFrontmatter,
+      result.mismatched,
+      result.traversal,
+    ]) {
+      expect(Exit.isFailure(rejected)).toBeTruthy();
+      expect(JSON.stringify(rejected)).toContain("InvalidSkill");
+    }
+  });
+
+  it("rejects a skill name that is not a valid skill name", async () => {
+    const status = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpClient.HttpClient;
+        const response = yield* client.execute(
+          HttpClientRequest.put("/api/skills/NOT_A_NAME").pipe(
+            HttpClientRequest.bodyJsonUnsafe({ files: { "SKILL.md": "x" } })
+          )
+        );
+        return response.status;
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("ok")])])))
+    );
+    expect(status).toBe(400);
   });
 
   it("refuses requests from a non-loopback origin", async () => {
@@ -554,7 +676,7 @@ describe("HTTP API", () => {
     const { models, model } = echoModel();
     const sandboxes = localSandboxes();
     const agents = Agents.layer({ models, model }).pipe(
-      Layer.provide(sandboxes.layer),
+      Layer.provideMerge(sandboxes.layer),
       Layer.provide(Skills.none),
       Layer.provideMerge(Attachments.temporary()),
       Layer.provideMerge(Artifacts.temporary()),

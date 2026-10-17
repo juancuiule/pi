@@ -4,6 +4,8 @@ import path from "node:path";
 
 import type { ConversationId } from "@earendil-works/pi-durable";
 
+import type { ObjectStore } from "./storage/object-store.ts";
+
 /** Where a screenshot came from: the sandbox it shows, and the conversation and tool call that took it. */
 export interface ScreenshotSource {
   readonly sandboxId: string;
@@ -45,4 +47,17 @@ export const saveScreenshotsTo =
         }
       }
     }
+  };
+
+/**
+ * Save screenshots in an ObjectStore bucket as `<conversation>/<sandbox>/<epoch ms>-<call id>.png`, returning
+ * `<bucket>/<key>`. The call id is unique per tool call, so a replayed `desktop_screenshot` overwrites its own
+ * object instead of adding a second one; the epoch prefix keeps the bucket's listing chronological.
+ */
+export const saveScreenshotsToBlobs =
+  (store: ObjectStore, bucket: string): SaveScreenshot =>
+  async (png, { conversationId, sandboxId, callId }) => {
+    const key = `${String(conversationId)}/${sandboxId}/${Date.now()}-${callId}.png`;
+    await store.put(bucket, key, png);
+    return `${bucket}/${key}`;
   };
