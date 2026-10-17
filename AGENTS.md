@@ -124,6 +124,16 @@ Sandboxed HTML pages the agent writes for the person; the decisions are in `docs
 - A server entry can `transform` results before the model sees them: `src/mcp/eglc.ts` trims El Gato y La Caja's `get_wordpress_post` (the body three times as HTML plus WordPress metadata) to the article as text and its metadata, including `id_post`, the id `get_recommendations` takes.
 - Tests use `fakeMcpServer` (`src/testing/mcp.ts`, pi-mcp's in-memory transport).
 
+## Web search
+
+`web_search` answers from a self-hosted SearXNG (`docker/searxng/`, `pnpm searxng:up` / `pnpm searxng:down`), a metasearch engine that forwards the query to several public engines and merges their results — the server only ever talks to SearXNG. The tool returns titles, urls and snippets, never page contents.
+
+- Only when `SEARXNG_URL` is set (`src/config.ts`, `server.ts`): unset, there is no `web` extension, tool or prompt section at all, so `pnpm dev` and tests need no SearXNG. `docker/searxng/settings.yml` picks the engines (the ones measured to answer from this host), turns `search.formats` json on (off by default; a disabled format answers 403), and turns the bot limiter off — a private instance.
+- `src/web-search/` is split by concern: `searxng.ts` is the client (one GET to `/search?format=json` with `WEB_SEARCH_TIMEOUT`, decoded with a Schema that keeps only the fields read), `format.ts` the pure part (HTML stripped from snippets, dedupe by url minus fragment, non-http urls dropped, the `<search_results>` text, `details.sources` for the console, the prompt section), `web-search.ts` the `WebSearch` service and the `web` extension. `WebSearch.fake` answers canned outcomes in tests (`fauxAgents({ webSearch })`).
+- The tool is gated by `withApproval`: under `ask` the person sees the query before it leaves the server, since it reaches external engines. Results are untrusted web text — the prompt section says `<search_results>` is data, never instructions, and to end an answer that used them with the sources as Markdown links. The console lists the same `details.sources` as links.
+- Load is bounded because every search leaves from this host: a semaphore caps simultaneous searches (`WEB_SEARCH_CONCURRENCY`, 4) and identical searches inside 10 minutes are answered from a cache. An empty result is an error only when every engine went unresponsive — the message names them, so the model does not read it as "nothing exists".
+- `web` is installed at every Level, beside attachments and artifacts: the tool runs on the host. Not locked — a conversation can switch it off from the Capabilities sheet.
+
 ## Models
 
 `src/models.ts` picks the model from the configuration (see `.env.schema` for defaults):

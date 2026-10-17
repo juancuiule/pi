@@ -101,3 +101,17 @@ export const traceAttachmentText = ENV.TRACE_ATTACHMENT_TEXT;
 
 /** How long to wait for each MCP server when the agents start. */
 export const mcpConnectTimeoutMs = ENV.MCP_CONNECT_TIMEOUT;
+
+const searxngUrl = unset(ENV.SEARXNG_URL);
+
+/** Web search through a SearXNG instance, or `undefined` when SEARXNG_URL is unset (no `web` extension then). */
+export const webSearch =
+  searxngUrl === undefined
+    ? undefined
+    : {
+        url: searxngUrl,
+        timeoutMs: ENV.WEB_SEARCH_TIMEOUT,
+        concurrency: ENV.WEB_SEARCH_CONCURRENCY,
+        language: ENV.WEB_SEARCH_LANGUAGE,
+        safeSearch: ENV.WEB_SEARCH_SAFESEARCH,
+      };

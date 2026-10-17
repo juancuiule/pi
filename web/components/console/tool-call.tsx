@@ -6,6 +6,7 @@ import {
   FileSearch,
   Info,
   LoaderCircle,
+  SquareArrowOutUpRight,
   TriangleAlert,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -48,6 +49,7 @@ import { questionsOf } from "@/lib/questions";
 import { editHunksOf, isEditConfirmation, patchOf } from "@/lib/tool-input";
 import { toolSummary } from "@/lib/tool-summary";
 import { cn } from "@/lib/utils";
+import { sourcesOf } from "@/lib/web-search";
 import { filePathOf } from "@/lib/workspace-files";
 
 import { EditPreview, FilePreview, PatchPreview } from "./file-blocks";
@@ -341,6 +343,51 @@ const Diagnostics = ({
   </div>
 );
 
+/** The host a source link points to, shown muted beside its title. */
+const hostOf = (url: string): string => {
+  try {
+    return new URL(url).hostname.replace(/^www\./u, "");
+  } catch {
+    return url;
+  }
+};
+
+/** `details.sources` of a finished search: the pages the agent drew from, as links that leave the console. */
+const Sources = ({ details }: { readonly details: unknown }) => {
+  const sources = sourcesOf(details);
+  if (sources.length === 0) {
+    return null;
+  }
+  return (
+    <Section label="Sources">
+      <ol className="flex flex-col gap-1">
+        {sources.map((source) => (
+          <li key={source.url} className="flex items-baseline gap-1.5 text-xs">
+            <a
+              href={source.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-foreground/80 inline-flex items-baseline gap-1 underline-offset-2 hover:underline"
+            >
+              {source.title}
+              <SquareArrowOutUpRight
+                aria-hidden
+                className="text-muted-foreground size-3 shrink-0 self-center"
+              />
+            </a>
+            <span className="text-muted-foreground">
+              {hostOf(source.url)}
+              {source.publishedDate === undefined
+                ? ""
+                : ` · ${source.publishedDate}`}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </Section>
+  );
+};
+
 /** Whether the call carries arguments worth showing; `{}` (a tool with no input) hides the section. */
 const hasInput = (call: ToolCallBlock): boolean => {
   const args: unknown = call.arguments;
@@ -492,6 +539,7 @@ const CallBody = ({
           diagnostics={diagnostics}
         />
       )}
+      <Sources details={toolResult?.details} />
     </div>
   );
 };

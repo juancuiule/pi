@@ -38,6 +38,7 @@ import { shellRoute } from "./src/server/shell.ts";
 import { Skills } from "./src/skills/skills.ts";
 import { convergeBuiltin, SkillSource } from "./src/skills/source.ts";
 import { BUCKETS, s3 } from "./src/storage/object-store.ts";
+import { WebSearch } from "./src/web-search/web-search.ts";
 import * as DockerVolumes from "./src/workspaces/docker-volume.ts";
 import * as S3Copied from "./src/workspaces/s3-copied.ts";
 
@@ -130,6 +131,12 @@ const WorkspacesLive =
     ? S3Copied.workspaces({ store })
     : DockerVolumes.workspaces();
 
+// The `web` extension exists only with SEARXNG_URL set: no SearXNG, no `web_search` tool at all.
+const WebSearchLive =
+  config.webSearch === undefined
+    ? Layer.empty
+    : WebSearch.searxng(config.webSearch);
+
 const AgentsLive = Agents.layer({
   ...setup,
   storage,
@@ -145,7 +152,8 @@ const AgentsLive = Agents.layer({
   Layer.provide(SkillsLive),
   Layer.provide(CapacityLive),
   Layer.provideMerge(AttachmentsLive),
-  Layer.provideMerge(ArtifactsLive)
+  Layer.provideMerge(ArtifactsLive),
+  Layer.provideMerge(WebSearchLive)
 );
 
 const ConversationsLive = Conversations.layer(config.server).pipe(

@@ -111,6 +111,7 @@ import { desktopExtension } from "../tools/desktop.ts";
 import { questionsExtension } from "../tools/questions.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
 import { makeAgentTracing } from "../tracing.ts";
+import { WebSearch, webSearchExtension } from "../web-search/web-search.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
 import type { StorageRef } from "../workspaces/workspaces.ts";
 import {
@@ -707,6 +708,16 @@ export class Agents extends Context.Service<
         // `ask_user`: questions as a form in the console.
         const questionsExt = questionsExtension();
         registry.install(questionsExt);
+        // Web search, only when the layer was given a WebSearch: `web_search` on the host at every Level. Not
+        // locked — a conversation can switch it off.
+        const webSearch = yield* Effect.serviceOption(WebSearch);
+        const webExt =
+          webSearch._tag === "Some"
+            ? webSearchExtension(webSearch.value)
+            : undefined;
+        if (webExt !== undefined) {
+          registry.install(webExt);
+        }
         // Every installed extension, for the console; and those every conversation selects, whatever its Level.
         const installed = [
           ...extensionsFor("desktop", desktop),
@@ -714,6 +725,7 @@ export class Agents extends Context.Service<
           attachmentsExt,
           artifactsExt,
           questionsExt,
+          ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
           ...mcp.extensions,
           tracing.extension,
@@ -723,6 +735,7 @@ export class Agents extends Context.Service<
           attachmentsExt,
           artifactsExt,
           questionsExt,
+          ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
           ...mcp.extensions,
           tracing.extension,
@@ -761,6 +774,7 @@ export class Agents extends Context.Service<
             attachmentsExt,
             artifactsExt,
             questionsExt,
+            ...(webExt === undefined ? [] : [webExt]),
             ...(withSkills ? [skillsExt] : []),
             ...mcp.extensions,
             tracing.extension,

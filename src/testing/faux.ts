@@ -22,6 +22,7 @@ import type { Limits } from "../capacity.ts";
 import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { Skills } from "../skills/skills.ts";
+import type { WebSearch } from "../web-search/web-search.ts";
 import { localSandboxes } from "./sandboxes.ts";
 import type { LocalSandboxes } from "./sandboxes.ts";
 
@@ -50,6 +51,8 @@ export const fauxAgents = (
     readonly vision?: boolean;
     /** Domains an artifact page may load images from; none by default. */
     readonly trustedDomains?: readonly string[];
+    /** The web_search backend, usually `WebSearch.fake`; without one there is no `web` extension at all. */
+    readonly webSearch?: Layer.Layer<WebSearch>;
   } = {}
 ) => {
   const models = createModels();
@@ -99,7 +102,8 @@ export const fauxAgents = (
       Layer.provideMerge(artifacts),
       Layer.provideMerge(
         Capacity.layer({ seats: 10, shells: 3, desktops: 1, ...options.limits })
-      )
+      ),
+      Layer.provideMerge(options.webSearch ?? Layer.empty)
     ),
   };
 };

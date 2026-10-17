@@ -110,6 +110,7 @@ const SUMMARIES: Record<string, (args: Args) => string> = {
   desktop_screenshot: () => "",
   calculate,
   ask_user: askUser,
+  web_search: (args) => text(args.query) ?? "",
   artifact_create: (args) => text(args.title) ?? "",
   artifact_update: (args) => text(args.title) ?? "",
 };
