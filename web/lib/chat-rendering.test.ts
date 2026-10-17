@@ -491,6 +491,35 @@ describe("Markdown code blocks", () => {
   });
 });
 
+describe("Markdown images", () => {
+  it("renders an image in assistant text inline, wrapped in a link to its URL", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: "Here it is: ![a cat](https://example.com/cat.png)",
+        },
+      ],
+    } as unknown as AssistantMessage;
+    const html = transcript({ ...initialState, entries: [entry(message)] });
+    expect(html).toContain('<img src="https://example.com/cat.png"');
+    expect(html).toContain('referrerPolicy="no-referrer"');
+    expect(html).toContain('href="https://example.com/cat.png"');
+  });
+
+  it("shows a label instead of an img for a URL react-markdown strips", () => {
+    const message = {
+      role: "assistant",
+      content: [{ type: "text", text: "![x](javascript:alert(1))" }],
+    } as unknown as AssistantMessage;
+    const html = transcript({ ...initialState, entries: [entry(message)] });
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("alert(1)");
+    expect(html).toContain("[image: x]");
+  });
+});
+
 describe("head markers and earlier history", () => {
   it("renders a compaction as a collapsed boundary row, not a user bubble", () => {
     const html = transcript({

@@ -21,6 +21,7 @@ artifact_update(id, html | edits, title?) → a new version (edits are exact fin
 - `GET /api/artifacts/:id/render?v=` returns the version's HTML with the sandboxing headers set on the response itself (like the attachment `original` handler, not a middleware): `content-security-policy: sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'`, plus `nosniff` and `no-store`.
 - Vetted libraries come from `GET /api/artifact-libs/<file>`, an allowlist served from `node_modules` (Chart.js first, pinned in package.json); no CDNs — a page fetches nothing from the internet.
 - The console embeds the page in `<iframe sandbox="allow-scripts">` and keeps local-harness's navigation guard: a page that navigates its own frame is reloaded once, then hidden (frame-src 'self' on the console's pages, added in `web/next.config.ts`, makes the browser refuse off-origin navigations; `/desktop-frame` carries its own loopback-scoped `frame-src` for the sandbox's noVNC page).
+- An image that lives at a URL is not a page's job: `![alt](url)` in an assistant message renders it in the chat.
 - `GET /api/artifacts/:id/source?v=` returns `{ version, html }` for the panel's code tab; `GET /api/artifacts/:id` the view (title, versions); `GET /api/artifacts?conversation=` lists a conversation's; `DELETE /api/artifacts/:id` removes one.
 
 ## Console

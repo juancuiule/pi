@@ -188,6 +188,48 @@ const CodeFence = ({ children }: { children?: ReactNode }) => {
   );
 };
 
+/**
+ * An image in the agent's own reply: shown inline and wrapped in a link to its
+ * URL. A src react-markdown strips (`javascript:`, `data:`) shows only the
+ * label; one that fails to load shows the label plus the address, so a broken
+ * URL stays visible instead of an empty frame.
+ */
+const TrustedImage = ({ src, alt }: { src?: string | Blob; alt?: string }) => {
+  const [failed, setFailed] = useState(false);
+  const label = `[image${alt === undefined || alt === "" ? "" : `: ${alt}`}]`;
+  if (typeof src !== "string" || src === "") {
+    return <span className="text-muted-foreground">{label}</span>;
+  }
+  if (failed) {
+    return (
+      <span className="text-muted-foreground">
+        {label}{" "}
+        <a
+          href={src}
+          target="_blank"
+          rel="noreferrer"
+          className="underline underline-offset-2"
+        >
+          {src}
+        </a>
+      </span>
+    );
+  }
+  return (
+    <a href={src} target="_blank" rel="noreferrer">
+      {/* oxlint-disable-next-line next/no-img-element -- remote URL chosen at runtime; next/image cannot size it */}
+      <img
+        src={src}
+        alt={alt ?? ""}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className="my-2 max-w-full rounded-lg outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+      />
+    </a>
+  );
+};
+
 // Element overrides only — no typography plugin, no raw HTML (react-markdown's default).
 export const markdownComponents: Components = {
   p: ({ children }) => (
@@ -239,6 +281,7 @@ export const markdownComponents: Components = {
       {children}
     </a>
   ),
+  img: TrustedImage,
   code: ({ className, children }) => {
     // A language class means a fenced block, rendered by `pre` below.
     if (className !== undefined) {
