@@ -149,6 +149,24 @@
   }
 }
 
+/* Pele's svg root carries .pele; the variables alias theme tokens so diagrams follow the theme
+   without a re-render. A selector, not :root, because Tailwind drops :root custom properties nothing
+   references. Categorical series colors keep pele's defaults. */
+.pele {
+  --pele-bg: var(--background);
+  --pele-fg: var(--foreground);
+  --pele-muted: var(--muted-foreground);
+  --pele-line: var(--foreground);
+  --pele-surface: var(--muted);
+  --pele-surface-alt: var(--secondary);
+  --pele-border: var(--muted-foreground);
+  --pele-accent: var(--primary);
+  --pele-critical: var(--destructive);
+  --pele-error: var(--destructive);
+  --pele-font: var(--font-sans);
+  --pele-font-mono: var(--font-mono);
+}
+
 /* Element selector so these win over wterm's `.wterm` defaults regardless of stylesheet order
      (the wterm CSS is bundled with the code-split terminal chunk). */
 div.console-terminal {

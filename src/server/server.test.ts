@@ -823,7 +823,7 @@ describe("HTTP API", () => {
 
   it("serves a conversation's pages sandboxed, and the libraries they may load", async () => {
     const html =
-      '<pre class="mermaid">graph TD; A-->B</pre><script src="/api/artifact-libs/mermaid.min.js"></script>';
+      '<pre id="d">graph TD; A-->B</pre><script src="/api/artifact-libs/pele.global.js"></script>';
     const agents = fauxAgents([
       callTool("artifact_create", { title: "Diagram", html }),
       echoToolResult,
@@ -849,7 +849,7 @@ describe("HTTP API", () => {
         const render = yield* http.get(
           `/api/artifacts/${artifact.id}/render?conversation=${created.id}`
         );
-        const lib = yield* http.get("/api/artifact-libs/mermaid.min.js");
+        const lib = yield* http.get("/api/artifact-libs/pele.global.js");
         const missingLib = yield* http.get("/api/artifact-libs/evil.js");
         const source = yield* client.artifacts.source({
           params: { id: artifact.id },
@@ -896,13 +896,13 @@ describe("HTTP API", () => {
         csp: "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob: 'self'; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'",
         type: expect.stringContaining("text/html"),
         nosniff: "nosniff",
-        body: expect.stringContaining("/api/artifact-libs/mermaid.min.js"),
+        body: expect.stringContaining("/api/artifact-libs/pele.global.js"),
       },
       lib: {
         status: 200,
         type: expect.stringContaining("javascript"),
         nosniff: "nosniff",
-        body: expect.stringContaining("mermaid"),
+        body: expect.stringContaining("pele"),
       },
       missingLib: 404,
       source: { version: 1, html: expect.stringContaining("graph TD") },

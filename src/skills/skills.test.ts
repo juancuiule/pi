@@ -130,7 +130,7 @@ describe("Skills.directory", () => {
       names: skills.map((skill) => skill.name),
       problems,
     }).toStrictEqual({
-      names: ["desktop-notes", "repo-report", "unit-conversion"],
+      names: ["desktop-notes", "diagrams", "repo-report", "unit-conversion"],
       problems: [],
     });
   });

@@ -143,6 +143,7 @@ describe("Agents with MCP servers", () => {
       capabilities.skills.map((s) => [s.name, s.modelInvocable])
     ).toStrictEqual([
       ["desktop-notes", true],
+      ["diagrams", true],
       ["repo-report", true],
       ["unit-conversion", true],
     ]);
