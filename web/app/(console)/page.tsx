@@ -379,6 +379,7 @@ const Console = () => {
                 <div key={selectedId} className="h-full min-h-0">
                   {conversation.sandbox === "desktop" ? (
                     <DesktopPanel
+                      conversation={conversation.id}
                       vncUrl={conversation.vncUrl}
                       paused={seatlessOf(conversation)}
                       resuming={resuming}

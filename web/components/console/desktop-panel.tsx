@@ -16,7 +16,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { vncViewUrl } from "@/lib/vnc";
+import { desktopFrameUrl, vncViewUrl } from "@/lib/vnc";
 
 const placeholderText = (resuming: boolean, paused: boolean): string => {
   if (resuming) {
@@ -29,10 +29,12 @@ const placeholderText = (resuming: boolean, paused: boolean): string => {
 };
 
 export const DesktopPanel = ({
+  conversation,
   vncUrl,
   paused,
   resuming = false,
 }: {
+  conversation: number;
   vncUrl: string | undefined;
   /** Without a Seat, so without a desktop until it is resumed. */
   paused?: boolean;
@@ -112,10 +114,10 @@ export const DesktopPanel = ({
           <TooltipContent>Open in new tab</TooltipContent>
         </Tooltip>
       </div>
-      {/* noVNC needs scripts and its own origin (another port than this page, so it cannot reach this page). */}
+      {/* noVNC needs scripts and its own origin; it loads inside /desktop-frame, a same-origin page whose own frame-src allows the loopback port. */}
       <iframe
         key={reloadKey}
-        src={src}
+        src={desktopFrameUrl(conversation, control)}
         title="Sandbox desktop"
         // oxlint-disable-next-line react/iframe-missing-sandbox
         sandbox="allow-scripts allow-same-origin"

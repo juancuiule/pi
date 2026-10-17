@@ -23,12 +23,23 @@ const nextConfig: NextConfig = {
     Promise.resolve([
       { source: "/api/:path*", destination: `${ENV.API_URL}/api/:path*` },
     ]),
-  // The artifact iframe can only load pages from this origin. The pattern excludes /api, which is a rewrite:
-  // those responses carry the server's own headers (the render endpoint's stricter CSP).
+  // The artifact iframe can only load pages from this origin. The second pattern excludes /api, a rewrite whose
+  // responses carry the server's own headers (the render endpoint's stricter CSP), and /desktop-frame, which
+  // carries its own frame-src for the sandbox's noVNC page on a random loopback port; frame-ancestors keeps
+  // other sites from embedding the view.
   headers: () =>
     Promise.resolve([
       {
-        source: "/:path((?!api(?:/|$)).*)",
+        source: "/desktop-frame/:path*",
+        headers: [
+          {
+            key: "content-security-policy",
+            value: "frame-src http://127.0.0.1:*; frame-ancestors 'self'",
+          },
+        ],
+      },
+      {
+        source: "/:path((?!api(?:/|$)|desktop-frame(?:/|$)).*)",
         headers: [
           { key: "content-security-policy", value: "frame-src 'self'" },
         ],
