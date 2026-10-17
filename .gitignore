@@ -12,3 +12,4 @@ docs/plans
 .claude/
 .devin/
 .agents/
+docker/seaweedfs/s3.json

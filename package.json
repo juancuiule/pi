@@ -25,13 +25,18 @@
     "prepare": "lefthook install",
     "test:docker": "DOCKER_TESTS=1 vitest run",
     "test:integration": "INTEGRATION_TESTS=1 vitest run",
+    "test:s3": "S3_TESTS=1 vitest run",
     "sandbox:build": "docker build -t effect-pi/sandbox-shell -f docker/sandbox/shell.Dockerfile docker/sandbox && docker build -t effect-pi/sandbox-desktop -f docker/sandbox/desktop.Dockerfile docker/sandbox",
     "langfuse:up": "node docker/langfuse/init-env.ts && docker compose -f docker/langfuse/docker-compose.yml -p langfuse up -d",
     "langfuse:down": "docker compose -f docker/langfuse/docker-compose.yml -p langfuse down",
+    "seaweed:up": "node docker/seaweedfs/init-env.ts && docker compose -f docker/seaweedfs/docker-compose.yml -p seaweedfs up -d",
+    "seaweed:down": "docker compose -f docker/seaweedfs/docker-compose.yml -p seaweedfs down",
     "dev:web": "pnpm --filter web dev",
     "dev": "pnpm run \"/^dev:(server|web)$/\""
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1149.0",
+    "@aws-sdk/lib-storage": "^3.1149.0",
     "@earendil-works/chord": "^1.1.0",
     "@earendil-works/pi-ai": "^1.1.0",
     "@earendil-works/pi-durable": "^1.1.0",

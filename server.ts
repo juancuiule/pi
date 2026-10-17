@@ -27,6 +27,7 @@ import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
 import { shellRoute } from "./src/server/shell.ts";
 import { Skills } from "./src/skills/skills.ts";
+import { BUCKETS, s3 } from "./src/storage/object-store.ts";
 import * as DockerVolumes from "./src/workspaces/docker-volume.ts";
 
 const configured = await Effect.runPromise(modelFromConfig(config.model));
@@ -38,6 +39,24 @@ if (configured === undefined) {
 // Conversations survive restarts in a WAL SQLite file; the harness closes it on shutdown. The opener
 // creates the directory.
 const storage = await openNodeSqliteStorage(config.paths.db);
+
+// With s3 storage the server owns its buckets: startup ensures all of them and the screenshots expiry, which
+// is also the connectivity check — an unreachable store fails here. STORAGE=local builds nothing.
+const ensureBuckets = async () => {
+  if (config.storage.s3 === undefined) {
+    return;
+  }
+  const objects = s3(config.storage.s3);
+  await Promise.all(
+    Object.values(BUCKETS).map((bucket) => objects.ensure(bucket))
+  );
+  await objects.setExpiration(
+    BUCKETS.screenshots,
+    config.storage.screenshotTtlDays
+  );
+  return objects;
+};
+export const store = await ensureBuckets();
 
 // Attachments' metadata is a table of its own in the same SQLite file; their bytes are in ATTACHMENTS_DIR.
 const AttachmentsLive = Attachments.local({
