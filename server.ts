@@ -84,10 +84,11 @@ if (store !== undefined) {
   );
 }
 
-// Locally the directory source serves both namespaces: skills/* are builtin, skills/org/* the writable overlay.
+// Locally the directory source serves both namespaces: skills/* are builtin, and SKILLS_ORG_DIR the writable
+// overlay, outside the checkout.
 const SkillSourceLive = (
   store === undefined
-    ? SkillSource.directory(config.paths.skills)
+    ? SkillSource.directory(config.paths.skills, config.paths.skillsOrg)
     : SkillSource.s3(store, BUCKETS.skills)
 ).pipe(Layer.provide(NodeContext));
 
