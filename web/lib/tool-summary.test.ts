@@ -44,6 +44,15 @@ describe(toolSummary, () => {
     ).toStrictEqual(["src", "*.ts", "src", "foo in src", "foo"]);
   });
 
+  it("summarizes web_search by its query", () => {
+    expect(
+      cases([
+        ["web_search", { query: "effect v4 release", count: 10 }],
+        ["web_search", {}],
+      ]).got
+    ).toStrictEqual(["effect v4 release", ""]);
+  });
+
   it("summarizes agent tools", () => {
     expect(
       cases([
