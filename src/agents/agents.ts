@@ -177,7 +177,7 @@ export interface ToolInfo {
 
 export interface ExtensionInfo {
   readonly name: string;
-  /** The Levels whose conversations select it; the skills extension only when there are skills. */
+  /** The Levels whose conversations select it. */
   readonly levels: readonly SandboxChoice[];
   readonly tools: readonly ToolInfo[];
   /** Keys of the system prompt sections it adds. */
@@ -1074,8 +1074,11 @@ export class Agents extends Context.Service<
             }, context)
           );
 
+        // Only the locked ones: a person's `skills: false` is durable. A pre-feature conversation lacking the
+        // extension shows it off in settings, and can turn it on there — the skills extension installs at every
+        // Level.
         const backfillAlwaysOnExtensions = (id: ConversationId) =>
-          addExtensions(id, [attachmentsExt, artifactsExt, skillsExt]);
+          addExtensions(id, [attachmentsExt, artifactsExt]);
 
         // An Upgrade, recorded in the conversation and on its span for Langfuse.
         const recordUpgrade = (
@@ -1184,13 +1187,20 @@ export class Agents extends Context.Service<
           const env = workspaces.env(sandbox);
           const enabled = yield* skillsOf(id);
           const enabledNames = new Set(enabled.map((skill) => skill.name));
-          const known = new Set([
-            ...(yield* catalog).skills.map((skill) => skill.name),
-            ...sync.removed,
-          ]);
-          const stale = [...known].filter((name) => !enabledNames.has(name));
           const warn = (what: string) => (cause: unknown) =>
             Effect.logWarning(`${what} in ${sandbox.id}`, cause);
+          // The commit that led here already landed, so a failed catalog read must not fail the change: the
+          // change's `removed` still converge, the rest of the cleanup just skips.
+          const catalogNames = yield* catalog.pipe(
+            Effect.map((read) => read.skills.map((skill) => skill.name)),
+            Effect.catchCause((cause) =>
+              warn("Could not read the skills catalog")(cause).pipe(
+                Effect.as<readonly string[]>([])
+              )
+            )
+          );
+          const known = new Set([...catalogNames, ...sync.removed]);
+          const stale = [...known].filter((name) => !enabledNames.has(name));
           yield* skills
             .uninstall(env, stale, context)
             .pipe(Effect.catchCause(warn("Could not delete skills")));
@@ -2236,6 +2246,16 @@ export class Agents extends Context.Service<
                 const next = decide(state, skillCatalog, source);
                 if (isProblem(next)) {
                   return { problem: next };
+                }
+                if (Array.isArray(settingsOptions.refresh)) {
+                  const unknown = settingsOptions.refresh.find(
+                    (name) => !skillCatalog.some((skill) => skill.name === name)
+                  );
+                  if (unknown !== undefined) {
+                    return {
+                      problem: { name: unknown, reason: "no such skill" },
+                    };
+                  }
                 }
                 await writeState(tx, id, next, skillCatalog);
                 return {

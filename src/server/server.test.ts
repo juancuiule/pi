@@ -425,7 +425,13 @@ describe("HTTP API", () => {
           params: { id: created.id },
           payload: { refreshSkills: "all" },
         });
-        return { uploaded, missing, shadowed, reverted, origins };
+        const bogus = yield* Effect.flip(
+          client.conversations.configure({
+            params: { id: created.id },
+            payload: { refreshSkills: ["bogus"] },
+          })
+        );
+        return { uploaded, missing, shadowed, reverted, origins, bogus };
       }).pipe(
         Effect.provide(
           serverWith(
@@ -453,7 +459,10 @@ describe("HTTP API", () => {
     });
     expect(result.shadowed.origin).toBe("overridden");
     expect(result.reverted.origin).toBe("builtin");
-    expect(result.origins).toStrictEqual([["convert", "builtin"]]);
+    expect(result).toMatchObject({
+      origins: [["convert", "builtin"]],
+      bogus: { _tag: "InvalidSetting", name: "bogus", reason: "no such skill" },
+    });
   });
 
   it("rejects a skill name that is not a valid skill name", async () => {

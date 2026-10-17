@@ -12,7 +12,7 @@ import { Effect, Exit, Fiber, Layer, Stream, Tracer } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { Skills } from "../skills/skills.ts";
-import { SkillSource } from "../skills/source.ts";
+import { SkillSource, SkillSourceError } from "../skills/source.ts";
 import {
   callTool,
   echoToolResult,
@@ -233,23 +233,117 @@ describe("conversation settings", () => {
     ]).toStrictEqual([false, ["bash", "write"]]);
   });
 
-  // Opening a Seat backfills the skills extension, so the toggle is per-Seat: it is off from here on.
-  it("refuses a forced skill while the skills extension is off", async () => {
+  // The skills toggle is durable: a forced skill is unknown with the extension off, and a later Seat does not
+  // backfill it.
+  it("refuses a forced skill while the skills extension is off, across Seats", async () => {
+    const { layer } = fauxAgents([], withSkills);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const agents = yield* Agents;
+        const id = yield* create();
+        const first = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const seat = yield* agents.open(id);
+            yield* agents.configure(id, { extensions: { skills: false } });
+            return yield* Effect.exit(seat.send("/skill:unit-conversion 3 km"));
+          })
+        );
+        const reopened = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const seat = yield* agents.open(id);
+            const settings = yield* agents.agent(id);
+            return {
+              exit: yield* Effect.exit(
+                seat.send("/skill:unit-conversion 3 km")
+              ),
+              on: settings.extensions.find(
+                (extension) => extension.name === "skills"
+              )?.enabled,
+            };
+          })
+        );
+        return { first, reopened };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(JSON.stringify(result.first)).toContain("SkillNotFound");
+    expect(JSON.stringify(result.reopened.exit)).toContain("SkillNotFound");
+    expect(result.reopened.on).toBeFalsy();
+  });
+
+  it("refuses a refreshSkills name that is not a skill", async () => {
     const { layer } = fauxAgents([], withSkills);
 
     const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const agents = yield* Agents;
+        const id = yield* create();
+        return yield* Effect.exit(
+          agents.configure(id, { refreshSkills: ["bogus"] })
+        );
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(JSON.stringify(exit)).toContain("no such skill");
+  });
+
+  it("converges the Sandbox copy even when the catalog flaps mid-change", async () => {
+    const files: Record<string, string> = {
+      "convert/SKILL.md": "---\nname: convert\ndescription: Convert.\n---\n",
+    };
+    // Arm the second list from now to fail once: the change's own read and the settings read after the
+    // reconcile still work.
+    let calls = 0;
+    let until = Number.POSITIVE_INFINITY;
+    const flapping = Layer.effect(
+      SkillSource,
+      Effect.gen(function* () {
+        const inner = yield* SkillSource;
+        return SkillSource.of({
+          ...inner,
+          list: Effect.suspend(() => {
+            const call = calls;
+            calls += 1;
+            return call === until
+              ? Effect.fail(
+                  new SkillSourceError({ message: "the source flapped" })
+                )
+              : inner.list;
+          }),
+        });
+      })
+    ).pipe(Layer.provide(SkillSource.memory(files)), (source) =>
+      Skills.layer.pipe(Layer.provide(source))
+    );
+    const { layer } = fauxAgents([], { skills: flapping });
+
+    const result = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const agents = yield* Agents;
-          const id = yield* create();
+          const id = yield* create({ level: "shell" });
           const seat = yield* agents.open(id);
-          yield* agents.configure(id, { extensions: { skills: false } });
-          return yield* Effect.exit(seat.send("/skill:unit-conversion 3 km"));
+          const folder = path.join(
+            seat.sandbox?.id ?? "",
+            ".skills",
+            "convert"
+          );
+          until = calls + 1;
+          const settings = yield* agents.configure(id, {
+            skills: { convert: false },
+          });
+          return {
+            enabled: settings.skills.find((skill) => skill.name === "convert")
+              ?.enabled,
+            folder: existsSync(folder),
+          };
         })
       ).pipe(Effect.provide(layer))
     );
 
-    expect(JSON.stringify(exit)).toContain("SkillNotFound");
+    // The disable landed and its copy went away even though the catalog read behind it failed.
+    expect(result).toStrictEqual({ enabled: false, folder: false });
   });
 
   it("deletes a skill turned off from the Sandbox, and copies it back when turned on", async () => {
