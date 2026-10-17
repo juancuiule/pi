@@ -44,6 +44,24 @@ const volumeExists = (name: string) =>
     encoding: "utf-8",
   }).trim() !== "";
 
+const imageOf = (container: string) =>
+  execFileSync(
+    "docker",
+    ["inspect", "--format", "{{.Config.Image}}", container],
+    {
+      encoding: "utf-8",
+    }
+  ).trim();
+
+const createdAt = (image: string) =>
+  execFileSync(
+    "docker",
+    ["image", "inspect", "--format", "{{.Created}}", image],
+    {
+      encoding: "utf-8",
+    }
+  ).trim();
+
 /** Polls `f` until true, giving up after ~10 seconds. */
 const until = (f: () => boolean) =>
   Effect.suspend(() => (f() ? Effect.succeed(true) : Effect.fail(false))).pipe(
@@ -147,6 +165,43 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       expect(volumeExists(storage.id)).toBeFalsy();
     });
 
+    it("installs Software in an image built once, and reused by the next Sandbox", async () => {
+      const runs = await Effect.runPromise(
+        Effect.gen(function* () {
+          const workspaces = yield* Workspaces;
+          const once = Effect.scoped(
+            Effect.gen(function* () {
+              const created = yield* workspaces.sandbox({
+                level: "shell",
+                software: ["uv"],
+              });
+              const output = yield* run(
+                workspaces.env(created.sandbox),
+                "uv --version"
+              );
+              const image = imageOf(created.sandbox.id);
+              return {
+                storage: created.storage,
+                found: { ok: output.ok, image, built: createdAt(image) },
+              };
+            })
+          ).pipe(
+            Effect.tap(({ storage }) => workspaces.discard(storage)),
+            Effect.map(({ found }) => found)
+          );
+          return [yield* once, yield* once];
+        }).pipe(Effect.provide(testWorkspaces()))
+      );
+
+      const [first, second] = runs;
+      execFileSync("docker", ["image", "rm", first?.image ?? ""]);
+      expect(first?.ok).toBeTruthy();
+      expect(first?.image).toMatch(
+        /^effect-pi\/sandbox-shell:sw-[0-9a-f]{12}$/u
+      );
+      expect(second).toStrictEqual(first);
+    }, 600_000);
+
     it("replaces a skill's folder in a container from staged files", async () => {
       const listing = await Effect.runPromise(
         Effect.gen(function* () {
@@ -242,10 +297,15 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       const observed = await Effect.runPromise(
         Effect.gen(function* () {
           const sandboxes = yield* Sandboxes;
-          const sandbox = yield* sandboxes.create("shell", name, {
-            type: "directory",
-            path: dir,
-          });
+          const sandbox = yield* sandboxes.create(
+            "shell",
+            name,
+            {
+              type: "directory",
+              path: dir,
+            },
+            []
+          );
           yield* Effect.addFinalizer(() =>
             Effect.ignore(sandboxes.remove(sandbox))
           );

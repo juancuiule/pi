@@ -1,7 +1,14 @@
-import type { EntryRecord } from "effect-pi/api";
+import type { ConversationSummary, EntryRecord } from "effect-pi/api";
 import { describe, expect, it } from "vitest";
 
-import { artifactOf, artifactRenderUrl, latestArtifactCall } from "./artifacts";
+import {
+  artifactOf,
+  artifactRenderUrl,
+  artifactUrl,
+  conversationTitleOf,
+  latestArtifactCall,
+  openArtifactOf,
+} from "./artifacts";
 
 const toolResult = (
   callId: string,
@@ -126,5 +133,73 @@ describe(artifactRenderUrl, () => {
     expect(artifactRenderUrl(3, "art_abc", 2)).toBe(
       "/api/artifacts/art_abc/render?conversation=3&v=2"
     );
+  });
+});
+
+describe(artifactUrl, () => {
+  it("builds the /artifacts URL, versioned or latest", () => {
+    expect(artifactUrl(3, "art_abc")).toBe("/artifacts?c=3&artifact=art_abc");
+    expect(artifactUrl(3, "art_abc", 2)).toBe(
+      "/artifacts?c=3&artifact=art_abc&v=2"
+    );
+  });
+
+  it("encodes the id", () => {
+    expect(artifactUrl(1, "a/b?c")).toBe("/artifacts?c=1&artifact=a%2Fb%3Fc");
+  });
+});
+
+const params = (entries: Record<string, string>) =>
+  new URLSearchParams(entries);
+
+describe(openArtifactOf, () => {
+  it("reads the c and artifact pair, v optionally", () => {
+    expect(
+      openArtifactOf(params({ c: "3", artifact: "art_abc" }))
+    ).toStrictEqual({ conversation: 3, artifact: { id: "art_abc" } });
+    expect(
+      openArtifactOf(params({ c: "3", artifact: "art_abc", v: "2" }))
+    ).toStrictEqual({
+      conversation: 3,
+      artifact: { id: "art_abc", version: 2 },
+    });
+  });
+
+  it("is undefined without both c and artifact, c being an integer", () => {
+    expect(openArtifactOf(params({ artifact: "art_abc" }))).toBeUndefined();
+    expect(openArtifactOf(params({ c: "3" }))).toBeUndefined();
+    expect(
+      openArtifactOf(params({ c: "x", artifact: "art_abc" }))
+    ).toBeUndefined();
+    expect(
+      openArtifactOf(params({ c: "3.5", artifact: "art_abc" }))
+    ).toBeUndefined();
+    expect(openArtifactOf(params({ c: "3", artifact: "" }))).toBeUndefined();
+  });
+
+  it("treats a bad v as absent", () => {
+    expect(
+      openArtifactOf(params({ c: "3", artifact: "art_abc", v: "x" }))
+    ).toStrictEqual({ conversation: 3, artifact: { id: "art_abc" } });
+  });
+});
+
+const summary = (id: number, title: string): ConversationSummary => ({
+  id,
+  sandbox: "none",
+  software: [],
+  title,
+  status: "idle",
+  pausing: false,
+  pendingApprovals: 0,
+  createdAt: 0,
+});
+
+describe(conversationTitleOf, () => {
+  it("returns the conversation's title, or #id when it is not listed", () => {
+    const conversations = [summary(3, "Report"), summary(7, "Chart")];
+    expect(conversationTitleOf(conversations, 7)).toBe("Chart");
+    expect(conversationTitleOf(conversations, 4)).toBe("#4");
+    expect(conversationTitleOf(undefined, 4)).toBe("#4");
   });
 });

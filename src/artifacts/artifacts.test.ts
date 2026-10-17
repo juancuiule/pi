@@ -209,6 +209,42 @@ describe("artifacts", () => {
     expect(result.remaining).toBe(0);
   });
 
+  it("lists every conversation's artifacts, most recently updated first", async () => {
+    const result = await withArtifacts((artifacts) =>
+      Effect.gen(function* () {
+        const one = yield* artifacts.create(1, {
+          title: "One",
+          html: "<p>1</p>",
+          callId: "c1",
+        });
+        yield* Effect.sleep("5 millis");
+        const two = yield* artifacts.create(2, {
+          title: "Two",
+          html: "<p>2</p>",
+          callId: "c2",
+        });
+        yield* Effect.sleep("5 millis");
+        // One's update makes it the most recently touched, ahead of the newer two.
+        yield* artifacts.update(1, one.id, {
+          callId: "c3",
+          html: "<p>1.</p>",
+        });
+        return {
+          ids: [one.id, two.id],
+          all: yield* artifacts.listAll(),
+          scoped: yield* artifacts.list(2),
+        };
+      })
+    );
+    expect(
+      result.all.map((view) => [view.id, view.conversationId])
+    ).toStrictEqual([
+      [result.ids[0], 1],
+      [result.ids[1], 2],
+    ]);
+    expect(result.scoped.map((view) => view.id)).toStrictEqual([result.ids[1]]);
+  });
+
   it("lets a replayed call find the version it already wrote", async () => {
     const result = await withArtifacts((artifacts) =>
       Effect.gen(function* () {

@@ -4,6 +4,7 @@ import type { ConversationSummary } from "effect-pi/api";
 import {
   BookOpen,
   Gauge,
+  LayoutTemplate,
   LoaderCircle,
   MessageSquare,
   Monitor,
@@ -16,7 +17,7 @@ import {
 import { useTheme } from "next-themes";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -33,19 +34,11 @@ import { relativeTime } from "@/lib/format";
 import { useConversations, useInfo } from "@/lib/queries";
 import { useConversationStore } from "@/lib/store";
 import { useMounted } from "@/lib/use-media-query";
+import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 
 import { SANDBOX_INFO } from "./sandbox-badge";
-
-/** A clock that re-renders every 30s so relative timestamps stay fresh. */
-const useNow = (): number => {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-  return now;
-};
+import { StatusDot } from "./status-dot";
 
 const THEMES = [
   { value: "system", label: "System", icon: Monitor },
@@ -56,6 +49,7 @@ const THEMES = [
 const PAGES = [
   { href: "/", label: "Conversations", icon: MessageSquare },
   { href: "/skills", label: "Skills", icon: BookOpen },
+  { href: "/artifacts", label: "Artifacts", icon: LayoutTemplate },
   { href: "/capacity", label: "Capacity", icon: Gauge },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
@@ -127,6 +121,7 @@ export const Sidebar = () => {
   const { data } = useConversations();
   const { data: info } = useInfo();
   const resuming = useConversationStore((store) => store.resuming);
+  const ended = useConversationStore((store) => store.ended);
   const now = useNow();
   const [showArchived, setShowArchived] = useState(false);
   const all = [...(data ?? [])].toSorted((a, b) => b.createdAt - a.createdAt);
@@ -181,6 +176,11 @@ export const Sidebar = () => {
                   )}
                 >
                   <span className="flex min-w-0 items-center gap-1.5">
+                    <StatusDot
+                      conversation={conversation}
+                      ended={ended[conversation.id] === true}
+                      resuming={isResuming}
+                    />
                     <span
                       className={cn(
                         "min-w-0 flex-1 truncate text-sm",

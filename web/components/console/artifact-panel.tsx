@@ -13,6 +13,8 @@ import {
   CodeBlockCopyButton,
   CodeBlockLine,
 } from "@/components/ui/code-block";
+import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   Tooltip,
   TooltipContent,
@@ -285,3 +287,82 @@ export const ArtifactPanel = ({
     </div>
   );
 };
+
+/** On desktop an artifact is a pane after the list or chat; dragging it shut closes it. */
+export const ArtifactResizablePanel = ({
+  artifact,
+  conversation,
+  onClose,
+}: {
+  artifact: OpenArtifact | undefined;
+  conversation: number | undefined;
+  onClose: () => void;
+}) => {
+  if (artifact === undefined || conversation === undefined) {
+    return null;
+  }
+  return (
+    <>
+      <ResizableHandle />
+      <ResizablePanel
+        defaultSize="30%"
+        minSize="15%"
+        collapsible
+        onResize={(size) => {
+          if (size.asPercentage === 0) {
+            onClose();
+          }
+        }}
+      >
+        <ArtifactPanel
+          key={`${conversation}:${artifact.id}`}
+          artifact={artifact}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      </ResizablePanel>
+    </>
+  );
+};
+
+/** Below the desktop breakpoint the same panel is a Sheet instead. */
+export const ArtifactSheet = ({
+  artifact,
+  conversation,
+  isDesktop,
+  onClose,
+}: {
+  artifact: OpenArtifact | undefined;
+  conversation: number | undefined;
+  isDesktop: boolean | null;
+  onClose: () => void;
+}) => (
+  <Sheet
+    open={
+      isDesktop === false &&
+      artifact !== undefined &&
+      conversation !== undefined
+    }
+    onOpenChange={(open) => {
+      if (!open) {
+        onClose();
+      }
+    }}
+  >
+    <SheetContent
+      side="right"
+      showCloseButton={false}
+      className="w-full sm:max-w-2xl"
+    >
+      <SheetTitle className="sr-only">Artifact page</SheetTitle>
+      {artifact === undefined || conversation === undefined ? null : (
+        <ArtifactPanel
+          key={`${conversation}:${artifact.id}`}
+          artifact={artifact}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      )}
+    </SheetContent>
+  </Sheet>
+);

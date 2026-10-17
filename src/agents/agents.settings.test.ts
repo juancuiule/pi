@@ -102,7 +102,7 @@ describe("conversation settings", () => {
             },
           });
           const seat = yield* agents.open(id);
-          yield* seat.upgrade("desktop");
+          yield* seat.upgrade({ level: "desktop" });
           return {
             offered: offeredIn(yield* seat.ask("What do you have?")),
             settings: yield* agents.agent(id),

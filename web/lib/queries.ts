@@ -7,6 +7,7 @@ import type {
   QuestionAnswer,
   SandboxChoice,
   SettingsChange,
+  SoftwareId,
 } from "effect-pi/api";
 
 import { runApi } from "./api";
@@ -21,6 +22,15 @@ export const useConversations = () =>
     queryKey: LIST,
     queryFn: () => runApi((c) => c.conversations.list()),
     // Keeps status dots current; each open conversation's events are live anyway.
+    refetchInterval: 2000,
+  });
+
+/** Every artifact across conversations, most recently updated first, for the /artifacts page. */
+export const useArtifacts = () =>
+  useQuery({
+    queryKey: ["artifacts"],
+    queryFn: () => runApi((c) => c.artifacts.list({ query: {} })),
+    // A run can write a page between polls of the conversation list.
     refetchInterval: 2000,
   });
 
@@ -89,6 +99,7 @@ export const useCreateConversation = () => {
   return useMutation({
     mutationFn: (payload: {
       sandbox: SandboxChoice;
+      software?: readonly SoftwareId[];
       prompt: string;
       /** Ids of staged uploads; the create claims them. */
       attachments?: readonly string[];
@@ -99,7 +110,7 @@ export const useCreateConversation = () => {
     }) => guard(() => runApi((c) => c.conversations.create({ payload }))),
     onSuccess: (created) => {
       queryClient.setQueryData<readonly ConversationSummary[]>(LIST, (all) => [
-        ...(all ?? []),
+        ...(all ?? []).filter((each) => each.id !== created.id),
         created,
       ]);
     },
@@ -162,16 +173,21 @@ export const useCapacity = () =>
     refetchInterval: 2000,
   });
 
-/** Raise a Conversation's Level; with a Seat, this takes Capacity. */
+/** Raise a Conversation's Level, add Software, or both; with a Seat, this takes Capacity. */
 export const useUpgrade = () => {
   const queryClient = useQueryClient();
   const guard = useCapacityGuard();
   return useMutation({
-    mutationFn: ({ id, level }: { id: number; level: "shell" | "desktop" }) =>
+    mutationFn: ({
+      id,
+      ...payload
+    }: {
+      id: number;
+      level?: "shell" | "desktop";
+      software?: readonly SoftwareId[];
+    }) =>
       guard(() =>
-        runApi((c) =>
-          c.conversations.upgrade({ params: { id }, payload: { level } })
-        )
+        runApi((c) => c.conversations.upgrade({ params: { id }, payload }))
       ),
     onSettled: () => queryClient.invalidateQueries({ queryKey: LIST }),
   });

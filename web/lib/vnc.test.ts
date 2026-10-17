@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import { vncViewUrl } from "./vnc";
+import { desktopFrameUrl, vncViewUrl } from "./vnc";
+
+const CONSOLE_ORIGIN = "http://localhost:3001";
+
+describe(desktopFrameUrl, () => {
+  // frame-src 'self' confines artifact pages; the desktop frame can only load same-origin documents.
+  it("resolves on the console's own origin", () => {
+    const src = desktopFrameUrl(3, false);
+    expect(new URL(src, CONSOLE_ORIGIN).origin).toBe(CONSOLE_ORIGIN);
+    expect(src).toBe("/desktop-frame?conversation=3&control=0");
+    expect(desktopFrameUrl(3, true)).toBe(
+      "/desktop-frame?conversation=3&control=1"
+    );
+  });
+});
 
 describe(vncViewUrl, () => {
   const base = "http://127.0.0.1:55001/vnc.html?autoconnect=true&resize=scale";

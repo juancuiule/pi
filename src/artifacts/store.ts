@@ -86,6 +86,8 @@ export interface ArtifactRecords {
   versions(artifactId: string): readonly ArtifactVersionInfo[];
   /** A conversation's artifacts, oldest first. */
   list(conversationId: number): readonly ArtifactRecord[];
+  /** Every artifact across conversations, most recently updated first. */
+  listAll(): readonly ArtifactRecord[];
   /** Insert an artifact and its first version. */
   insert(artifact: ArtifactRecord, version: ArtifactVersionRecord): void;
   /** Insert a new version and touch the artifact's title and updated_at. */
@@ -200,6 +202,12 @@ export const sqliteRecords = (
             "SELECT * FROM artifacts WHERE conversation_id = ? ORDER BY created_at"
           )
           .all(conversationId) as unknown as ArtifactRow[]
+      ).map(toRecord),
+    listAll: () =>
+      (
+        db
+          .prepare("SELECT * FROM artifacts ORDER BY updated_at DESC")
+          .all() as unknown as ArtifactRow[]
       ).map(toRecord),
     insert: (artifact, version) =>
       transaction(() => {

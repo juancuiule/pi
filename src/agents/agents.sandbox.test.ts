@@ -114,7 +114,7 @@ describe("Upgrade", () => {
         Effect.gen(function* () {
           const seat = yield* openSeat({ sandbox: "none" });
           const first = yield* seat.ask("What can you do?");
-          yield* seat.upgrade("shell");
+          yield* seat.upgrade({ level: "shell" });
           const second = yield* seat.ask("And now?");
           return [first, second].map(
             (text) => JSON.parse(text) as { tools: string[]; system: unknown[] }

@@ -4,6 +4,7 @@ import { defineDoc } from "@earendil-works/pi-durable";
 import type { ConversationId } from "@earendil-works/pi-durable";
 
 import type { SandboxChoice } from "./sandbox/sandbox.ts";
+import type { SoftwareId } from "./sandbox/software.ts";
 
 // A type, not an interface: it is stored in a pi-durable document, which must be a JSON type, and
 // interfaces have no index signature.
@@ -15,11 +16,12 @@ export type ConversationMeta = {
   readonly archivedAt?: number;
 };
 
-/** A stored Conversation: its metadata and its Workspace's Level. */
+/** A stored Conversation: its metadata and its Workspace's Level and Software. */
 export interface StoredConversation {
   readonly id: ConversationId;
   readonly meta: ConversationMeta;
   readonly level: SandboxChoice;
+  readonly software: readonly SoftwareId[];
 }
 
 export const MetaDoc = defineDoc<{ meta?: ConversationMeta }>({

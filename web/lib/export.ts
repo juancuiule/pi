@@ -160,7 +160,11 @@ export const toMarkdown = (
   const parts: string[] = [
     `# ${summary.title}`,
     "",
-    `Sandbox: ${SANDBOX_LABEL[summary.sandbox]} · Started ${new Date(summary.createdAt).toISOString()}`,
+    `Sandbox: ${SANDBOX_LABEL[summary.sandbox]}${
+      summary.software.length > 0
+        ? ` · Software: ${summary.software.join(", ")}`
+        : ""
+    } · Started ${new Date(summary.createdAt).toISOString()}`,
     "",
   ];
   for (const entry of [...state.earlier.entries, ...state.entries]) {

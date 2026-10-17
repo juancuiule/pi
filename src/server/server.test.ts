@@ -5,6 +5,7 @@ import type { FauxResponseStep } from "@earendil-works/pi-ai";
 import {
   fauxAssistantMessage,
   fauxText,
+  fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
 import { NodeHttpServer } from "@effect/platform-node";
 import { Effect, Exit, Layer, Stream } from "effect";
@@ -45,6 +46,20 @@ const serverWith = (
 
 const server = (responses: FauxResponseStep[], shells = 3) =>
   serverWith(fauxAgents(responses, { limits: { shells } }).layer);
+
+/** A model turn that calls artifact_create; call ids differ per page: `call_id` is unique across conversations. */
+const page = (callId: string, title: string, html: string) =>
+  fauxAssistantMessage(
+    [fauxToolCall("artifact_create", { title, html }, { id: callId })],
+    { stopReason: "toolUse" }
+  );
+
+const waitUntil = (check: Effect.Effect<boolean, unknown>) =>
+  Effect.gen(function* () {
+    while (!(yield* check)) {
+      yield* Effect.sleep("10 millis");
+    }
+  });
 
 /** A multipart upload of one text file, staged or to `conversation`. */
 const form = (name: string, body: string, conversation?: number) => {
@@ -338,6 +353,44 @@ describe("HTTP API", () => {
           ])
         )
       )
+    );
+  });
+
+  it("offers Software, creates a conversation with it and adds more with an Upgrade", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const capabilities = yield* client.info.capabilities();
+        expect(
+          capabilities.software.map((each) => [each.id, each.level])
+        ).toStrictEqual([
+          ["node", "shell"],
+          ["uv", "shell"],
+          ["python-data", "shell"],
+          ["imagemagick", "shell"],
+          ["ffmpeg", "shell"],
+          ...(process.arch === "x64" ? [["chrome", "desktop"]] : []),
+        ]);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "shell", software: ["node"], prompt: "hello" },
+        });
+        const upgraded = yield* client.conversations.upgrade({
+          params: { id: created.id },
+          payload: { software: ["uv"] },
+        });
+        const nothing = yield* Effect.flip(
+          client.conversations.upgrade({
+            params: { id: created.id },
+            payload: {},
+          })
+        );
+        expect([
+          created.software,
+          upgraded.software,
+          upgraded.sandbox,
+          nothing._tag,
+        ]).toStrictEqual([["node"], ["node", "uv"], "shell", "InvalidUpgrade"]);
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("a")])])))
     );
   });
 
@@ -851,6 +904,55 @@ describe("HTTP API", () => {
       "WorkspaceFileNotFound",
       "SandboxUnavailable",
       "SandboxUnavailable",
+    ]);
+  });
+
+  it("lists every conversation's artifacts without a scope, each carrying its conversation", async () => {
+    const agents = fauxAgents([
+      page("call-1", "First page", "<p>1</p>"),
+      echoToolResult,
+      page("call-2", "Second page", "<p>2</p>"),
+      echoToolResult,
+    ]);
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const artifactsOf = (conversation?: number) =>
+          client.artifacts.list({
+            query: conversation === undefined ? {} : { conversation },
+          });
+        const first = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "first page" },
+        });
+        yield* waitUntil(
+          Effect.map(artifactsOf(first.id), (views) => views.length === 1)
+        );
+        // Both of the first conversation's queued turns are spent, so the next
+        // conversation's run takes the second pair of responses.
+        yield* waitUntil(
+          Effect.sync(() => agents.faux.getPendingResponseCount() === 2)
+        );
+        const second = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "second page" },
+        });
+        yield* waitUntil(
+          Effect.map(artifactsOf(), (views) => views.length === 2)
+        );
+        return {
+          ids: [first.id, second.id],
+          all: yield* artifactsOf(),
+          scoped: yield* artifactsOf(first.id),
+        };
+      }).pipe(Effect.provide(serverWith(agents.layer)))
+    );
+    expect(
+      result.all.map((row) => [row.title, row.conversation])
+    ).toStrictEqual([
+      ["Second page", result.ids[1]],
+      ["First page", result.ids[0]],
+    ]);
+    expect(result.scoped.map((row) => row.conversation)).toStrictEqual([
+      result.ids[0],
     ]);
   });
 });

@@ -39,7 +39,6 @@ const server = (responses: FauxResponseStep[]) =>
 
 const ok = [fauxAssistantMessage([fauxText("ok")])];
 
-/** Polls `f` until true, giving up after ~10 seconds. */
 const until = (f: () => boolean) =>
   Effect.suspend(() => (f() ? Effect.succeed(true) : Effect.fail(false))).pipe(
     Effect.retry({ schedule: Schedule.spaced("50 millis"), times: 200 }),
@@ -54,7 +53,6 @@ interface TestSocket {
   readonly close: () => void;
 }
 
-/** A WebSocket to the shell route, collecting PTY output into `output` and control frames into `controls`. */
 const open = (url: string) =>
   Effect.callback<TestSocket, Error>((resume) => {
     const ws = new NodeWS.WebSocket(url);
@@ -240,5 +238,103 @@ describe("the shell socket", () => {
     );
 
     expect(result).toStrictEqual({ closed: true, echoed: true });
+  });
+
+  // Each failed `until` below waits up to ~10s, so a regression takes longer than the default 5s.
+  describe("the shared shell session", { timeout: 30_000 }, () => {
+    it("keeps the shell's state across a reconnect", async () => {
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const client = yield* HttpApiClient.make(Api);
+          const created = yield* client.conversations.create({
+            payload: { sandbox: "shell", prompt: "hi" },
+          });
+          const port = yield* portOf;
+          const first = yield* open(shellUrl(port, created.id));
+          first.send(ascii.encode("cd /tmp\n"));
+          first.send(ascii.encode("echo MARKER-1\n"));
+          const marked = yield* until(() => first.output.includes("MARKER-1"));
+          first.close();
+
+          const second = yield* open(shellUrl(port, created.id));
+          const replayed = yield* until(() =>
+            second.output.includes("MARKER-1")
+          );
+          second.send(ascii.encode("pwd\n"));
+          const inTmp = yield* until(() =>
+            second.output.split("\n").some((line) => line.trim() === "/tmp")
+          );
+          second.close();
+          return { marked, replayed, inTmp };
+        }).pipe(Effect.provide(server(ok)))
+      );
+
+      expect(result).toStrictEqual({
+        marked: true,
+        replayed: true,
+        inTmp: true,
+      });
+    });
+
+    it("two sockets share one shell", async () => {
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const client = yield* HttpApiClient.make(Api);
+          const created = yield* client.conversations.create({
+            payload: { sandbox: "shell", prompt: "hi" },
+          });
+          const port = yield* portOf;
+          const first = yield* open(shellUrl(port, created.id));
+          const second = yield* open(shellUrl(port, created.id));
+          first.send(ascii.encode("echo SHARED\n"));
+          const firstSaw = yield* until(() => first.output.includes("SHARED"));
+          const secondSaw = yield* until(() =>
+            second.output.includes("SHARED")
+          );
+          first.close();
+          second.close();
+          return { firstSaw, secondSaw };
+        }).pipe(Effect.provide(server(ok)))
+      );
+
+      expect(result).toStrictEqual({ firstSaw: true, secondSaw: true });
+    });
+
+    it("an exited shell restarts on the next attach", async () => {
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const client = yield* HttpApiClient.make(Api);
+          const created = yield* client.conversations.create({
+            payload: { sandbox: "shell", prompt: "hi" },
+          });
+          const port = yield* portOf;
+          const first = yield* open(shellUrl(port, created.id));
+          first.send(ascii.encode("echo MARKER-1\n"));
+          yield* until(() => first.output.includes("MARKER-1"));
+          first.send(ascii.encode("exit\n"));
+          const exited = yield* until(() =>
+            first.controls.some(
+              (control) =>
+                control.type === "closed" && control.reason === "exited"
+            )
+          );
+
+          const second = yield* open(shellUrl(port, created.id));
+          second.send(ascii.encode("pwd\n"));
+          const inWorkspace = yield* until(() =>
+            second.output.includes("effect-pi-workspace-")
+          );
+          const fresh = !second.output.includes("MARKER-1");
+          second.close();
+          return { exited, inWorkspace, fresh };
+        }).pipe(Effect.provide(server(ok)))
+      );
+
+      expect(result).toStrictEqual({
+        exited: true,
+        inWorkspace: true,
+        fresh: true,
+      });
+    });
   });
 });

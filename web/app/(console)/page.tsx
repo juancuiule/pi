@@ -8,10 +8,13 @@ import type { ReactNode } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { toast } from "sonner";
 
-import { ArtifactPanel } from "@/components/console/artifact-panel";
+import {
+  ArtifactResizablePanel,
+  ArtifactSheet,
+} from "@/components/console/artifact-panel";
 import { ConversationHeader } from "@/components/console/conversation-header";
 import { DesktopPanel } from "@/components/console/desktop-panel";
-import { FilePanel } from "@/components/console/file-panel";
+import { FileResizablePanel, FileSheet } from "@/components/console/file-panel";
 import { MessageInput } from "@/components/console/message-input";
 import { NewConversation } from "@/components/console/new-conversation";
 import { Transcript } from "@/components/console/transcript";
@@ -21,7 +24,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { AnswersContext, ApprovalContext } from "@/lib/approval-context";
 import { OpenArtifactContext } from "@/lib/artifact-context";
 import { latestArtifactCall } from "@/lib/artifacts";
@@ -166,162 +168,6 @@ const useFilePanel = (
   }
   return [file, setFile];
 };
-
-/** On desktop an artifact is a third pane after the main one; dragging it shut closes it. */
-const ArtifactResizablePanel = ({
-  artifact,
-  conversation,
-  onClose,
-}: {
-  artifact: OpenArtifact | undefined;
-  conversation: number | undefined;
-  onClose: () => void;
-}) => {
-  if (artifact === undefined || conversation === undefined) {
-    return null;
-  }
-  return (
-    <>
-      <ResizableHandle />
-      <ResizablePanel
-        defaultSize="30%"
-        minSize="15%"
-        collapsible
-        onResize={(size) => {
-          if (size.asPercentage === 0) {
-            onClose();
-          }
-        }}
-      >
-        <ArtifactPanel
-          key={`${conversation}:${artifact.id}`}
-          artifact={artifact}
-          conversation={conversation}
-          onClose={onClose}
-        />
-      </ResizablePanel>
-    </>
-  );
-};
-
-/** On desktop an open file is a pane between the main one and the sandbox's, like an artifact. */
-const FileResizablePanel = ({
-  file,
-  conversation,
-  onClose,
-}: {
-  file: OpenFile | undefined;
-  conversation: number | undefined;
-  onClose: () => void;
-}) => {
-  if (file === undefined || conversation === undefined) {
-    return null;
-  }
-  return (
-    <>
-      <ResizableHandle />
-      <ResizablePanel
-        defaultSize="30%"
-        minSize="15%"
-        collapsible
-        onResize={(size) => {
-          if (size.asPercentage === 0) {
-            onClose();
-          }
-        }}
-      >
-        <FilePanel
-          key={`${conversation}:${file.path}`}
-          file={file}
-          conversation={conversation}
-          onClose={onClose}
-        />
-      </ResizablePanel>
-    </>
-  );
-};
-
-/** Below the desktop breakpoint the same panel is a Sheet instead. */
-const ArtifactSheet = ({
-  artifact,
-  conversation,
-  isDesktop,
-  onClose,
-}: {
-  artifact: OpenArtifact | undefined;
-  conversation: number | undefined;
-  isDesktop: boolean | null;
-  onClose: () => void;
-}) => (
-  <Sheet
-    open={
-      isDesktop === false &&
-      artifact !== undefined &&
-      conversation !== undefined
-    }
-    onOpenChange={(open) => {
-      if (!open) {
-        onClose();
-      }
-    }}
-  >
-    <SheetContent
-      side="right"
-      showCloseButton={false}
-      className="w-full sm:max-w-2xl"
-    >
-      <SheetTitle className="sr-only">Artifact page</SheetTitle>
-      {artifact === undefined || conversation === undefined ? null : (
-        <ArtifactPanel
-          key={`${conversation}:${artifact.id}`}
-          artifact={artifact}
-          conversation={conversation}
-          onClose={onClose}
-        />
-      )}
-    </SheetContent>
-  </Sheet>
-);
-
-/** Below the desktop breakpoint an open file is a Sheet instead of a pane. */
-const FileSheet = ({
-  file,
-  conversation,
-  isDesktop,
-  onClose,
-}: {
-  file: OpenFile | undefined;
-  conversation: number | undefined;
-  isDesktop: boolean | null;
-  onClose: () => void;
-}) => (
-  <Sheet
-    open={
-      isDesktop === false && file !== undefined && conversation !== undefined
-    }
-    onOpenChange={(open) => {
-      if (!open) {
-        onClose();
-      }
-    }}
-  >
-    <SheetContent
-      side="right"
-      showCloseButton={false}
-      className="w-full sm:max-w-2xl"
-    >
-      <SheetTitle className="sr-only">Workspace file</SheetTitle>
-      {file === undefined || conversation === undefined ? null : (
-        <FilePanel
-          key={`${conversation}:${file.path}`}
-          file={file}
-          conversation={conversation}
-          onClose={onClose}
-        />
-      )}
-    </SheetContent>
-  </Sheet>
-);
 
 const NotFound = ({ onNew }: { onNew: () => void }) => (
   <div className="flex h-full flex-col items-center justify-center gap-2 p-6">
@@ -479,6 +325,7 @@ const Console = () => {
                   <div key={selectedId} className="h-full min-h-0">
                     {conversation.sandbox === "desktop" ? (
                       <DesktopPanel
+                        conversation={conversation.id}
                         vncUrl={conversation.vncUrl}
                         paused={seatlessOf(conversation)}
                         resuming={resuming}

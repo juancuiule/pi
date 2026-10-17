@@ -16,7 +16,11 @@ import { Clock, Context, Effect, Layer } from "effect";
 
 import { ArtifactNotFound, ArtifactRefused } from "../errors.ts";
 import { sqliteRecords } from "./store.ts";
-import type { ArtifactRecords, ArtifactVersionInfo } from "./store.ts";
+import type {
+  ArtifactRecord,
+  ArtifactRecords,
+  ArtifactVersionInfo,
+} from "./store.ts";
 
 export const ARTIFACT_ID = /^art_[0-9a-f]{32}$/u;
 
@@ -47,6 +51,8 @@ export type ArtifactUpdate = {
 /** An artifact as the API and the console see it. */
 export interface ArtifactView {
   readonly id: string;
+  /** The conversation that owns it; every artifact belongs to exactly one. */
+  readonly conversationId: number;
   readonly title: string;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -141,6 +147,11 @@ export class Artifacts extends Context.Service<
     >;
     /** The conversation's artifacts, oldest first. */
     list(conversationId: number): Effect.Effect<readonly ArtifactView[]>;
+    /**
+     * Every artifact across conversations, most recently updated first. A separate method, not `list` with an
+     * optional scope: on this service `undefined` scope always means finds nothing, never everything.
+     */
+    listAll(): Effect.Effect<readonly ArtifactView[]>;
     /** Delete the conversation's artifact and all its versions. `undefined` scopes to no conversation. */
     remove(
       conversationId: number | undefined,
@@ -154,21 +165,14 @@ export class Artifacts extends Context.Service<
       Effect.sync(() => {
         const { records } = options;
 
-        const viewOf = (id: string, conversationId: number | undefined) => {
-          const artifact =
-            conversationId === undefined
-              ? undefined
-              : records.get(id, conversationId);
-          return artifact === undefined
-            ? undefined
-            : ({
-                id: artifact.id,
-                title: artifact.title,
-                createdAt: artifact.createdAt,
-                updatedAt: artifact.updatedAt,
-                versions: records.versions(id),
-              } satisfies ArtifactView);
-        };
+        const viewOf = (artifact: ArtifactRecord): ArtifactView => ({
+          id: artifact.id,
+          conversationId: artifact.conversationId,
+          title: artifact.title,
+          createdAt: artifact.createdAt,
+          updatedAt: artifact.updatedAt,
+          versions: records.versions(artifact.id),
+        });
 
         const create = Effect.fn("Artifacts.create")(function* (
           conversationId: number,
@@ -260,10 +264,13 @@ export class Artifacts extends Context.Service<
           update,
           view: (conversationId, id) =>
             Effect.suspend(() => {
-              const view = viewOf(id, conversationId);
-              return view === undefined
+              const artifact =
+                conversationId === undefined
+                  ? undefined
+                  : records.get(id, conversationId);
+              return artifact === undefined
                 ? Effect.fail(new ArtifactNotFound({ id }))
-                : Effect.succeed(view);
+                : Effect.succeed(viewOf(artifact));
             }),
           html: (conversationId, id, version) =>
             Effect.suspend(() => {
@@ -285,12 +292,8 @@ export class Artifacts extends Context.Service<
                   });
             }),
           list: (conversationId) =>
-            Effect.sync(() =>
-              records.list(conversationId).flatMap((artifact) => {
-                const view = viewOf(artifact.id, conversationId);
-                return view === undefined ? [] : [view];
-              })
-            ),
+            Effect.sync(() => records.list(conversationId).map(viewOf)),
+          listAll: () => Effect.sync(() => records.listAll().map(viewOf)),
           remove: (conversationId, id) =>
             Effect.suspend(() =>
               conversationId !== undefined && records.remove(id, conversationId)
@@ -318,7 +321,7 @@ const KB = 1024;
 
 const SECTION = [
   `An artifact is a page the person sees beside this chat: use artifact_create for reports, charts, dashboards or interactive prototypes that are easier to read or use than text in a message. artifact_update changes one, either replacing the whole page or applying exact find/replace edits; every change is a new version the person can go back to.`,
-  "A page is one self-contained HTML document, at most 300 KB: inline styles and scripts only. It must not fetch anything — no external scripts, stylesheets, fonts or images, and no network calls. Two libraries are served locally:",
+  "A page is one self-contained HTML document, at most 300 KB: inline styles and scripts only. It must not fetch anything — no external scripts, stylesheets, fonts or images, and no network calls. To show an image that lives at a URL, put it in your message as markdown — `![caption](https://…)` renders it in the chat. Two libraries are served locally:",
   '<script src="/api/artifact-libs/chart.umd.js"></script> gives the Chart global.',
   '<script src="/api/artifact-libs/mermaid.min.js"></script> gives mermaid: call mermaid.initialize({ startOnLoad: false }), then render with mermaid.run or mermaid.render.',
   "The person sees the page the moment the call returns, so describe what it shows instead of pasting its HTML.",

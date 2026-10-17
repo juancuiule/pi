@@ -26,14 +26,16 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 ## Workspaces
 
-**Workspace**: The durable machine side of a Conversation: its Level and its files. _Avoid_: volume, environment
+**Workspace**: The durable machine side of a Conversation: its Level, its Software and its files. _Avoid_: volume, environment
 
 **Level**: How much machine a Workspace has: none, shell or desktop. It only goes up. _Avoid_: sandbox choice, kind, tier
 
-**Upgrade**: Raising a Workspace's Level, asked for by the person or by the agent.
+**Software**: Programs installed in a Workspace's Sandboxes on top of its Level's image, chosen by the person: at create, or with an Upgrade. Like the Level, it only grows. _Avoid_: tools (the agent's tools), packages
+
+**Upgrade**: Raising a Workspace's Level, adding Software, or both. The person can do either; the agent only raises the Level.
 
 **Sandbox**: A running machine over a Workspace. It exists only while its Conversation has a Seat. _Avoid_: container, VM
 
-**Shell**: The console's live terminal in a Conversation's Sandbox: a real PTY over a WebSocket, not the agent's command output (that is the Agent tab). _Avoid_: exec, agent terminal
+**Shell**: The console's live terminal in a Conversation's Sandbox: a real PTY over a WebSocket, not the agent's command output (that is the Agent tab). A session owned by the Sandbox's lifetime — sockets attach and detach, each attach replays the scrollback. _Avoid_: exec, agent terminal
 
 **Capacity**: How many Sandboxes the server runs at once. _Avoid_: cap, limit, slots

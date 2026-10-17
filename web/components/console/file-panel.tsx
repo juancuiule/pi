@@ -13,6 +13,8 @@ import {
   CodeBlockCopyButton,
   CodeBlockLine,
 } from "@/components/ui/code-block";
+import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useHighlightedCode } from "@/hooks/use-highlighted-code";
 import { runApi } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
@@ -169,3 +171,80 @@ export const FilePanel = ({
     </div>
   );
 };
+
+/** On desktop an open file is a pane between the main one and the sandbox's, like an artifact. */
+export const FileResizablePanel = ({
+  file,
+  conversation,
+  onClose,
+}: {
+  file: OpenFile | undefined;
+  conversation: number | undefined;
+  onClose: () => void;
+}) => {
+  if (file === undefined || conversation === undefined) {
+    return null;
+  }
+  return (
+    <>
+      <ResizableHandle />
+      <ResizablePanel
+        defaultSize="30%"
+        minSize="15%"
+        collapsible
+        onResize={(size) => {
+          if (size.asPercentage === 0) {
+            onClose();
+          }
+        }}
+      >
+        <FilePanel
+          key={`${conversation}:${file.path}`}
+          file={file}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      </ResizablePanel>
+    </>
+  );
+};
+
+/** Below the desktop breakpoint an open file is a Sheet instead of a pane. */
+export const FileSheet = ({
+  file,
+  conversation,
+  isDesktop,
+  onClose,
+}: {
+  file: OpenFile | undefined;
+  conversation: number | undefined;
+  isDesktop: boolean | null;
+  onClose: () => void;
+}) => (
+  <Sheet
+    open={
+      isDesktop === false && file !== undefined && conversation !== undefined
+    }
+    onOpenChange={(open) => {
+      if (!open) {
+        onClose();
+      }
+    }}
+  >
+    <SheetContent
+      side="right"
+      showCloseButton={false}
+      className="w-full sm:max-w-2xl"
+    >
+      <SheetTitle className="sr-only">Workspace file</SheetTitle>
+      {file === undefined || conversation === undefined ? null : (
+        <FilePanel
+          key={`${conversation}:${file.path}`}
+          file={file}
+          conversation={conversation}
+          onClose={onClose}
+        />
+      )}
+    </SheetContent>
+  </Sheet>
+);

@@ -22,6 +22,7 @@ import { HttpApiBuilder } from "effect/http-api";
 import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
 import { Artifacts } from "../artifacts/artifacts.ts";
+import type { ArtifactView } from "../artifacts/artifacts.ts";
 import { Attachments, infoOf } from "../attachments/attachments.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
 import type { ConversationNotFound } from "../errors.ts";
@@ -132,7 +133,7 @@ const ConversationsHandlers = HttpApiBuilder.group(
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
       .handle("upgrade", ({ params, payload }) =>
-        conversations.upgrade(params.id, payload.level).pipe(
+        conversations.upgrade(params.id, payload).pipe(
           Effect.catchTags({
             AgentError: Effect.die,
             SandboxError: Effect.die,
@@ -300,6 +301,16 @@ const ARTIFACT_LIBS: Record<string, string> = {
   "mermaid.min.js": "mermaid",
 };
 
+/** An artifact's wire shape; the wire names its owner `conversation`, like the query param. */
+const artifactInfoOf = (view: ArtifactView) => ({
+  id: view.id,
+  conversation: view.conversationId,
+  title: view.title,
+  createdAt: view.createdAt,
+  updatedAt: view.updatedAt,
+  versions: view.versions,
+});
+
 const require_ = createRequire(import.meta.url);
 
 const libPath = (file: string) => {
@@ -315,9 +326,16 @@ const ArtifactsHandlers = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const artifacts = yield* Artifacts;
     return handlers
-      .handle("list", ({ query }) => artifacts.list(query.conversation))
+      .handle("list", ({ query }) =>
+        (query.conversation === undefined
+          ? artifacts.listAll()
+          : artifacts.list(query.conversation)
+        ).pipe(Effect.map((views) => views.map(artifactInfoOf)))
+      )
       .handle("view", ({ params, query }) =>
-        artifacts.view(query.conversation, params.id)
+        artifacts
+          .view(query.conversation, params.id)
+          .pipe(Effect.map(artifactInfoOf))
       )
       .handle("render", ({ params, query }) =>
         artifacts.html(query.conversation, params.id, query.v).pipe(
