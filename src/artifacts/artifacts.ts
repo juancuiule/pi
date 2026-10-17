@@ -364,7 +364,7 @@ const sectionText = (domains: readonly string[], conversationId: string) =>
         : `: ${domains.join(", ")}.`
     } For another remote image, put it in your message as markdown — \`![caption](https://…)\` renders it in the chat. Two libraries are served locally:`,
     '<script src="/api/artifact-libs/chart.umd.js"></script> gives the Chart global.',
-    '<script src="/api/artifact-libs/mermaid.min.js"></script> gives mermaid: call mermaid.initialize({ startOnLoad: false }), then render with mermaid.run or mermaid.render.',
+    '<script src="/api/artifact-libs/pele.global.js"></script> gives pele, which draws mermaid-syntax diagrams: pele.mount(el, source) renders into an element, pele.render(source).svg returns one.',
     "The person sees the page the moment the call returns, so describe what it shows instead of pasting its HTML.",
   ].join("\n");
 

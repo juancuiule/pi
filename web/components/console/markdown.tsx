@@ -1,7 +1,6 @@
 "use client";
 
 import { CodeXml, ImageIcon, LoaderCircle, Waypoints } from "lucide-react";
-import { useTheme } from "next-themes";
 import { isValidElement, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
@@ -31,37 +30,25 @@ import {
 import { useHighlightedCode } from "@/hooks/use-highlighted-code";
 import { cn } from "@/lib/utils";
 
-/** Unique ids for mermaid's render calls, serial across concurrent diagrams. */
+/** Unique prefixes for pele's accessibility ids, serial across concurrent diagrams. */
 let serial = 0;
 
-/** Loads mermaid (only when a diagram is first shown) and renders `code` to SVG. */
+/** Loads pele (only when a diagram is first shown) and renders `code` to SVG. */
 const draw = async (
-  code: string,
-  theme: "dark" | "default"
+  code: string
 ): Promise<{ readonly svg: string } | { readonly error: string }> => {
-  const { default: mermaid } = await import("mermaid");
-  mermaid.initialize({
-    startOnLoad: false,
-    // No HTML labels or click handlers: the text may come from a file the reader did not write.
-    securityLevel: "strict",
-    theme,
-  });
-  const id = `effect-pi-mermaid-${(serial += 1)}`;
+  const { renderAsync } = await import("pele/lazy");
   try {
-    // Rendered into a detached element: a failed parse leaves no stray node in the document.
-    const rendered = await mermaid.render(
-      id,
-      code,
-      document.createElement("div")
-    );
+    const rendered = await renderAsync(code, {
+      idPrefix: `effect-pi-pele-${(serial += 1)}`,
+    });
     return { svg: rendered.svg };
   } catch (error) {
-    document.querySelector(`#d${id}`)?.remove();
     return { error: error instanceof Error ? error.message : String(error) };
   }
 };
 
-/** A ```mermaid fence, drawn as a diagram, with the source behind a toggle. Mermaid loads on the first one. */
+/** A ```mermaid fence, drawn as a diagram, with the source behind a toggle. Pele loads on the first one. */
 const MermaidDiagram = ({
   code,
   source,
@@ -70,7 +57,6 @@ const MermaidDiagram = ({
   /** The fence's highlighted lines, shown as the source view. */
   source: ReactNode[];
 }) => {
-  const { resolvedTheme } = useTheme();
   const [showSource, setShowSource] = useState(false);
   const [result, setResult] = useState<
     { readonly svg: string } | { readonly error: string } | undefined
@@ -81,10 +67,7 @@ const MermaidDiagram = ({
     // The source changes as it streams in; only render once it settles briefly.
     const timer = setTimeout(() => {
       void (async () => {
-        const drawn = await draw(
-          code,
-          resolvedTheme === "dark" ? "dark" : "default"
-        );
+        const drawn = await draw(code);
         if (!cancelled) {
           setResult(drawn);
         }
@@ -94,7 +77,7 @@ const MermaidDiagram = ({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [code, resolvedTheme]);
+  }, [code]);
 
   const failed = result !== undefined && "error" in result;
   let body: ReactNode;
@@ -123,7 +106,7 @@ const MermaidDiagram = ({
     body = (
       <div
         className="overflow-x-auto px-3 pb-3 [&_svg]:max-w-full"
-        // oxlint-disable-next-line react/no-danger -- mermaid's own SVG at securityLevel "strict": no scripts, handlers or HTML labels
+        // oxlint-disable-next-line react/no-danger -- pele's own SVG: no scripts, handlers or HTML labels; links limited to safe schemes
         dangerouslySetInnerHTML={{ __html: result.svg }}
       />
     );
