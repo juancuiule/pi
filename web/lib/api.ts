@@ -50,6 +50,26 @@ const uploadError = (error: object & { _tag: unknown }): string | undefined => {
   }
 };
 
+/** A message for a CapacityExhausted failure. */
+const capacityError = (error: object): string => {
+  const limit = "limit" in error ? String(error.limit) : "a few";
+  const resource =
+    "resource" in error && error.resource !== "seat"
+      ? `${String(error.resource)} sandboxes`
+      : "conversations";
+  return `At most ${limit} ${resource} can run at once. Pause one first.`;
+};
+
+/** A message for a SkillNotFound failure. */
+const skillError = (error: object): string => {
+  const name = "name" in error ? String(error.name) : "";
+  const available =
+    "available" in error && Array.isArray(error.available)
+      ? error.available.join(", ")
+      : "";
+  return `No skill named ${name}. Available: ${available}.`;
+};
+
 /** Messages for the failures that read the same whatever the error carries. */
 const plainError: Record<string, string> = {
   ConversationNotFound: "This conversation no longer exists.",
@@ -64,23 +84,14 @@ export const apiError = (error: unknown): string => {
   if (typeof error === "object" && error !== null && "_tag" in error) {
     switch (error._tag) {
       case "CapacityExhausted": {
-        const limit = "limit" in error ? String(error.limit) : "a few";
-        const resource =
-          "resource" in error && error.resource !== "seat"
-            ? `${String(error.resource)} sandboxes`
-            : "conversations";
-        return `At most ${limit} ${resource} can run at once. Pause one first.`;
+        return capacityError(error);
       }
       case "SkillNotFound": {
-        const name = "name" in error ? String(error.name) : "";
-        const available =
-          "available" in error && Array.isArray(error.available)
-            ? error.available.join(", ")
-            : "";
-        return `No skill named ${name}. Available: ${available}.`;
+        return skillError(error);
       }
       case "InvalidUpgrade":
-      case "InvalidSetting": {
+      case "InvalidSetting":
+      case "InvalidDomain": {
         return "reason" in error && error.reason !== undefined
           ? String(error.reason)
           : "That change isn't allowed.";

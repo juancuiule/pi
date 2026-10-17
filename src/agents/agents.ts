@@ -54,6 +54,7 @@ import {
   stopWaitingCalls,
 } from "../approvals.ts";
 import { Artifacts, artifactsExtension } from "../artifacts/artifacts.ts";
+import { TrustedDomains } from "../artifacts/domains.ts";
 import {
   Attachments,
   attachmentsExtension,
@@ -695,7 +696,10 @@ export class Agents extends Context.Service<
         // Read and search over the conversation's attachments; always on, so a file once sent stays readable.
         const attachmentsExt = attachmentsExtension(attachments);
         registry.install(attachmentsExt);
-        const artifactsExt = artifactsExtension(artifacts);
+        const artifactsExt = artifactsExtension(
+          artifacts,
+          yield* TrustedDomains
+        );
         registry.install(artifactsExt);
         // `ask_user`: questions as a form in the console.
         const questionsExt = questionsExtension();

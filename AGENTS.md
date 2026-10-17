@@ -104,6 +104,15 @@ Files people send with messages (TXT, Markdown, HTML, CSV/TSV, text PDFs, PNG/JP
 - The console uploads a file when it is added to the composer (picker, drop, paste; `web/lib/use-draft-attachments.ts`), and shows sent files as chips (`web/lib/attachments.ts` parses the blocks) that open a viewer (`attachment-viewer.tsx`): details and warnings, the image, a table, the text the agent reads, or a PDF's pages. PDF pages are drawn as WebP images by the server (`GET /api/attachments/:id/pages/:page`, `renderPdfPage` in the worker with `@napi-rs/canvas`, kept after the first time), so the browser never opens an uploaded PDF itself.
 - Tests: `fauxAgents` provides temporary `Attachments` (`attachmentLimits`, and `vision: false` for a model without images); `src/testing/files.ts` builds PDFs and images.
 
+## Artifacts
+
+Sandboxed HTML pages the agent writes for the person; the decisions are in `docs/plans/artifacts.md`, the term in `GLOSSARY.md`.
+
+- `src/artifacts/`: `store.ts` has the `artifacts` and `artifact_versions` tables in `EFFECT_PI_DB` (an in-memory variant for tests). `artifacts.ts` has the `Artifacts` service (`create`, `update`, `view`, `html`, `list`, `remove`) and the `artifacts` extension with its prompt section and `artifact_create`/`artifact_update` tools, locked on at every Level. `refs.ts` parses a page's external references with htmlparser2; `create`/`update` refuse anything the render CSP would block (`ArtifactRefused`), so the model reads the refusal instead of shipping a silently broken page. `domains.ts` has the `TrustedDomains` service and host matching.
+- `GET /api/artifacts/:id/render?v=` serves a version with a strict CSP: inline scripts only plus same-origin libraries (`GET /api/artifact-libs/<file>` allowlist), no frames/forms/connections, `img-src` for `data:`, `blob:`, `'self'` and the person's Trusted domains. The console embeds it in `<iframe sandbox="allow-scripts">` and guards navigation.
+- A page may only load images that are same-origin, inline (`data:`/`blob:`), or from a **Trusted domain** — a host the person lists under Settings → Trusted domains (`GET/POST/DELETE /api/trusted-domains`, the `trusted_domains` table). Entries are normalized hosts (`cdn.example.com`, `*.example.com` for subdomains, either with `:port`); the render CSP and the prompt section read the live list, so a domain added mid-conversation applies on the next call. Other remote loads (scripts, styles, fonts, media, frames) are always refused — the page fetches nothing else.
+- Tests: `fauxAgents` provides `TrustedDomains.memory()` and `Artifacts.temporary(trusted)` (`trustedDomains` option); `src/artifacts/domains.test.ts` and `refs.test.ts` cover normalization/matching and the page scan.
+
 ## MCP
 
 `mcp.config.ts` lists the remote MCP servers (Streamable HTTP only; pi-mcp has no legacy SSE transport). `Agents.layer({ mcp })` connects them when the layer is built (`src/mcp.ts`, 10s timeout each) and closes them on teardown.
@@ -156,6 +165,10 @@ Agents are traced with Effect spans, exported to Langfuse over OTLP.
   - Fonts come from the shadcn preset: IBM Plex Sans, IBM Plex Mono and Montserrat headings (`layout.tsx`, `--font-*` in `globals.css`).
   - The shell panel uses wterm (`@wterm/react`), output-only (no-op `onData`); the first write happens in `onReady` (earlier writes are dropped), and colors/font come from `.console-terminal` CSS variables; `html`/`body` are `h-dvh overflow-hidden` and only inner regions scroll.
 - `web/next.config.ts` rewrites `/api/*` to `API_URL` with compression off, so SSE isn't buffered, and `experimental.proxyTimeout` at a day: the proxy otherwise cuts any stream silent for 30s, and the server sends no heartbeat.
+
+## Commits
+
+- Commit your work when the task is done — on a feature branch, not the default branch. Stage the files you changed by path, never `git add -A`/`git add .`; changes that are not yours stay uncommitted unless the person asks for them.
 
 ## Pull requests
 

@@ -24,6 +24,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Artifact**: A sandboxed HTML page the agent writes for the person, kept privately on the server with every version of it. _Avoid_: file, document, page
 
+**Trusted domain**: A host the person lists under Settings so an Artifact's images may load from it (`cdn.example.com`, or `*.example.com` for its subdomains). Everything else an Artifact could fetch stays blocked. _Avoid_: allowlist, whitelist
+
 ## Workspaces
 
 **Workspace**: The durable machine side of a Conversation: its Level, its Software and its files. _Avoid_: volume, environment

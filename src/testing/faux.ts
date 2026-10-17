@@ -14,6 +14,7 @@ import { Agents } from "../agents/agents.ts";
 import type { AgentModel } from "../agents/agents.ts";
 import type { ApprovalPolicy } from "../approvals.ts";
 import { Artifacts } from "../artifacts/artifacts.ts";
+import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import type { AttachmentLimits } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
@@ -47,6 +48,8 @@ export const fauxAgents = (
     readonly sandboxes?: LocalSandboxes;
     /** Whether the faux model takes images; it does by default. */
     readonly vision?: boolean;
+    /** Domains an artifact page may load images from; none by default. */
+    readonly trustedDomains?: readonly string[];
   } = {}
 ) => {
   const models = createModels();
@@ -68,6 +71,15 @@ export const fauxAgents = (
   models.setProvider(faux.provider);
   faux.setResponses(responses);
   const sandboxes = options.sandboxes ?? localSandboxes();
+  // One memory list backs both: the Artifacts layer reads it per call and the extension's section renders it.
+  const artifacts = Layer.unwrap(
+    Effect.gen(function* () {
+      const domains = yield* TrustedDomains;
+      return Artifacts.temporary(domains);
+    })
+  ).pipe(
+    Layer.provideMerge(TrustedDomains.memory(options.trustedDomains ?? []))
+  );
   return {
     faux,
     sandboxes,
@@ -83,7 +95,7 @@ export const fauxAgents = (
       Layer.provide(sandboxes.layer),
       Layer.provide(options.skills ?? Skills.none),
       Layer.provideMerge(Attachments.temporary(options.attachmentLimits)),
-      Layer.provideMerge(Artifacts.temporary()),
+      Layer.provideMerge(artifacts),
       Layer.provideMerge(
         Capacity.layer({ seats: 10, shells: 3, desktops: 1, ...options.limits })
       )

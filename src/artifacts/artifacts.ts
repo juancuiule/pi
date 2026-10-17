@@ -15,6 +15,8 @@ import type { Extension } from "@earendil-works/pi-durable";
 import { Clock, Context, Effect, Layer } from "effect";
 
 import { ArtifactNotFound, ArtifactRefused } from "../errors.ts";
+import type { TrustedDomains } from "./domains.ts";
+import { checkPage } from "./refs.ts";
 import { sqliteRecords } from "./store.ts";
 import type {
   ArtifactRecord,
@@ -79,6 +81,16 @@ const occurrences = (html: string, find: string) =>
 /** Quoted `find`, cut short, for a refusal the model reads. */
 const quoted = (find: string) =>
   find.length > 60 ? `"${find.slice(0, 57)}..."` : `"${find}"`;
+
+/** The trusted image domains a check reads: the live service, or a fixed list for tests. */
+type Trusted = TrustedDomains["Service"] | readonly string[];
+
+const listTrusted = (trusted: Trusted | undefined) => {
+  if (trusted === undefined) {
+    return Effect.succeed([]);
+  }
+  return "list" in trusted ? trusted.list() : Effect.succeed(trusted);
+};
 
 /** Fail with the first reason `edits` cannot apply to `html`; each `find` must occur exactly once. */
 const checkEdits = (html: string, edits: readonly ArtifactEdit[]) => {
@@ -159,11 +171,21 @@ export class Artifacts extends Context.Service<
     ): Effect.Effect<void, ArtifactNotFound>;
   }
 >()("effect-pi/Artifacts") {
-  static readonly layer = (options: { readonly records: ArtifactRecords }) =>
+  static readonly layer = (options: {
+    readonly records: ArtifactRecords;
+    /** The trusted image domains; a page's references are refused without the option, against an empty list. */
+    readonly trusted?: Trusted | undefined;
+  }) =>
     Layer.effect(
       Artifacts,
       Effect.sync(() => {
         const { records } = options;
+        // Every new version's page is checked against the current trusted domains: a replayed call skips it (the
+        // check already ran), while a domain trusted later lets a once-refused page through unchanged.
+        const check = (html: string) =>
+          Effect.flatMap(listTrusted(options.trusted), (domains) =>
+            checkPage(html, domains)
+          );
 
         const viewOf = (artifact: ArtifactRecord): ArtifactView => ({
           id: artifact.id,
@@ -191,6 +213,7 @@ export class Artifacts extends Context.Service<
             };
           }
           const id = `art_${randomBytes(16).toString("hex")}`;
+          yield* check(input.html);
           const now = yield* Clock.currentTimeMillis;
           records.insert(
             {
@@ -245,6 +268,7 @@ export class Artifacts extends Context.Service<
             ({ html } = change);
           }
           yield* checkSize(html);
+          yield* check(html);
           const now = yield* Clock.currentTimeMillis;
           const title = change.title ?? artifact.title;
           const record = {
@@ -305,27 +329,44 @@ export class Artifacts extends Context.Service<
     );
 
   /** Artifacts in a SQLite file. */
-  static readonly local = (options: { readonly database: string }) =>
+  static readonly local = (options: {
+    readonly database: string;
+    readonly trusted?: Trusted | undefined;
+  }) =>
     Layer.unwrap(
       Effect.acquireRelease(
         Effect.sync(() => sqliteRecords(options.database)),
         (records) => Effect.sync(() => records.close())
-      ).pipe(Effect.map((records) => Artifacts.layer({ records })))
+      ).pipe(
+        Effect.map((records) =>
+          Artifacts.layer({ records, trusted: options.trusted })
+        )
+      )
     );
 
   /** Artifacts in an in-memory table, gone with the layer: for tests. */
-  static readonly temporary = () => Artifacts.local({ database: ":memory:" });
+  static readonly temporary = (trusted?: Trusted) =>
+    Artifacts.local({ database: ":memory:", trusted });
 }
 
 const KB = 1024;
 
-const SECTION = [
-  `An artifact is a page the person sees beside this chat: use artifact_create for reports, charts, dashboards or interactive prototypes that are easier to read or use than text in a message. artifact_update changes one, either replacing the whole page or applying exact find/replace edits; every change is a new version the person can go back to.`,
-  "A page is one self-contained HTML document, at most 300 KB: inline styles and scripts only. It must not fetch anything — no external scripts, stylesheets, fonts or images, and no network calls. To show an image that lives at a URL, put it in your message as markdown — `![caption](https://…)` renders it in the chat. Two libraries are served locally:",
-  '<script src="/api/artifact-libs/chart.umd.js"></script> gives the Chart global.',
-  '<script src="/api/artifact-libs/mermaid.min.js"></script> gives mermaid: call mermaid.initialize({ startOnLoad: false }), then render with mermaid.run or mermaid.render.',
-  "The person sees the page the moment the call returns, so describe what it shows instead of pasting its HTML.",
-].join("\n");
+/**
+ * The section's text, rendered before each request so the trusted-domain list is current; `conversationId` is in
+ * the attachment URLs a page may load images from.
+ */
+const sectionText = (domains: readonly string[], conversationId: string) =>
+  [
+    `An artifact is a page the person sees beside this chat: use artifact_create for reports, charts, dashboards or interactive prototypes that are easier to read or use than text in a message. artifact_update changes one, either replacing the whole page or applying exact find/replace edits; every change is a new version the person can go back to.`,
+    `A page is one self-contained HTML document, at most ${Math.round(ARTIFACT_MAX_BYTES / KB)} KB: inline styles and scripts only. It must not fetch anything — no external scripts, stylesheets, fonts or network calls; a page that references them is refused. The exception is images: they may load from this server (an attachment's thumbnail at /api/attachments/<id>/thumbnail?conversation=${conversationId}, a PDF page at /api/attachments/<id>/pages/<n>?conversation=${conversationId}), from data:/blob: URLs, and from domains the person marked trusted${
+      domains.length === 0
+        ? " (none now — the person adds them in Settings → Trusted domains)."
+        : `: ${domains.join(", ")}.`
+    } For another remote image, put it in your message as markdown — \`![caption](https://…)\` renders it in the chat. Two libraries are served locally:`,
+    '<script src="/api/artifact-libs/chart.umd.js"></script> gives the Chart global.',
+    '<script src="/api/artifact-libs/mermaid.min.js"></script> gives mermaid: call mermaid.initialize({ startOnLoad: false }), then render with mermaid.run or mermaid.render.',
+    "The person sees the page the moment the call returns, so describe what it shows instead of pasting its HTML.",
+  ].join("\n");
 
 const textResult = (text: string) => ({
   content: [{ type: "text", text } satisfies TextContent],
@@ -345,10 +386,12 @@ const run = <A>(effect: Effect.Effect<A, ArtifactNotFound | ArtifactRefused>) =>
 
 /**
  * The `artifacts` extension: a prompt section, and the create and update tools over the conversation's
- * artifacts. They run on the host, so a conversation without a Sandbox still produces pages.
+ * artifacts. They run on the host, so a conversation without a Sandbox still produces pages. The section renders
+ * before each request, so the trusted-domain list the person edits shows up on the next one.
  */
 export const artifactsExtension = (
-  artifacts: Artifacts["Service"]
+  artifacts: Artifacts["Service"],
+  trusted: TrustedDomains["Service"]
 ): Extension => {
   const title = Type.String({
     description: "A short title the person sees, a few words",
@@ -356,7 +399,15 @@ export const artifactsExtension = (
   const page = `The page: one self-contained HTML document, at most ${Math.round(ARTIFACT_MAX_BYTES / KB)} KB`;
   return defineExtension({
     name: "artifacts",
-    sections: [section("artifacts", () => SECTION)],
+    sections: [
+      section("artifacts", (input) =>
+        Effect.runPromise(
+          Effect.map(trusted.list(), (domains) =>
+            sectionText(domains, String(input.conversationId))
+          )
+        )
+      ),
+    ],
     tools: [
       defineTool({
         name: "artifact_create",

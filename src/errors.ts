@@ -103,3 +103,9 @@ export class ArtifactRefused extends Schema.TaggedError<ArtifactRefused>()(
   "ArtifactRefused",
   { reason: Schema.String }
 ) {}
+
+/** A trusted-domains entry that is not a hostname: `domain` is what was entered, `reason` what is wrong with it. */
+export class InvalidDomain extends Schema.TaggedError<InvalidDomain>()(
+  "InvalidDomain",
+  { domain: Schema.String, reason: Schema.String }
+) {}
