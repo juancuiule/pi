@@ -39,6 +39,7 @@ import { Skills } from "./src/skills/skills.ts";
 import { convergeBuiltin, SkillSource } from "./src/skills/source.ts";
 import { BUCKETS, s3 } from "./src/storage/object-store.ts";
 import * as DockerVolumes from "./src/workspaces/docker-volume.ts";
+import * as S3Copied from "./src/workspaces/s3-copied.ts";
 
 const configured = await Effect.runPromise(modelFromConfig(config.model));
 const setup = configured ?? echoModel();
@@ -122,6 +123,13 @@ const ArtifactsLive = Layer.unwrap(
 // One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
 const CapacityLive = Capacity.layer(config.capacity);
 
+// Workspace files mount a Docker volume; s3-copied treats it as a cache and keeps the snapshot in the
+// workspaces bucket. Conversations needs the same layer for its run-end checkpoints, so it is merged in.
+const WorkspacesLive =
+  store !== undefined && config.storage.workspace === "s3-copied"
+    ? S3Copied.workspaces({ store })
+    : DockerVolumes.workspaces();
+
 const AgentsLive = Agents.layer({
   ...setup,
   storage,
@@ -133,7 +141,7 @@ const AgentsLive = Agents.layer({
   mcpConnectTimeoutMs: config.mcpConnectTimeoutMs,
   traceAttachmentText: config.traceAttachmentText,
 }).pipe(
-  Layer.provide(DockerVolumes.workspaces()),
+  Layer.provideMerge(WorkspacesLive),
   Layer.provide(SkillsLive),
   Layer.provide(CapacityLive),
   Layer.provideMerge(AttachmentsLive),

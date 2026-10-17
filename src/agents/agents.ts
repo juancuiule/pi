@@ -112,6 +112,7 @@ import { questionsExtension } from "../tools/questions.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
 import { makeAgentTracing } from "../tracing.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
+import type { StorageRef } from "../workspaces/workspaces.ts";
 import {
   applyChange,
   changesBetween,
@@ -382,6 +383,8 @@ export interface Seat {
   readonly id: ConversationId;
   /** This Seat's Sandbox; `undefined` at Level `none`. */
   readonly sandbox: SandboxInfo | undefined;
+  /** Where this Seat's Workspace files are stored; `undefined` at Level `none`. */
+  readonly storage: StorageRef | undefined;
   /** The Workspace's Level. */
   readonly level: SandboxChoice;
   /**
@@ -1268,6 +1271,7 @@ export class Agents extends Context.Service<
             | {
                 readonly scope: Scope.Closeable;
                 readonly sandbox: SandboxInfo;
+                readonly storage: StorageRef;
                 shell?: ShellSession;
               }
             | undefined;
@@ -1394,14 +1398,14 @@ export class Agents extends Context.Service<
                       files.storage = made.storage;
                     }, context)
                   );
-                  return made.sandbox;
+                  return made;
                 }).pipe(Scope.provide(scope))
               );
               if (Exit.isFailure(attached)) {
                 yield* Scope.close(scope, Exit.void);
                 return yield* Effect.failCause(attached.cause);
               }
-              return { scope, sandbox: attached.value };
+              return { scope, ...attached.value };
             });
 
           if (level !== "none") {
@@ -1752,6 +1756,9 @@ export class Agents extends Context.Service<
             id,
             get sandbox() {
               return machine?.sandbox;
+            },
+            get storage() {
+              return machine?.storage;
             },
             get level() {
               return level;

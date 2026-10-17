@@ -56,6 +56,9 @@ export const paths = {
 /** The S3 endpoint and credentials when STORAGE=s3, `undefined` otherwise; missing credentials throw at startup. */
 const s3 = () => {
   if (ENV.STORAGE !== "s3") {
+    if (ENV.WORKSPACE_STORAGE === "s3-copied") {
+      throw new Error("WORKSPACE_STORAGE=s3-copied needs STORAGE=s3");
+    }
     return;
   }
   const accessKeyId = unset(ENV.S3_ACCESS_KEY_ID);

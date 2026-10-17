@@ -49,6 +49,7 @@ import type {
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
+import { Workspaces } from "../workspaces/workspaces.ts";
 
 export type ConversationStatus = "running" | "idle" | "paused" | "archived";
 
@@ -255,6 +256,7 @@ export class Conversations extends Context.Service<
         const agents = yield* Agents;
         const attachments = yield* Attachments;
         const capacity = yield* Capacity;
+        const workspaces = yield* Workspaces;
         const live = new Map<number, Live>();
         // A Seat mid-open, before `register` lands it in `live`: its Conversation is recorded already, so it
         // reads as paused. Look-ups wait on the gate instead of opening a second Seat or writing its Workspace;
@@ -360,7 +362,24 @@ export class Conversations extends Context.Service<
             Stream.runForEach(() =>
               Effect.gen(function* () {
                 entry.lastActivity = yield* Clock.currentTimeMillis;
+                const wasRunning = entry.running;
                 const running = yield* refresh(entry);
+                if (wasRunning && !running && !entry.pausing) {
+                  const { sandbox, storage } = entry.seat;
+                  if (sandbox !== undefined && storage !== undefined) {
+                    // A checkpoint after each Run bounds what a crash loses; a Pause's closing save
+                    // takes over instead, and the release joins this fiber through the storage lock.
+                    yield* workspaces.save(storage, sandbox, "checkpoint").pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning(
+                          `Workspace checkpoint of conversation ${id} failed`,
+                          cause
+                        )
+                      ),
+                      Effect.forkIn(layerScope)
+                    );
+                  }
+                }
                 if (!running && entry.pausing) {
                   // Forked into the layer's scope: closing the Seat's own scope interrupts this fiber.
                   yield* close(id).pipe(Effect.forkIn(layerScope));

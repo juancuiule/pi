@@ -92,7 +92,8 @@ export const fauxAgents = (
         ? {}
         : { mcpConnectTimeoutMs: options.mcpConnectTimeoutMs }),
     }).pipe(
-      Layer.provide(sandboxes.layer),
+      // provideMerge: Conversations needs the same Workspaces for its run-end checkpoints.
+      Layer.provideMerge(sandboxes.layer),
       Layer.provide(options.skills ?? Skills.none),
       Layer.provideMerge(Attachments.temporary(options.attachmentLimits)),
       Layer.provideMerge(artifacts),

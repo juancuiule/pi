@@ -23,6 +23,7 @@ import { Skills, SkillSource } from "../skills/skills.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
+import type { Workspaces } from "../workspaces/workspaces.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { echoModel } from "./faux.ts";
@@ -30,7 +31,7 @@ import { apiLayer } from "./handlers.ts";
 
 const serverWith = (
   agents: Layer.Layer<
-    Agents | Capacity | Attachments | Artifacts | TrustedDomains,
+    Agents | Capacity | Attachments | Artifacts | TrustedDomains | Workspaces,
     AgentError
   >,
   skillSource: Layer.Layer<SkillSource> = SkillSource.memory({})
@@ -675,7 +676,7 @@ describe("HTTP API", () => {
     const { models, model } = echoModel();
     const sandboxes = localSandboxes();
     const agents = Agents.layer({ models, model }).pipe(
-      Layer.provide(sandboxes.layer),
+      Layer.provideMerge(sandboxes.layer),
       Layer.provide(Skills.none),
       Layer.provideMerge(Attachments.temporary()),
       Layer.provideMerge(Artifacts.temporary()),

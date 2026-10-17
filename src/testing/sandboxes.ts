@@ -1,7 +1,7 @@
 // Test helpers: Sandboxes that run in local directories, so pi's real file and shell tools run without Docker, and
 // Workspace storage as temporary directories that those Sandboxes use as their working directory.
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -18,12 +18,16 @@ import type {
   WorkspaceMount,
 } from "../sandbox/sandbox.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
+import type { SandboxCache } from "../workspaces/s3-copied.ts";
 import { Workspaces, WorkspaceStorage } from "../workspaces/workspaces.ts";
 import type { StorageRef } from "../workspaces/workspaces.ts";
 
 export interface LocalSandboxes {
   /** `Workspaces` over local Sandboxes and directory storage. */
   readonly layer: Layer.Layer<Workspaces>;
+  /** The inner layers, for composing a different WorkspaceStorage over the same Sandboxes. */
+  readonly sandboxes: Layer.Layer<Sandboxes>;
+  readonly storage: Layer.Layer<WorkspaceStorage>;
   /** Sandboxes created and not yet removed, by working directory. */
   readonly live: Set<string>;
   /** Workspace storage directories created and not yet removed. */
@@ -57,7 +61,9 @@ export const localSandboxes = (
         files.type === "directory"
           ? (options.onCreate ?? Effect.void).pipe(
               Effect.andThen(
+                // Like a volume mount, mounting a missing directory creates it.
                 Effect.sync(() => {
+                  mkdirSync(files.path, { recursive: true });
                   live.add(files.path);
                   created.push({ kind, software: [...software] });
                   return { kind, id: files.path } satisfies SandboxInfo;
@@ -147,8 +153,35 @@ export const localSandboxes = (
     layer: Workspaces.layer.pipe(
       Layer.provide(Layer.merge(sandboxes, storage))
     ),
+    sandboxes,
+    storage,
     live,
     stored,
     created,
+  };
+};
+
+/**
+ * A `SandboxCache` over host directories under `root`, for testing s3-copied storage. `live` is a
+ * `LocalSandboxes`' set: removing a cache a Sandbox still mounts fails with an "in use" error, the way a
+ * mounted Docker volume refuses `volume rm`.
+ */
+export const directoryCache = (
+  root: string,
+  live: Set<string>
+): SandboxCache => {
+  const dir = (id: string) => path.join(root, id);
+  return {
+    create: (id) =>
+      Effect.sync(() => {
+        mkdirSync(dir(id), { recursive: true });
+      }),
+    mount: (id) => ({ type: "directory", path: dir(id) }),
+    remove: (id) =>
+      live.has(dir(id))
+        ? new SandboxError({ message: `cache ${id} is in use` })
+        : Effect.sync(() => {
+            rmSync(dir(id), { recursive: true, force: true });
+          }),
   };
 };
