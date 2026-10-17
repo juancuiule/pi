@@ -148,7 +148,7 @@ describe(changesBetween, () => {
 });
 
 describe("the skills extension", () => {
-  it("stays off through an unrelated change, and goes with the last skill", () => {
+  it("stays off through an unrelated change, and stays on when the last skill goes off", () => {
     const off = applyChange(installed, catalog, chat, {
       extensions: { skills: false },
     });
@@ -156,6 +156,7 @@ describe("the skills extension", () => {
       "reason" in off
         ? off
         : applyChange(installed, catalog, off, { approvals: "auto" });
+    // It carries the write tools too, so losing the last skill leaves it on.
     const lastSkill = applyChange(installed, catalog, chat, {
       skills: { convert: false, notes: false },
     });
@@ -163,6 +164,6 @@ describe("the skills extension", () => {
       [unrelated, lastSkill].map((result) =>
         "reason" in result ? result : result.extensions.includes("skills")
       )
-    ).toStrictEqual([false, false]);
+    ).toStrictEqual([false, true]);
   });
 });

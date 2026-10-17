@@ -161,6 +161,7 @@ describe("conversation settings", () => {
       "attachments",
       "artifacts",
       "questions",
+      "skills",
       "tracing",
     ]);
   });
@@ -226,6 +227,7 @@ describe("conversation settings", () => {
     ]).toStrictEqual([false, ["bash", "write"]]);
   });
 
+  // Opening a Seat backfills the skills extension, so the toggle is per-Seat: it is off from here on.
   it("refuses a forced skill while the skills extension is off", async () => {
     const { layer } = fauxAgents([], withSkills);
 
@@ -234,8 +236,8 @@ describe("conversation settings", () => {
         Effect.gen(function* () {
           const agents = yield* Agents;
           const id = yield* create();
-          yield* agents.configure(id, { extensions: { skills: false } });
           const seat = yield* agents.open(id);
+          yield* agents.configure(id, { extensions: { skills: false } });
           return yield* Effect.exit(seat.send("/skill:unit-conversion 3 km"));
         })
       ).pipe(Effect.provide(layer))

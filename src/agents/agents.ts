@@ -105,6 +105,7 @@ import type { SoftwareId } from "../sandbox/software.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
 import type { Skill } from "../skills/format.ts";
 import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
+import type { SkillRemoveOutcome, SkillSaveOutcome } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
 import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
@@ -627,8 +628,36 @@ export class Agents extends Context.Service<
         const attachments = yield* Attachments;
         const artifacts = yield* Artifacts;
         // Skills are read from their source for every new conversation; the extension reads the conversation's.
+        // Its write tools apply through the settings engine, defined at the end of this scope: `skillEdits`
+        // is filled in once `changeSettings` exists, and a tool call resolves it long after the layer is built
+        // (the `upgrades` map's late binding).
         const skills = yield* Skills;
-        const skillsExt = skillsExtension(skills);
+        const skillEdits: {
+          saved?: (
+            id: ConversationId,
+            name: string,
+            outcome: SkillSaveOutcome
+          ) => Effect.Effect<boolean, unknown>;
+          deleted?: (
+            id: ConversationId,
+            name: string,
+            outcome: SkillRemoveOutcome
+          ) => Effect.Effect<boolean, unknown>;
+        } = {};
+        const skillsExt = skillsExtension(skills, {
+          onSaved: (id, name, outcome) =>
+            Effect.runPromise(
+              skillEdits.saved === undefined
+                ? Effect.die(new Error("skill edits are not wired"))
+                : skillEdits.saved(id, name, outcome)
+            ),
+          onDeleted: (id, name, outcome) =>
+            Effect.runPromise(
+              skillEdits.deleted === undefined
+                ? Effect.die(new Error("skill edits are not wired"))
+                : skillEdits.deleted(id, name, outcome)
+            ),
+        });
         registry.install(skillsExt);
         const catalog = skills.catalog.pipe(
           Effect.mapError((cause) => new AgentError({ cause }))
@@ -768,8 +797,9 @@ export class Agents extends Context.Service<
             (extension.tools ?? []).map((tool) => [tool.name, tool] as const)
           )
         );
-        // What a conversation at `level` gets unless its settings say otherwise.
-        const defaultExtensions = (level: SandboxChoice, withSkills: boolean) =>
+        // What a conversation at `level` gets unless its settings say otherwise; the skills extension is
+        // always among them — it also carries the write tools, so it is on even with no skills.
+        const defaultExtensions = (level: SandboxChoice) =>
           [
             ...extensionsFor(level, desktop),
             workspaceExt,
@@ -777,7 +807,7 @@ export class Agents extends Context.Service<
             artifactsExt,
             questionsExt,
             ...(webExt === undefined ? [] : [webExt]),
-            ...(withSkills ? [skillsExt] : []),
+            skillsExt,
             ...mcp.extensions,
             tracing.extension,
           ].map((extension) => extension.name);
@@ -1043,7 +1073,7 @@ export class Agents extends Context.Service<
           );
 
         const backfillAlwaysOnExtensions = (id: ConversationId) =>
-          addExtensions(id, [attachmentsExt, artifactsExt]);
+          addExtensions(id, [attachmentsExt, artifactsExt, skillsExt]);
 
         // An Upgrade, recorded in the conversation and on its span for Langfuse.
         const recordUpgrade = (
@@ -1207,10 +1237,7 @@ export class Agents extends Context.Service<
             {
               level: createOptions.level,
               approvals: createOptions.approvals ?? "auto",
-              extensions: defaultExtensions(
-                createOptions.level,
-                sourceSkills.length > 0
-              ),
+              extensions: defaultExtensions(createOptions.level),
               disabledTools: [],
               skills: sourceSkills.map((skill) => skill.name),
             },
@@ -2178,6 +2205,8 @@ export class Agents extends Context.Service<
 
         // Read, decide and write a conversation's settings in one commit; then match its Sandbox's skills to them,
         // record what changed, and annotate the span for Langfuse. All under the conversation's lock.
+        // `refresh` re-reads named skills ("all" for every enabled one) into the Sandbox copy on top of the ones
+        // the change turned on; `by` records who made it.
         const changeSettings = Effect.fnUntraced(
           function* (
             id: ConversationId,
@@ -2186,7 +2215,11 @@ export class Agents extends Context.Service<
               skillCatalog: readonly Skill[],
               source: readonly Skill[]
             ) => SettingsState | SettingsProblem,
-            reset: boolean
+            settingsOptions: {
+              readonly reset?: boolean;
+              readonly refresh?: "all" | readonly string[] | undefined;
+              readonly by?: "person" | "agent";
+            } = {}
           ) {
             yield* handleOf(id);
             const source = (yield* catalog).skills;
@@ -2222,12 +2255,16 @@ export class Agents extends Context.Service<
               "langfuse.observation.output": JSON.stringify(outcome.changes),
             });
             yield* reconcileSkills(id, {
-              refresh: reset ? "all" : outcome.turnedOn,
+              refresh:
+                settingsOptions.reset === true ||
+                settingsOptions.refresh === "all"
+                  ? "all"
+                  : [...outcome.turnedOn, ...(settingsOptions.refresh ?? [])],
               removed: outcome.removed,
             });
             yield* record(id, {
-              by: "person",
-              reset,
+              by: settingsOptions.by ?? "person",
+              reset: settingsOptions.reset === true,
               changes: outcome.changes,
             });
             return yield* agentOf(id);
@@ -2247,7 +2284,7 @@ export class Agents extends Context.Service<
             id,
             (state, skillCatalog) =>
               applyChange(installedInfo, skillCatalog, state, change),
-            false
+            { refresh: change.refreshSkills }
           );
         });
 
@@ -2259,13 +2296,77 @@ export class Agents extends Context.Service<
             id,
             (state, _skillCatalog, source) => ({
               ...state,
-              extensions: defaultExtensions(state.level, source.length > 0),
+              extensions: defaultExtensions(state.level),
               disabledTools: [],
               skills: source.map((skill) => skill.name),
             }),
-            true
+            { reset: true }
           );
         });
+
+        // The skill write tools' way into the settings engine: whether the calling conversation picked the write
+        // up, so the tool's text can say. A saved "created" skill turns on here; an updated or shadowed one that
+        // is on refreshes its copy; a deleted one that is on turns off; a reverted one refreshes to the built-in.
+        const enabledSkill = Effect.fnUntraced(function* (
+          id: ConversationId,
+          name: string
+        ) {
+          const source = (yield* catalog).skills;
+          return yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const { state } = await readState(tx, id, source);
+              return state.skills.includes(name);
+            }, context)
+          );
+        });
+        skillEdits.saved = (id, name, outcome) =>
+          Effect.gen(function* () {
+            if (outcome === "created") {
+              yield* changeSettings(
+                id,
+                (state, skillCatalog) =>
+                  applyChange(installedInfo, skillCatalog, state, {
+                    skills: { [name]: true },
+                  }),
+                { refresh: [name], by: "agent" }
+              );
+              return true;
+            }
+            if (!(yield* enabledSkill(id, name))) {
+              return false;
+            }
+            yield* changeSettings(id, (state) => state, {
+              refresh: [name],
+              by: "agent",
+            });
+            return true;
+          });
+        skillEdits.deleted = (id, name, outcome) =>
+          Effect.gen(function* () {
+            if (!(yield* enabledSkill(id, name))) {
+              return false;
+            }
+            if (outcome === "removed") {
+              // The deleted skill stays known through the kept-skill merge, so the toggle resolves.
+              yield* changeSettings(
+                id,
+                (state, skillCatalog) =>
+                  applyChange(installedInfo, skillCatalog, state, {
+                    skills: { [name]: false },
+                  }),
+                { by: "agent" }
+              );
+              return true;
+            }
+            if (outcome === "reverted") {
+              yield* changeSettings(id, (state) => state, {
+                refresh: [name],
+                by: "agent",
+              });
+              return true;
+            }
+            return false;
+          });
 
         return Agents.of({
           model: options.model,

@@ -195,9 +195,12 @@ describe("HTTP API", () => {
         "artifact_create",
         "artifact_update",
         "ask_user",
+        "skill",
+        "skill_save",
+        "skill_delete",
       ],
       ["coding-tools", "desktop"],
-      ["workspace", "attachments", "artifacts"],
+      ["workspace", "attachments", "artifacts", "skills"],
     ]);
   });
 

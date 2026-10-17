@@ -15,6 +15,8 @@ import {
   callTool,
   echoToolResult,
   fauxAgents,
+  offered,
+  offeredIn,
   openSeat,
 } from "../testing/faux.ts";
 import { Skills, SkillSource } from "./skills.ts";
@@ -362,14 +364,19 @@ describe("skills in a conversation", () => {
     expect(answer).not.toContain("hidden");
   });
 
-  it("has no skill tool or section without skills", async () => {
-    const { layer } = fauxAgents([systemPrompt]);
+  it("still offers the skill tools without skills, but no skills section", async () => {
+    const { layer } = fauxAgents([offered]);
 
     const answer = await Effect.runPromise(
       ask("Which skills do you have?").pipe(Effect.provide(layer))
     );
 
-    expect(answer).not.toContain("available_skills");
+    const { tools, system } = offeredIn(answer);
+    // The extension also carries the write tools, so it is always on.
+    expect(tools).toStrictEqual(
+      expect.arrayContaining(["skill", "skill_save", "skill_delete"])
+    );
+    expect(system).not.toContain("available_skills");
   });
 
   it("loads a skill and then one of its files with the skill tool", async () => {
