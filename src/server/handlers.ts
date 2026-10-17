@@ -31,12 +31,11 @@ import {
   ArtifactNotFound,
   ConversationArchived,
   EmptyMessage,
-  InvalidSkill,
   SandboxUnavailable,
+  SkillNotFound,
   WorkspaceFileNotFound,
 } from "../errors.ts";
-import { decodeSkill, SKILL_FILE } from "../skills/format.ts";
-import { isSkillFile, SkillSource } from "../skills/source.ts";
+import { Skills } from "../skills/skills.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";
@@ -591,43 +590,48 @@ const SkillsHandlers = HttpApiBuilder.group(
   Api,
   "skills",
   Effect.fnUntraced(function* (handlers) {
-    const source = yield* SkillSource;
-    return handlers.handle("save", ({ params, payload }) =>
-      Effect.gen(function* () {
-        const fileNames = Object.keys(payload.files);
-        if (fileNames.length === 0) {
-          return yield* new InvalidSkill({ message: "files is empty" });
-        }
-        for (const file of fileNames) {
-          if (!isSkillFile(file)) {
-            return yield* new InvalidSkill({
-              message: `${file} is not a valid skill file path`,
-            });
-          }
-        }
-        const text = payload.files[SKILL_FILE];
-        if (text === undefined) {
-          return yield* new InvalidSkill({
-            message: `files must include ${SKILL_FILE}`,
-          });
-        }
-        const skill = yield* decodeSkill(
-          { id: params.name, files: fileNames },
-          text
-        );
-        if (skill.name !== params.name) {
-          return yield* new InvalidSkill({
-            message: `${SKILL_FILE} names ${skill.name}, not ${params.name}`,
-          });
-        }
-        yield* source.put(params.name, payload.files);
-        return {
+    const skills = yield* Skills;
+    const utf8 = new TextDecoder("utf-8", { fatal: true });
+    return handlers
+      .handle("save", ({ params, payload }) =>
+        Effect.map(skills.save(params.name, payload.files), ({ skill }) => ({
           name: skill.name,
           description: skill.description,
           files: [...skill.files],
-        };
-      }).pipe(Effect.catchTag("SkillSourceError", Effect.die))
-    );
+        })).pipe(Effect.catchTag("SkillSourceError", Effect.die))
+      )
+      .handle("get", ({ params }) =>
+        Effect.gen(function* () {
+          const folder = yield* skills.folder(params.name);
+          if (folder === undefined) {
+            const catalog = yield* skills.catalog;
+            return yield* new SkillNotFound({
+              name: params.name,
+              available: catalog.skills.map((skill) => skill.name),
+            });
+          }
+          const files: Record<string, string> = {};
+          const binaryFiles: string[] = [];
+          for (const [file, bytes] of Object.entries(folder.files)) {
+            try {
+              files[file] = utf8.decode(bytes);
+            } catch {
+              binaryFiles.push(file);
+            }
+          }
+          return {
+            name: params.name,
+            origin: folder.origin,
+            files,
+            binaryFiles: binaryFiles.toSorted(),
+          };
+        }).pipe(Effect.catchTag("SkillSourceError", Effect.die))
+      )
+      .handle("remove", ({ params }) =>
+        skills
+          .remove(params.name)
+          .pipe(Effect.asVoid, Effect.catchTag("SkillSourceError", Effect.die))
+      );
   })
 );
 

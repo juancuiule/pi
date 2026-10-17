@@ -189,8 +189,8 @@ const ServerLive = HttpRouter.serve(
 ).pipe(
   Layer.provide(ConversationsLive),
   Layer.provide(AgentsLive),
-  // The skills group writes through the same source the Skills service reads.
-  Layer.provide(SkillSourceLive),
+  // The skills group reads and writes through the same Skills the Agents layer uses.
+  Layer.provide(SkillsLive),
   Layer.provide(NodeHttpServerLayer),
   Layer.provide(UploadLimits),
   Layer.provide(LangfuseLayer)

@@ -203,6 +203,8 @@ export interface Capabilities {
     readonly description: string;
     /** False for skills with `disable-model-invocation`: only `/skill:<name>` loads them. */
     readonly modelInvocable: boolean;
+    /** Which namespace the folder's listed copy comes from. */
+    readonly origin: "builtin" | "org" | "overridden";
     /** Every file in the skill's folder, `SKILL.md` first. */
     readonly files: readonly string[];
     /** The SKILL.md body after its frontmatter, for the console's skills page. */
@@ -2127,6 +2129,7 @@ export class Agents extends Context.Service<
                       name: skill.name,
                       description: skill.description,
                       modelInvocable: !skill.disableModelInvocation,
+                      origin: skill.origin ?? "builtin",
                       files: skill.files,
                       body,
                     })),

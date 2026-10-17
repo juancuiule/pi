@@ -34,7 +34,9 @@ const serverWith = (
     Agents | Capacity | Attachments | Artifacts | TrustedDomains | Workspaces,
     AgentError
   >,
-  skillSource: Layer.Layer<SkillSource> = SkillSource.memory({})
+  // One Skills serves both the API group and the agents — the provide overrides the agents' own, like
+  // server.ts's shared SkillsLive.
+  skills: Layer.Layer<Skills> = Skills.none
 ) =>
   HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1" }), {
     disableListenLog: true,
@@ -47,7 +49,7 @@ const serverWith = (
       })
     ),
     Layer.provide(agents),
-    Layer.provide(skillSource),
+    Layer.provide(skills),
     Layer.provideMerge(NodeHttpServer.layerTest)
   );
 
@@ -103,7 +105,8 @@ describe("HTTP API", () => {
             fauxAgents([fauxAssistantMessage([fauxText("ok")])], {
               skills,
               mcp: [echo],
-            }).layer
+            }).layer,
+            skills
           )
         )
       )
@@ -113,6 +116,7 @@ describe("HTTP API", () => {
         name: "convert",
         description: "Convert units.",
         modelInvocable: true,
+        origin: "builtin",
         files: ["SKILL.md", "references/factors.md"],
         body: "\n# Convert\n\nDo the thing.\n",
       },
@@ -205,12 +209,13 @@ describe("HTTP API", () => {
   });
 
   it("expands /skill: on create and refuses an unknown skill on send", async () => {
+    const skills = Skills.directory("skills");
     const agents = fauxAgents(
       [
         fauxAssistantMessage([fauxText("one")]),
         fauxAssistantMessage([fauxText("two")]),
       ],
-      { skills: Skills.directory("skills") }
+      { skills }
     );
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -243,7 +248,7 @@ describe("HTTP API", () => {
           })
         );
         return { created, unknown, events: JSON.stringify([...events]) };
-      }).pipe(Effect.provide(serverWith(agents.layer)))
+      }).pipe(Effect.provide(serverWith(agents.layer, skills)))
     );
     expect(result.created.title).toBe("/skill:unit-conversion 3 mi to km");
     expect(result.events).toContain('<skill name=\\"unit-conversion\\">');
@@ -336,7 +341,12 @@ describe("HTTP API", () => {
           traversal,
         };
       }).pipe(
-        Effect.provide(serverWith(agents.layer, SkillSource.memory(files)))
+        Effect.provide(
+          serverWith(
+            agents.layer,
+            Skills.layer.pipe(Layer.provide(SkillSource.memory(files)))
+          )
+        )
       )
     );
 
@@ -358,6 +368,88 @@ describe("HTTP API", () => {
       expect(Exit.isFailure(rejected)).toBeTruthy();
       expect(JSON.stringify(rejected)).toContain("InvalidSkill");
     }
+  });
+
+  it("reads, reports provenance of, and deletes skills through GET and DELETE /api/skills/:name", async () => {
+    const files: Record<string, string | Uint8Array> = {
+      "builtin/convert/SKILL.md":
+        "---\nname: convert\ndescription: Builtin convert.\n---\n\nBuiltin.\n",
+      "org/uploaded/SKILL.md":
+        "---\nname: uploaded\ndescription: Uploaded.\n---\n\nDo it.\n",
+      "org/uploaded/icon.bin": Uint8Array.of(0, 159, 146, 150),
+    };
+    const skillsLayer = Skills.layer.pipe(
+      Layer.provide(SkillSource.memory(files))
+    );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const uploaded = yield* client.skills.get({
+          params: { name: "uploaded" },
+        });
+        const missing = yield* Effect.flip(
+          client.skills.get({ params: { name: "nope" } })
+        );
+        // Shadow convert, then read and delete it: the builtin shows again.
+        yield* client.skills.save({
+          params: { name: "convert" },
+          payload: {
+            files: {
+              "SKILL.md":
+                "---\nname: convert\ndescription: Org convert.\n---\n\nOrg.\n",
+            },
+          },
+        });
+        const shadowed = yield* client.skills.get({
+          params: { name: "convert" },
+        });
+        yield* client.skills.remove({ params: { name: "uploaded" } });
+        yield* client.skills.remove({ params: { name: "convert" } });
+        // Builtin-only and unknown names are idempotent no-ops.
+        yield* client.skills.remove({ params: { name: "convert" } });
+        yield* client.skills.remove({ params: { name: "nope" } });
+        const reverted = yield* client.skills.get({
+          params: { name: "convert" },
+        });
+        const capabilities = yield* client.info.capabilities();
+        const origins = capabilities.skills.map((s) => [s.name, s.origin]);
+        // PATCH accepts the refresh directive.
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hi" },
+        });
+        yield* client.conversations.configure({
+          params: { id: created.id },
+          payload: { refreshSkills: "all" },
+        });
+        return { uploaded, missing, shadowed, reverted, origins };
+      }).pipe(
+        Effect.provide(
+          serverWith(
+            fauxAgents([fauxAssistantMessage([fauxText("ok")])], {
+              skills: skillsLayer,
+            }).layer,
+            skillsLayer
+          )
+        )
+      )
+    );
+
+    expect(result.uploaded).toStrictEqual({
+      name: "uploaded",
+      origin: "org",
+      files: {
+        "SKILL.md":
+          "---\nname: uploaded\ndescription: Uploaded.\n---\n\nDo it.\n",
+      },
+      binaryFiles: ["icon.bin"],
+    });
+    expect(result.missing).toMatchObject({
+      _tag: "SkillNotFound",
+      name: "nope",
+    });
+    expect(result.shadowed.origin).toBe("overridden");
+    expect(result.reverted.origin).toBe("builtin");
+    expect(result.origins).toStrictEqual([["convert", "builtin"]]);
   });
 
   it("rejects a skill name that is not a valid skill name", async () => {
