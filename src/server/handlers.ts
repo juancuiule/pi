@@ -3,25 +3,36 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type {
   ConversationId,
   SubmissionRecord,
 } from "@earendil-works/pi-durable";
+import type {
+  ExecutionEnv,
+  FileError,
+  FileErrorCode,
+  Result,
+} from "@earendil-works/pi-durable/env";
 import type { Schema } from "effect";
 import { Effect, Layer, Stream } from "effect";
 import { HttpServerResponse } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 
 import { Agents } from "../agents/agents.ts";
+import type { AgentError } from "../agents/agents.ts";
 import { Artifacts } from "../artifacts/artifacts.ts";
 import type { ArtifactView } from "../artifacts/artifacts.ts";
 import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments, infoOf } from "../attachments/attachments.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
+import type { ConversationNotFound } from "../errors.ts";
 import {
   ArtifactNotFound,
   ConversationArchived,
   EmptyMessage,
+  SandboxUnavailable,
+  WorkspaceFileNotFound,
 } from "../errors.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
@@ -372,6 +383,207 @@ const ArtifactsHandlers = HttpApiBuilder.group(
   })
 );
 
+/** The bytes one file view serves; a bigger file answers its first chunk with `truncated`. */
+const FILE_TEXT_MAX = 256 * 1024;
+/** The entries one directory listing serves at most. */
+const FILE_LIST_MAX = 500;
+/** The paths one tree listing serves at most; a bigger Workspace answers its first part with `truncated`. */
+const FILE_TREE_MAX = 4000;
+
+/** Directories first, then names — the Files tab's order. */
+const byKindThenName = (
+  a: { readonly name: string; readonly kind: string },
+  b: { readonly name: string; readonly kind: string }
+) =>
+  Number(b.kind === "directory") - Number(a.kind === "directory") ||
+  a.name.localeCompare(b.name);
+
+/** FileError codes that mean "nothing readable at this path"; any other failure is a defect. */
+const FILE_GONE: ReadonlySet<FileErrorCode> = new Set([
+  "not_found",
+  "not_directory",
+  "is_directory",
+  "permission_denied",
+  "invalid",
+]);
+
+/**
+ * One FileSystem call: the promise rejecting is a defect (the env broke), an `ok` result the value, and any
+ * `FILE_GONE` error `WorkspaceFileNotFound` — to the console they are all "nothing at this path".
+ */
+const fileCall = <A>(
+  requested: string,
+  result: Promise<Result<A, FileError>>
+) =>
+  Effect.promise(() => result).pipe(
+    Effect.flatMap((r) => {
+      if (r.ok) {
+        return Effect.succeed(r.value);
+      }
+      if (FILE_GONE.has(r.error.code)) {
+        return Effect.fail(new WorkspaceFileNotFound({ path: requested }));
+      }
+      return Effect.die(r.error);
+    })
+  );
+
+const context = BACKGROUND_CONTEXT;
+
+/** `asked` resolved inside the env's workspace root; `..` or a symlink escaping it reads as not found. */
+const confined = (
+  env: ExecutionEnv,
+  root: string,
+  asked: string
+): Effect.Effect<string, WorkspaceFileNotFound> =>
+  fileCall(asked, env.canonicalPath(asked, context)).pipe(
+    Effect.flatMap((resolved) =>
+      resolved === root || resolved.startsWith(`${root}/`)
+        ? Effect.succeed(resolved)
+        : Effect.fail(new WorkspaceFileNotFound({ path: asked }))
+    )
+  );
+
+const rootOf = (
+  env: ExecutionEnv
+): Effect.Effect<string, WorkspaceFileNotFound> =>
+  fileCall("/", env.canonicalPath(env.cwd, context));
+
+const FilesHandlers = HttpApiBuilder.group(
+  Api,
+  "files",
+  Effect.fnUntraced(function* (handlers) {
+    const conversations = yield* Conversations;
+    const agents = yield* Agents;
+
+    /**
+     * The Seat's Sandbox env, which Workspace files are read through. A paused Conversation has none
+     * (`SandboxUnavailable`; its files wait for the next Seat) and neither does a Level `none` one;
+     * an unknown id is `ConversationNotFound`.
+     */
+    const envOf = (
+      id: number
+    ): Effect.Effect<
+      ExecutionEnv,
+      AgentError | ConversationNotFound | SandboxUnavailable
+    > =>
+      Effect.gen(function* () {
+        const seat = yield* conversations.seat(id);
+        if (seat === undefined) {
+          yield* agents.get(id as ConversationId);
+          return yield* new SandboxUnavailable({ id });
+        }
+        return yield* seat.env;
+      });
+
+    return handlers
+      .handle("list", ({ params, query }) =>
+        Effect.gen(function* () {
+          const env = yield* envOf(params.id);
+          const root = yield* rootOf(env);
+          const asked = query.path ?? "";
+          const resolved = yield* confined(env, root, asked || ".");
+          const info = yield* fileCall(asked, env.fileInfo(resolved, context));
+          if (info.kind !== "directory") {
+            return yield* new WorkspaceFileNotFound({ path: asked });
+          }
+          const entries = yield* fileCall(
+            asked,
+            env.listDir(resolved, context)
+          );
+          const prefix =
+            resolved === root ? "" : `${resolved.slice(root.length + 1)}/`;
+          const sorted = entries.toSorted(byKindThenName);
+          return {
+            entries: sorted.slice(0, FILE_LIST_MAX).map((entry) => ({
+              name: entry.name,
+              path: `${prefix}${entry.name}`,
+              kind: entry.kind,
+              size: entry.size,
+              mtimeMs: entry.mtimeMs,
+            })),
+            truncated: entries.length > FILE_LIST_MAX,
+          };
+        }).pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("content", ({ params, query }) =>
+        Effect.gen(function* () {
+          const env = yield* envOf(params.id);
+          const root = yield* rootOf(env);
+          const resolved = yield* confined(env, root, query.path);
+          // A directory fails here, before any read.
+          const reader = yield* fileCall(
+            query.path,
+            env.openBinaryReader(resolved, {}, context)
+          );
+          const info = yield* fileCall(query.path, reader.info(context));
+          const bytes = yield* fileCall(
+            query.path,
+            reader.read(0, Math.min(info.size, FILE_TEXT_MAX), context)
+          ).pipe(Effect.ensuring(Effect.promise(() => reader.close(context))));
+          const truncated = info.size > bytes.length;
+          // `stream` keeps a trailing multibyte sequence cut by the cap from failing the decode.
+          const text = bytes.includes(0)
+            ? undefined
+            : ((() => {
+                try {
+                  return new TextDecoder("utf-8", { fatal: true }).decode(
+                    bytes,
+                    { stream: truncated }
+                  );
+                } catch {
+                  return null;
+                }
+              })() ?? undefined);
+          const shown = resolved.slice(root.length + 1);
+          return text === undefined
+            ? { path: shown, size: info.size, truncated, binary: true }
+            : {
+                path: shown,
+                size: info.size,
+                truncated,
+                binary: false,
+                text,
+              };
+        }).pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("tree", ({ params }) =>
+        Effect.gen(function* () {
+          const env = yield* envOf(params.id);
+          const root = yield* rootOf(env);
+          const paths: string[] = [];
+          let hit = false;
+          // Depth-first, directories first at each level — the order the console's tree renders.
+          // Symlinked directories are not descended: a link could cycle or point outside.
+          const walk: (
+            dir: string
+          ) => Effect.Effect<void, WorkspaceFileNotFound> = Effect.fnUntraced(
+            function* (dir: string) {
+              const entries = yield* fileCall(
+                dir === "" ? "/" : dir,
+                env.listDir(dir === "" ? root : `${root}/${dir}`, context)
+              );
+              for (const entry of entries.toSorted(byKindThenName)) {
+                if (paths.length >= FILE_TREE_MAX) {
+                  hit = true;
+                  return;
+                }
+                const rel = dir === "" ? entry.name : `${dir}/${entry.name}`;
+                if (entry.kind === "directory") {
+                  paths.push(`${rel}/`);
+                  yield* walk(rel);
+                } else {
+                  paths.push(rel);
+                }
+              }
+            }
+          );
+          yield* walk("");
+          return { paths, truncated: hit };
+        }).pipe(Effect.catchTag("AgentError", Effect.die))
+      );
+  })
+);
+
 const TrustedDomainsHandlers = HttpApiBuilder.group(
   Api,
   "trustedDomains",
@@ -415,6 +627,7 @@ export const apiLayer = (options: { readonly apiUrl: string }) =>
         AttachmentsHandlers,
         ArtifactsHandlers,
         TrustedDomainsHandlers,
+        FilesHandlers,
         infoHandlers(options.apiUrl)
       )
     ),

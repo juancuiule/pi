@@ -7,10 +7,11 @@ import { useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import type { ConversationState } from "@/lib/conversation-state";
 
+import { FilesBrowser } from "./files-browser";
 import { ShellTerminal } from "./shell-terminal";
 import { TerminalPanel } from "./terminal-panel";
 
-type PanelTab = "shell" | "agent";
+type PanelTab = "shell" | "agent" | "files";
 
 const PanelTabs = ({
   tab,
@@ -24,6 +25,7 @@ const PanelTabs = ({
       [
         ["shell", "Shell"],
         ["agent", "Agent"],
+        ["files", "Files"],
       ] as const
     ).map(([value, label]) => (
       <button
@@ -63,9 +65,13 @@ export const SandboxPanel = ({
 }) => {
   const [tab, setTab] = useState<PanelTab>(live ? "shell" : "agent");
   const [shellSeen, setShellSeen] = useState(tab === "shell");
+  const [filesSeen, setFilesSeen] = useState(tab === "files");
   const select = (next: PanelTab) => {
     if (next === "shell") {
       setShellSeen(true);
+    }
+    if (next === "files") {
+      setFilesSeen(true);
     }
     setTab(next);
   };
@@ -94,6 +100,13 @@ export const SandboxPanel = ({
         <div className={cn("absolute inset-0", tab !== "agent" && "invisible")}>
           <TerminalPanel state={state} resuming={resuming} />
         </div>
+        {filesSeen ? (
+          <div
+            className={cn("absolute inset-0", tab !== "files" && "invisible")}
+          >
+            <FilesBrowser id={id} live={live} />
+          </div>
+        ) : null}
       </div>
     </div>
   );
