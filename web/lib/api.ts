@@ -50,6 +50,15 @@ const uploadError = (error: object & { _tag: unknown }): string | undefined => {
   }
 };
 
+/** Messages for the failures that read the same whatever the error carries. */
+const plainError: Record<string, string> = {
+  ConversationNotFound: "This conversation no longer exists.",
+  ConversationArchived:
+    "This conversation is archived. Unarchive it to continue.",
+  WorkspaceFileNotFound: "The file isn't in the workspace (anymore).",
+  SandboxUnavailable: "The conversation's sandbox isn't running.",
+};
+
 /** A message for a failure from the API, for toasts and inline errors. */
 export const apiError = (error: unknown): string => {
   if (typeof error === "object" && error !== null && "_tag" in error) {
@@ -76,14 +85,12 @@ export const apiError = (error: unknown): string => {
           ? String(error.reason)
           : "That change isn't allowed.";
       }
-      case "ConversationNotFound": {
-        return "This conversation no longer exists.";
-      }
-      case "ConversationArchived": {
-        return "This conversation is archived. Unarchive it to continue.";
-      }
       default: {
-        return uploadError(error) ?? String(error._tag);
+        return (
+          uploadError(error) ??
+          plainError[String(error._tag)] ??
+          String(error._tag)
+        );
       }
     }
   }
