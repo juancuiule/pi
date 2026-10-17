@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
 import { Artifacts } from "../artifacts/artifacts.ts";
+import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import { Skills, SkillSource } from "../skills/skills.ts";
@@ -25,7 +26,10 @@ import { echoModel } from "./faux.ts";
 import { apiLayer } from "./handlers.ts";
 
 const serverWith = (
-  agents: Layer.Layer<Agents | Capacity | Attachments | Artifacts, AgentError>
+  agents: Layer.Layer<
+    Agents | Capacity | Attachments | Artifacts | TrustedDomains,
+    AgentError
+  >
 ) =>
   HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1" }), {
     disableListenLog: true,
@@ -551,6 +555,7 @@ describe("HTTP API", () => {
       Layer.provide(Skills.none),
       Layer.provideMerge(Attachments.temporary()),
       Layer.provideMerge(Artifacts.temporary()),
+      Layer.provideMerge(TrustedDomains.temporary()),
       Layer.provideMerge(Capacity.layer({ seats: 1, shells: 1, desktops: 1 }))
     );
 
@@ -763,7 +768,7 @@ describe("HTTP API", () => {
     expect(result).toMatchObject({
       render: {
         status: 200,
-        csp: "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'",
+        csp: "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob: 'self'; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'",
         type: expect.stringContaining("text/html"),
         nosniff: "nosniff",
         body: expect.stringContaining("/api/artifact-libs/mermaid.min.js"),
@@ -781,6 +786,73 @@ describe("HTTP API", () => {
     });
     expect(result.lib.body.length).toBeGreaterThan(100_000);
     expect(result.view.versions).toHaveLength(1);
+  });
+
+  it("edits the trusted domains from the API and puts them in a page's CSP", async () => {
+    const agents = fauxAgents([
+      // First refused: the image's host is not trusted yet.
+      page("call-1", "Results", '<img src="https://cdn.example.com/a.png">'),
+      echoToolResult,
+      // Same page again after the domain was trusted — accepted this time.
+      page("call-2", "Results", '<img src="https://cdn.example.com/a.png">'),
+      echoToolResult,
+    ]);
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const http = yield* HttpClient.HttpClient;
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "a page" },
+        });
+        yield* waitUntil(
+          Effect.sync(() => agents.faux.getPendingResponseCount() === 2)
+        );
+        const refused = yield* client.artifacts.list({
+          query: { conversation: created.id },
+        });
+        const added = yield* client.trustedDomains.add({
+          payload: { domain: "https://cdn.example.com/a.png" },
+        });
+        const invalid = yield* Effect.flip(
+          client.trustedDomains.add({ payload: { domain: "not a domain!" } })
+        );
+        yield* client.conversations.send({
+          params: { id: created.id },
+          payload: { prompt: "try again" },
+        });
+        const listArtifacts = () =>
+          client.artifacts.list({ query: { conversation: created.id } });
+        yield* waitUntil(
+          Effect.map(listArtifacts(), (views) => views.length > 0)
+        );
+        const [artifact] = yield* listArtifacts();
+        if (artifact === undefined) {
+          return yield* Effect.die(new Error("no artifact created"));
+        }
+        const cspOf = () =>
+          Effect.map(
+            http.get(
+              `/api/artifacts/${artifact.id}/render?conversation=${created.id}`
+            ),
+            (render) => render.headers["content-security-policy"]
+          );
+        const csp = yield* cspOf();
+        const list = yield* client.trustedDomains.list();
+        yield* client.trustedDomains.remove({
+          params: { domain: added.domain },
+        });
+        const gone = yield* cspOf();
+        return { refused, added, invalid, csp, list, gone };
+      }).pipe(Effect.provide(serverWith(agents.layer)))
+    );
+    expect(result).toMatchObject({
+      refused: [],
+      added: { domain: "cdn.example.com" },
+      list: ["cdn.example.com"],
+    });
+    expect(result.invalid).toMatchObject({ _tag: "InvalidDomain" });
+    expect(result.csp).toContain("img-src data: blob: 'self' cdn.example.com");
+    expect(result.gone).not.toContain("cdn.example.com");
   });
 
   it("lists every conversation's artifacts without a scope, each carrying its conversation", async () => {

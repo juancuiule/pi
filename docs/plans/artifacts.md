@@ -18,10 +18,12 @@ artifact_update(id, html | edits, title?) → a new version (edits are exact fin
 
 ## Rendering
 
-- `GET /api/artifacts/:id/render?v=` returns the version's HTML with the sandboxing headers set on the response itself (like the attachment `original` handler, not a middleware): `content-security-policy: sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'`, plus `nosniff` and `no-store`.
-- Vetted libraries come from `GET /api/artifact-libs/<file>`, an allowlist served from `node_modules` (Chart.js first, pinned in package.json); no CDNs — a page fetches nothing from the internet.
+- `GET /api/artifacts/:id/render?v=` returns the version's HTML with the sandboxing headers set on the response itself (like the attachment `original` handler, not a middleware): `content-security-policy: sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob: 'self' <trusted domains>; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'`, plus `nosniff` and `no-store`. `img-src` gains `'self'` (attachment thumbnails and PDF pages are same-origin images) and the person's Trusted domains.
+- Vetted libraries come from `GET /api/artifact-libs/<file>`, an allowlist served from `node_modules` (Chart.js first, pinned in package.json); no CDNs — a page fetches nothing from the internet except images from Trusted domains.
 - The console embeds the page in `<iframe sandbox="allow-scripts">` and keeps local-harness's navigation guard: a page that navigates its own frame is reloaded once, then hidden (frame-src 'self' on the console's pages, added in `web/next.config.ts`, makes the browser refuse off-origin navigations; `/desktop-frame` carries its own loopback-scoped `frame-src` for the sandbox's noVNC page).
-- An image that lives at a URL is not a page's job: `![alt](url)` in an assistant message renders it in the chat.
+- `artifact_create`/`artifact_update` refuse a page that references anything the CSP would block (`src/artifacts/refs.ts` parses the HTML: images may load same-origin, `data:`/`blob:` or from a Trusted domain; scripts, styles, frames, media, forms and non-http(s) URLs never). A silent console error becomes an error the model reads — naming the untrusted host, so it can fix the page or ask the person to trust the domain.
+- An image that lives at an untrusted URL is not a page's job: `![alt](url)` in an assistant message renders it in the chat.
+- **Trusted domains** (`src/artifacts/domains.ts`): a `trusted_domains` table in `EFFECT_PI_DB`, edited in the console under Settings → Trusted domains (`GET/POST/DELETE /api/trusted-domains`). Entries are normalized hosts — `cdn.example.com`, `*.example.com` for subdomains, either with `:port`; a pasted URL reduces to its host. The render endpoint reads the list per request and the extension's section renders it into the prompt, so a domain added mid-conversation is in effect on the next call.
 - `GET /api/artifacts/:id/source?v=` returns `{ version, html }` for the panel's code tab; `GET /api/artifacts/:id` the view (title, versions); `GET /api/artifacts?conversation=` lists a conversation's; `DELETE /api/artifacts/:id` removes one.
 
 ## Console
@@ -32,9 +34,9 @@ artifact_update(id, html | edits, title?) → a new version (edits are exact fin
 
 ## Modules
 
-- **`src/artifacts/`**: `store.ts` (the two tables on `DatabaseSync`, `local` and in-memory variants), `artifacts.ts` (the `Artifacts` service — `create`, `update`, `view`, `html`, `list`, `remove` — and the `artifacts` extension with its prompt section and the two tools, `Effect.runPromise` against the service like the attachment tools).
-- **`src/server/`**: an `artifacts` group in `api.ts` (`ArtifactNotFound` at 404 in `errors.ts`), handlers in `handlers.ts`; `artifact-libs` there too.
-- **`server.ts`**: `Artifacts.local({ database: config.paths.db })`, provided to `Agents.layer` and the API; `Artifacts.temporary()` in `fauxAgents`.
+- **`src/artifacts/`**: `store.ts` (the two tables on `DatabaseSync`, `local` and in-memory variants), `artifacts.ts` (the `Artifacts` service — `create`, `update`, `view`, `html`, `list`, `remove` — and the `artifacts` extension with its prompt section and the two tools, `Effect.runPromise` against the service like the attachment tools), `refs.ts` (the page's external references, checked at write time), `domains.ts` (the `TrustedDomains` service and host matching).
+- **`src/server/`**: an `artifacts` group in `api.ts` (`ArtifactNotFound` at 404 in `errors.ts`), a `trustedDomains` group (`InvalidDomain` at 400), handlers in `handlers.ts`; `artifact-libs` there too.
+- **`server.ts`**: `TrustedDomains.local({ database: config.paths.db })`, and `Artifacts.local({ database, trusted })` built over it, provided to `Agents.layer` and the API; `Artifacts.temporary()` + `TrustedDomains.memory()` in `fauxAgents` (`trustedDomains` option).
 - **`src/agents/agents.ts`**: install `artifactsExtension(artifacts)` in the registry, in `installed`, in `everyLevel`, and probably `locked` like attachments.
 - **`src/tracing.ts`**: `call.arguments` is traced verbatim — add `artifact_create`/`artifact_update` to the size-redacted set like attachment text, gated by the same flag (or a `TRACE_ARTIFACT_HTML`).
 

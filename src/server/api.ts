@@ -18,6 +18,7 @@ import {
   ConversationArchived,
   ConversationNotFound,
   EmptyMessage,
+  InvalidDomain,
   InvalidSetting,
   InvalidUpgrade,
   SkillNotFound,
@@ -49,6 +50,7 @@ export {
   ConversationArchived,
   ConversationNotFound,
   EmptyMessage,
+  InvalidDomain,
   InvalidSetting,
   InvalidUpgrade,
   SkillNotFound,
@@ -544,6 +546,28 @@ const ArtifactGroup = HttpApiGroup.make("artifacts").add(
   })
 );
 
+const BadDomain = InvalidDomain.pipe(HttpApiSchema.status(400));
+
+// The domains an artifact page may load images from, edited under Settings → Trusted domains; the render endpoint's
+// img-src lists them, and create/update refuse a page whose other references fetch anything.
+const TrustedDomainGroup = HttpApiGroup.make("trustedDomains").add(
+  HttpApiEndpoint.get("list", "/trusted-domains", {
+    success: Schema.Array(Schema.String),
+  }),
+  HttpApiEndpoint.post("add", "/trusted-domains", {
+    payload: Schema.Struct({ domain: Schema.String }),
+    success: Schema.Struct({ domain: Schema.String }).pipe(
+      HttpApiSchema.status(201)
+    ),
+    error: [BadDomain],
+  }),
+  // Idempotent: removing a domain that is not trusted is a no-op.
+  HttpApiEndpoint.delete("remove", "/trusted-domains/:domain", {
+    params: { domain: Schema.String },
+    success: HttpApiSchema.NoContent,
+  })
+);
+
 const InfoGroup = HttpApiGroup.make("info").add(
   HttpApiEndpoint.get("get", "/info", {
     success: Schema.Struct({
@@ -565,5 +589,6 @@ export const Api = HttpApi.make("effect-pi")
   .add(ConversationGroup)
   .add(AttachmentGroup)
   .add(ArtifactGroup)
+  .add(TrustedDomainGroup)
   .add(InfoGroup)
   .prefix("/api");

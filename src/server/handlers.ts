@@ -15,6 +15,7 @@ import { HttpApiBuilder } from "effect/http-api";
 import { Agents } from "../agents/agents.ts";
 import { Artifacts } from "../artifacts/artifacts.ts";
 import type { ArtifactView } from "../artifacts/artifacts.ts";
+import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments, infoOf } from "../attachments/attachments.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
 import {
@@ -277,9 +278,12 @@ const AttachmentsHandlers = HttpApiBuilder.group(
   })
 );
 
-/** An artifact page's sandbox: scripts only inline or from this origin's artifact-libs, nothing fetched. */
-const ARTIFACT_CSP =
-  "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'";
+/**
+ * An artifact page's sandbox: scripts only inline or from this origin's artifact-libs, nothing fetched — but images
+ * may also come from this origin (attachment thumbnails, PDF pages) and the person's Trusted domains.
+ */
+const artifactCsp = (domains: readonly string[]) =>
+  `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline'; img-src data: blob: 'self'${domains.map((domain) => ` ${domain}`).join("")}; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'`;
 
 /**
  * The JavaScript a page may load, by served name: each resolves to the file of that name in its package's dist
@@ -314,6 +318,7 @@ const ArtifactsHandlers = HttpApiBuilder.group(
   "artifacts",
   Effect.fnUntraced(function* (handlers) {
     const artifacts = yield* Artifacts;
+    const domains = yield* TrustedDomains;
     return handlers
       .handle("list", ({ query }) =>
         (query.conversation === undefined
@@ -327,17 +332,19 @@ const ArtifactsHandlers = HttpApiBuilder.group(
           .pipe(Effect.map(artifactInfoOf))
       )
       .handle("render", ({ params, query }) =>
-        artifacts.html(query.conversation, params.id, query.v).pipe(
-          Effect.map(({ html }) =>
-            HttpServerResponse.text(html, {
-              contentType: "text/html",
-              headers: {
-                "content-security-policy": ARTIFACT_CSP,
-                "x-content-type-options": "nosniff",
-                "cache-control": "no-store",
-              },
-            })
-          )
+        Effect.flatMap(
+          artifacts.html(query.conversation, params.id, query.v),
+          ({ html }) =>
+            Effect.map(domains.list(), (trusted) =>
+              HttpServerResponse.text(html, {
+                contentType: "text/html",
+                headers: {
+                  "content-security-policy": artifactCsp(trusted),
+                  "x-content-type-options": "nosniff",
+                  "cache-control": "no-store",
+                },
+              })
+            )
         )
       )
       .handle("source", ({ params, query }) =>
@@ -362,6 +369,22 @@ const ArtifactsHandlers = HttpApiBuilder.group(
               )
             );
       });
+  })
+);
+
+const TrustedDomainsHandlers = HttpApiBuilder.group(
+  Api,
+  "trustedDomains",
+  Effect.fnUntraced(function* (handlers) {
+    const domains = yield* TrustedDomains;
+    return handlers
+      .handle("list", () => domains.list())
+      .handle("add", ({ payload }) =>
+        Effect.map(domains.add(payload.domain), (domain) => ({ domain }))
+      )
+      .handle("remove", ({ params }) =>
+        Effect.asVoid(domains.remove(params.domain))
+      );
   })
 );
 
@@ -391,6 +414,7 @@ export const apiLayer = (options: { readonly apiUrl: string }) =>
         ConversationsHandlers,
         AttachmentsHandlers,
         ArtifactsHandlers,
+        TrustedDomainsHandlers,
         infoHandlers(options.apiUrl)
       )
     ),

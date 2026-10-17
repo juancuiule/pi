@@ -15,6 +15,7 @@ import { HttpRouter, Multipart } from "effect/http";
 import { mcpServers } from "./mcp.config.ts";
 import { Agents } from "./src/agents/agents.ts";
 import { Artifacts } from "./src/artifacts/artifacts.ts";
+import { TrustedDomains } from "./src/artifacts/domains.ts";
 import { Attachments } from "./src/attachments/attachments.ts";
 import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
@@ -45,7 +46,18 @@ const AttachmentsLive = Attachments.local({
   limits: config.attachments,
 });
 
-const ArtifactsLive = Artifacts.local({ database: config.paths.db });
+const TrustedDomainsLive = TrustedDomains.local({
+  database: config.paths.db,
+});
+
+// Artifacts checks each new version's references against the trusted list, live: a domain added in Settings is in
+// effect on the next call.
+const ArtifactsLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const trusted = yield* TrustedDomains;
+    return Artifacts.local({ database: config.paths.db, trusted });
+  })
+).pipe(Layer.provideMerge(TrustedDomainsLive));
 
 // One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
 const CapacityLive = Capacity.layer(config.capacity);

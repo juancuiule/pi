@@ -49,6 +49,35 @@ export const useCapabilities = () =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
+const TRUSTED_DOMAINS = ["trusted-domains"] as const;
+
+/** The domains an artifact page may load images from, edited under Settings → Trusted domains. */
+export const useTrustedDomains = () =>
+  useQuery({
+    queryKey: TRUSTED_DOMAINS,
+    queryFn: () => runApi((c) => c.trustedDomains.list()),
+  });
+
+export const useAddDomain = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (domain: string) =>
+      runApi((c) => c.trustedDomains.add({ payload: { domain } })),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: TRUSTED_DOMAINS }),
+  });
+};
+
+export const useRemoveDomain = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (domain: string) =>
+      runApi((c) => c.trustedDomains.remove({ params: { domain } })),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: TRUSTED_DOMAINS }),
+  });
+};
+
 /** What one conversation runs with now; fetched while `enabled`, e.g. while the Capabilities sheet is open. */
 export const useConversationAgent = (
   id: number | undefined,

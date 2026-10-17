@@ -14,9 +14,10 @@ import {
 } from "../testing/faux.ts";
 import { ARTIFACT_MAX_EDITS, Artifacts } from "./artifacts.ts";
 
-/** Run `program` against a temporary Artifacts. */
+/** Run `program` against a temporary Artifacts; `trusted` presets its image domains. */
 const withArtifacts = <A, E>(
-  program: (artifacts: (typeof Artifacts)["Service"]) => Effect.Effect<A, E>
+  program: (artifacts: (typeof Artifacts)["Service"]) => Effect.Effect<A, E>,
+  trusted?: readonly string[]
 ) =>
   Effect.runPromise(
     Effect.scoped(
@@ -24,7 +25,7 @@ const withArtifacts = <A, E>(
         const artifacts = yield* Artifacts;
         return yield* program(artifacts);
       })
-    ).pipe(Effect.provide(Artifacts.temporary()))
+    ).pipe(Effect.provide(Artifacts.temporary(trusted)))
   );
 
 const failure = (exit: Exit.Exit<unknown, unknown>) =>
@@ -167,6 +168,71 @@ describe("artifacts", () => {
     expect(failure(result.create)).toContain("300 KB");
     expect(failure(result.update)).toContain("300 KB");
     expect(result.view.versions).toHaveLength(1);
+  });
+
+  it("refuses a page that loads anything but images from trusted domains", async () => {
+    const result = await withArtifacts((artifacts) =>
+      Effect.gen(function* () {
+        const remoteImage = yield* Effect.exit(
+          artifacts.create(1, {
+            title: "Untrusted",
+            html: '<img src="https://cdn.evil.com/a.png">',
+            callId: "c1",
+          })
+        );
+        const remoteScript = yield* Effect.exit(
+          artifacts.create(1, {
+            title: "Script",
+            html: '<script src="https://cdn.evil.com/x.js"></script>',
+            callId: "c2",
+          })
+        );
+        const clean = yield* artifacts.create(1, {
+          title: "Clean",
+          html: '<img src="/api/attachments/att_x/thumbnail?conversation=1"><script src="/api/artifact-libs/chart.umd.js"></script>',
+          callId: "c3",
+        });
+        const editedRemote = yield* Effect.exit(
+          artifacts.update(1, clean.id, {
+            callId: "c4",
+            edits: [
+              {
+                find: '<img src="/api/attachments/att_x/thumbnail?conversation=1">',
+                replace: '<img src="https://cdn.evil.com/a.png">',
+              },
+            ],
+          })
+        );
+        return {
+          remoteImage,
+          remoteScript,
+          editedRemote,
+          view: yield* artifacts.view(1, clean.id),
+        };
+      })
+    );
+    expect(failure(result.remoteImage)).toContain("cdn.evil.com");
+    expect(failure(result.remoteImage)).toContain("Trusted domains");
+    expect(failure(result.remoteScript)).toContain("external scripts");
+    expect(failure(result.editedRemote)).toContain("cdn.evil.com");
+    // The refused update added no version.
+    expect(result.view.versions).toHaveLength(1);
+  });
+
+  it("lets a page's images come from a trusted domain", async () => {
+    const result = await withArtifacts(
+      (artifacts) =>
+        Effect.gen(function* () {
+          const created = yield* artifacts.create(1, {
+            title: "Images",
+            html: '<img src="https://a.cdn.example.com/1.png"><img src="https://b.cdn.example.com/2.png">',
+            callId: "c1",
+          });
+          return yield* artifacts.html(1, created.id);
+        }),
+      ["*.cdn.example.com"]
+    );
+    expect(result.version).toBe(1);
   });
 
   it("scopes every lookup to its conversation, and removes within it", async () => {
@@ -374,16 +440,47 @@ describe("the artifact tools", () => {
   });
 
   it("offers the tools and tells the agent what a page is and which libraries it serves", async () => {
-    const { layer } = fauxAgents([offered]);
+    const { layer } = fauxAgents([offered], {
+      trustedDomains: ["cdn.example.com"],
+    });
     const answer = await Effect.runPromise(
       ask("What can you do?").pipe(Effect.provide(layer))
     );
     const { tools, system } = offeredIn(answer);
-    expect(tools).toContain("artifact_create");
-    expect(tools).toContain("artifact_update");
-    expect(system).toContain("/api/artifact-libs/chart.umd.js");
-    expect(system).toContain("/api/artifact-libs/mermaid.min.js");
+    expect(tools).toStrictEqual(
+      expect.arrayContaining(["artifact_create", "artifact_update"])
+    );
+    expect(
+      [
+        "/api/artifact-libs/chart.umd.js",
+        "/api/artifact-libs/mermaid.min.js",
+      ].map((lib) => system.includes(lib))
+    ).toStrictEqual([true, true]);
     expect(system).toContain("300 KB");
+    expect(system).toContain("cdn.example.com");
+    expect(system).toContain("/api/attachments/<id>/thumbnail?conversation=");
+  });
+
+  it("reads a refused page as a normal error naming the untrusted host", async () => {
+    const { layer, faux } = fauxAgents([]);
+    const answer = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat();
+          faux.setResponses([
+            callTool("artifact_create", {
+              title: "Results",
+              html: '<img src="https://cdn.elgatoylacaja.com/x.jpg">',
+            }),
+            echoToolResult,
+          ]);
+          return yield* seat.ask("Show the results.");
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect(answer).toContain("error: ");
+    expect(answer).toContain("cdn.elgatoylacaja.com");
+    expect(answer).toContain("Trusted domains");
   });
 
   it("reads a missing artifact or a refused change as a normal error", async () => {
