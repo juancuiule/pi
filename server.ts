@@ -17,11 +17,15 @@ import { Agents } from "./src/agents/agents.ts";
 import { Artifacts } from "./src/artifacts/artifacts.ts";
 import { TrustedDomains } from "./src/artifacts/domains.ts";
 import { Attachments } from "./src/attachments/attachments.ts";
+import { s3Blobs } from "./src/attachments/store.ts";
 import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromConfig } from "./src/models.ts";
-import { saveScreenshotsTo } from "./src/screenshots.ts";
+import {
+  saveScreenshotsTo,
+  saveScreenshotsToBlobs,
+} from "./src/screenshots.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
@@ -58,12 +62,20 @@ const ensureBuckets = async () => {
 };
 export const store = await ensureBuckets();
 
-// Attachments' metadata is a table of its own in the same SQLite file; their bytes are in ATTACHMENTS_DIR.
-const AttachmentsLive = Attachments.local({
-  directory: config.paths.attachments,
-  database: config.paths.db,
-  limits: config.attachments,
-});
+// Attachments' metadata is a table of its own in the same SQLite file; their bytes are in ATTACHMENTS_DIR, or the
+// attachments bucket when STORAGE=s3.
+const AttachmentsLive =
+  store === undefined
+    ? Attachments.local({
+        directory: config.paths.attachments,
+        database: config.paths.db,
+        limits: config.attachments,
+      })
+    : Attachments.local({
+        blobs: s3Blobs(store, BUCKETS.attachments),
+        database: config.paths.db,
+        limits: config.attachments,
+      });
 
 const TrustedDomainsLive = TrustedDomains.local({
   database: config.paths.db,
@@ -84,7 +96,10 @@ const CapacityLive = Capacity.layer(config.capacity);
 const AgentsLive = Agents.layer({
   ...setup,
   storage,
-  saveScreenshot: saveScreenshotsTo(config.paths.screenshots),
+  saveScreenshot:
+    store === undefined
+      ? saveScreenshotsTo(config.paths.screenshots)
+      : saveScreenshotsToBlobs(store, BUCKETS.screenshots),
   mcp: mcpServers,
   mcpConnectTimeoutMs: config.mcpConnectTimeoutMs,
   traceAttachmentText: config.traceAttachmentText,
