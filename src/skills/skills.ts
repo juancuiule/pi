@@ -162,8 +162,8 @@ export class Skills extends Context.Service<
       name: string
     ) => Effect.Effect<SkillRemoveOutcome, SkillSourceError>;
     /**
-     * A folder's merged contents — the org copy's files, with any unshadowed builtin ones — or `undefined` when
-     * no folder lists `id`. For the console's editor.
+     * The listed folder's files — the org copy wholesale when the skill is overridden — or `undefined` when no
+     * folder lists `id`. For the console's editor.
      */
     readonly folder: (id: string) => Effect.Effect<
       | {
@@ -247,6 +247,11 @@ export class Skills extends Context.Service<
           );
           if (decoded._tag === "Failure") {
             problems.push(`${folder.id}: ${decoded.failure.message}`);
+          } else if (decoded.success.name !== folder.id) {
+            // GET, folder and remove resolve by folder id: a mismatched name would list a skill they cannot reach.
+            problems.push(
+              `${folder.id}: skill name "${decoded.success.name}" doesn't match its folder`
+            );
           } else if (skills.some((s) => s.name === decoded.success.name)) {
             problems.push(
               `${folder.id}: another skill is already named ${decoded.success.name}`
@@ -564,9 +569,10 @@ const savedText = (
   applied: boolean
 ): string => {
   if (outcome === "created") {
+    // `applied` only fails when the hook threw, after the write landed.
     return applied
       ? `Saved new skill "${name}"; it's on in this conversation and in every new one.`
-      : `Saved new skill "${name}". It's off in this conversation — the person can enable it in settings; new conversations get it.`;
+      : `Saved new skill "${name}". New conversations get it; turning it on here failed.`;
   }
   if (applied) {
     return `Updated skill "${name}"; this conversation's copy is refreshed.${
@@ -603,6 +609,21 @@ const deletedText = (
     default: {
       throw new TypeError(`Unknown outcome: ${outcome satisfies never}`);
     }
+  }
+};
+
+/**
+ * The write already landed when a hook runs: a hook that throws only means the calling conversation's copy
+ * fell behind — say so rather than reporting a failed call.
+ */
+const appliedFrom = async (run: () => Promise<boolean>) => {
+  try {
+    return { applied: await run(), note: "" };
+  } catch (error) {
+    return {
+      applied: false,
+      note: ` This conversation's copy could not be updated: ${error instanceof Error ? error.message : String(error)}.`,
+    };
   }
 };
 
@@ -693,16 +714,15 @@ export const skillsExtension = (
                 ? new Error(failure.message)
                 : failure;
             }
-            const applied = await hooks.onSaved(
-              api.conversationId,
-              args.name,
-              saved.value.outcome
+            const { applied, note } = await appliedFrom(() =>
+              hooks.onSaved(api.conversationId, args.name, saved.value.outcome)
             );
             return {
               content: [
                 {
                   type: "text" as const,
-                  text: savedText(args.name, saved.value.outcome, applied),
+                  text:
+                    savedText(args.name, saved.value.outcome, applied) + note,
                 },
               ],
             };
@@ -723,15 +743,17 @@ export const skillsExtension = (
           replay: "unsafe",
           execute: async (args, api) => {
             const outcome = await Effect.runPromise(skills.remove(args.name));
-            const applied =
+            const { applied, note } =
               outcome === "removed" || outcome === "reverted"
-                ? await hooks.onDeleted(api.conversationId, args.name, outcome)
-                : false;
+                ? await appliedFrom(() =>
+                    hooks.onDeleted(api.conversationId, args.name, outcome)
+                  )
+                : { applied: false, note: "" };
             return {
               content: [
                 {
                   type: "text" as const,
-                  text: deletedText(args.name, outcome, applied),
+                  text: deletedText(args.name, outcome, applied) + note,
                 },
               ],
             };

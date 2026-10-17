@@ -7,7 +7,7 @@ import { Effect, Fiber, Layer, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { approvalKey } from "../approvals.ts";
-import { Skills, SkillSource } from "../skills/skills.ts";
+import { Skills, SkillSource, SkillSourceError } from "../skills/skills.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { Agents } from "./agents.ts";
 import { SETTINGS_ENTRY } from "./settings.ts";
@@ -17,6 +17,44 @@ const skillFile = (name: string, description: string) =>
 
 const skillsOver = (files: Record<string, string>) =>
   Skills.layer.pipe(Layer.provide(SkillSource.memory(files)));
+
+/** A source whose list starts failing once a write lands: the write is done, the follow-up read is not. */
+const breakingAfterWrite = (files: Record<string, string>) =>
+  Layer.effect(
+    SkillSource,
+    Effect.gen(function* () {
+      const inner = yield* SkillSource;
+      let broken = false;
+      return SkillSource.of({
+        ...inner,
+        list: Effect.suspend(() =>
+          broken
+            ? Effect.fail(
+                new SkillSourceError({ message: "the source flapped" })
+              )
+            : inner.list
+        ),
+        put: (id, putFiles) =>
+          inner.put(id, putFiles).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                broken = true;
+              })
+            )
+          ),
+        remove: (id) =>
+          inner.remove(id).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                broken = true;
+              })
+            )
+          ),
+      });
+    })
+  ).pipe(Layer.provide(SkillSource.memory(files)), (layer) =>
+    Skills.layer.pipe(Layer.provide(layer))
+  );
 
 const create = (
   options: Partial<Parameters<(typeof Agents)["Service"]["create"]>[0]> = {}
@@ -380,5 +418,64 @@ describe("skill_save and skill_delete", () => {
       extension?.enabled,
       extension?.tools.map((tool) => tool.name),
     ]).toStrictEqual([true, ["skill", "skill_save", "skill_delete"]]);
+  });
+
+  it("reports a saved skill even when the settings hook cannot follow", async () => {
+    const files: Record<string, string> = {};
+    const { layer } = fauxAgents(
+      [
+        callTool("skill_save", {
+          name: "pdf",
+          files: { "SKILL.md": skillFile("pdf", "Work with PDFs.") },
+          reason: "needed",
+        }),
+        echoToolResult,
+      ],
+      { skills: breakingAfterWrite(files) }
+    );
+
+    const answer = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create();
+          const seat = yield* agents.open(id);
+          return yield* seat.ask("Save a PDF skill.");
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    // The write landed; the model is told the copy went in, and that this conversation could not follow.
+    expect(files["org/pdf/SKILL.md"]).toContain("name: pdf");
+    expect(answer).toContain(`Saved new skill "pdf"`);
+    expect(answer).toContain("This conversation's copy could not be updated:");
+  });
+
+  it("reports a deleted skill even when the settings hook cannot follow", async () => {
+    const files: Record<string, string> = {
+      "org/mine/SKILL.md": skillFile("mine", "Made for the org."),
+    };
+    const { layer } = fauxAgents(
+      [
+        callTool("skill_delete", { name: "mine", reason: "obsolete" }),
+        echoToolResult,
+      ],
+      { skills: breakingAfterWrite(files) }
+    );
+
+    const answer = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create();
+          const seat = yield* agents.open(id);
+          return yield* seat.ask("Delete the mine skill.");
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(files["org/mine/SKILL.md"]).toBeUndefined();
+    expect(answer).toContain(`Deleted skill "mine"`);
+    expect(answer).toContain("This conversation's copy could not be updated:");
   });
 });

@@ -55,7 +55,7 @@ describe("Skills.catalog", () => {
       {
         ...CONVERT,
         "broken/SKILL.md": "---\nname: broken\n---\nNo description.",
-        "twin/SKILL.md": skillFile("convert", "Same name."),
+        "misnamed/SKILL.md": skillFile("other-name", "Wrong folder."),
         "notes/README.md": "Not a skill: no SKILL.md.",
       },
       (service) => service.catalog
@@ -77,7 +77,7 @@ describe("Skills.catalog", () => {
     ]);
     expect(problems).toStrictEqual([
       "broken: description: is required",
-      "twin: another skill is already named convert",
+      'misnamed: skill name "other-name" doesn\'t match its folder',
     ]);
   });
 });
@@ -170,6 +170,29 @@ describe("Skills.save", () => {
 
   it.for([
     ["an empty folder", "made", {}, "files is empty"],
+    [
+      "a reserved name",
+      "org",
+      { "SKILL.md": skillFile("org", "Reserved.") },
+      "reserved",
+    ],
+    [
+      "too many files",
+      "made",
+      {
+        "SKILL.md": skillFile("made", "Made by the agent."),
+        ...Object.fromEntries(
+          Array.from({ length: 50 }, (_, index) => [`f${index}.md`, "x"])
+        ),
+      },
+      "at most 50 files",
+    ],
+    [
+      "a file over the limit",
+      "made",
+      { ...wrote, "big.txt": "x".repeat(300 * 1024) },
+      "256 KiB",
+    ],
     ["no SKILL.md", "made", { "notes.md": "x" }, "must include SKILL.md"],
     [
       "a bad file path",
