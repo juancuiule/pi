@@ -1261,6 +1261,30 @@ export class Agents extends Context.Service<
           }
           yield* locked(id, ensureModel(id));
           yield* locked(id, backfillAlwaysOnExtensions(id));
+          // A Seat's closing abort can leave pending entries whose calls are gone; while nothing runs nobody can
+          // decide them, so they must not read as a person being waited on.
+          yield* locked(
+            id,
+            attempt(() =>
+              harness.commit(async (tx) => {
+                const live = await tx.doc(LiveDoc, id);
+                if (live.run !== undefined) {
+                  return;
+                }
+                const approvals = await tx.doc(ApprovalDoc, id);
+                if (
+                  Object.keys(approvals.pending).length === 0 &&
+                  Object.keys(approvals.decisions).length === 0 &&
+                  Object.keys(approvals.answers ?? {}).length === 0
+                ) {
+                  return;
+                }
+                approvals.pending = {};
+                approvals.decisions = {};
+                approvals.answers = {};
+              }, context)
+            )
+          );
           const workspace = yield* attempt(() =>
             harness.snapshot(WorkspaceDoc, id, context)
           );
