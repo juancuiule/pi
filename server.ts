@@ -27,6 +27,7 @@ import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
 import { shellRoute } from "./src/server/shell.ts";
 import { Skills } from "./src/skills/skills.ts";
+import { WebSearch } from "./src/web-search/web-search.ts";
 import * as DockerVolumes from "./src/workspaces/docker-volume.ts";
 
 const configured = await Effect.runPromise(modelFromConfig(config.model));
@@ -62,6 +63,12 @@ const ArtifactsLive = Layer.unwrap(
 // One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
 const CapacityLive = Capacity.layer(config.capacity);
 
+// The `web` extension exists only with SEARXNG_URL set: no SearXNG, no `web_search` tool at all.
+const WebSearchLive =
+  config.webSearch === undefined
+    ? Layer.empty
+    : WebSearch.searxng(config.webSearch);
+
 const AgentsLive = Agents.layer({
   ...setup,
   storage,
@@ -74,7 +81,8 @@ const AgentsLive = Agents.layer({
   Layer.provide(Skills.directory(config.paths.skills)),
   Layer.provide(CapacityLive),
   Layer.provideMerge(AttachmentsLive),
-  Layer.provideMerge(ArtifactsLive)
+  Layer.provideMerge(ArtifactsLive),
+  Layer.provideMerge(WebSearchLive)
 );
 
 const ConversationsLive = Conversations.layer(config.server).pipe(
