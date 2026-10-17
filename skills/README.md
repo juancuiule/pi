@@ -1,6 +1,6 @@
 # Skills
 
-Each folder here is an [Agent Skill](https://agentskills.io/specification): a `SKILL.md` with frontmatter, plus any files it bundles. `server.ts` loads every folder with a `SKILL.md` (this README is not one) and gives the skills to all conversations.
+Each folder here is an [Agent Skill](https://agentskills.io/specification): a `SKILL.md` with frontmatter, plus any files it bundles. `server.ts` loads every folder with a `SKILL.md` (this README is not one) and gives the skills to all conversations. These are the built-in skills; skills written at runtime live outside the repo under `SKILLS_ORG_DIR` (`data/skills` by default), and the agent can author them itself with its `skill_save` tool — an org skill with a builtin's name shadows it.
 
 ```text
 repo-report/

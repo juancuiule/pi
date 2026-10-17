@@ -7,11 +7,19 @@ import { Context, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import type { PlatformError } from "effect";
 
 import type { ObjectStore } from "../storage/object-store.ts";
+import { isSkillFile, SKILL_FILE } from "./format.ts";
+
+/**
+ * Which namespace a folder's listed copy comes from: `builtin`, `org`, or `overridden` for an org folder
+ * shadowing a builtin one of the same id.
+ */
+export type SkillOrigin = "builtin" | "org" | "overridden";
 
 /** One folder: its id in the source and every file in it, relative to it with `/` separators. */
 export interface SkillFolder {
   readonly id: string;
   readonly files: readonly string[];
+  readonly origin: SkillOrigin;
 }
 
 export class SkillSourceError extends Schema.TaggedError<SkillSourceError>()(
@@ -24,15 +32,6 @@ const fail = (message: string) => (cause: unknown) =>
 
 /** The writable namespace; the `org` name can never be a builtin folder. */
 const ORG = "org";
-
-/** A folder's file path: `/`-joined segments of plain names — no `.`-names (list skips them), `..`, empties or `\`. */
-export const isSkillFile = (file: string): boolean =>
-  file
-    .split("/")
-    .every(
-      (segment) =>
-        segment !== "" && !segment.startsWith(".") && !segment.includes("\\")
-    );
 
 /** A folder id is a single file segment; `a/b` or `..` would escape the source's org root. */
 const isSkillId = (id: string): boolean => isSkillFile(id) && !id.includes("/");
@@ -90,6 +89,18 @@ const groupKeys = (tails: readonly string[]): Map<string, string[]> => {
   );
 };
 
+/** A folder's provenance from the two namespaces that share ids. */
+const originOf = (
+  id: string,
+  builtin: ReadonlyMap<string, unknown>,
+  org: ReadonlyMap<string, unknown>
+): SkillOrigin => {
+  if (!org.has(id)) {
+    return "builtin";
+  }
+  return builtin.has(id) ? "overridden" : "org";
+};
+
 /** Builtin folders overlaid by org ones: an org folder replaces the builtin folder of its id. */
 const merged = (
   builtin: Map<string, string[]>,
@@ -100,7 +111,7 @@ const merged = (
     byId.set(id, files);
   }
   return [...byId]
-    .map(([id, files]) => ({ id, files }))
+    .map(([id, files]) => ({ id, files, origin: originOf(id, builtin, org) }))
     .toSorted((a, b) => a.id.localeCompare(b.id));
 };
 
@@ -161,64 +172,84 @@ export class SkillSource extends Context.Service<
   }
 >()("effect-pi/skills/SkillSource") {
   /**
-   * Folders under `root` on the host; a missing `root` has none. Top-level folders are builtin and `root/org/*`
-   * the org overlay, which `put` writes and `remove` deletes. Entries starting with `.` are skipped.
+   * Folders under `root` on the host; a missing `root` has none. Top-level folders are builtin and the org
+   * overlay — `root/org/*` by default, `orgRoot` when given, so the writable copy can live outside the checkout —
+   * is what `put` writes and `remove` deletes. Entries starting with `.` are skipped.
    */
-  static readonly directory = (root: string) =>
+  static readonly directory = (root: string, orgRoot?: string) =>
     Layer.effect(
       SkillSource,
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const orgRoot = path.join(root, ORG);
+        const orgDir = orgRoot ?? path.join(root, ORG);
 
-        // The folders directly under a directory.
+        // The checkout-era layout kept org skills at `<root>/org`: move its folders under orgDir, a legacy one
+        // losing to an org folder of the same id. Compared as strings — orgDir is the join when orgRoot is unset.
+        // A failure only warns: the next boot tries again, and the unmigrated folders are no worse than lost.
+        const legacy = path.join(root, ORG);
+        if (orgDir !== legacy) {
+          yield* Effect.gen(function* () {
+            if (!(yield* fs.exists(legacy))) {
+              return;
+            }
+            for (const child of yield* fs.readDirectory(legacy)) {
+              const from = path.join(legacy, child);
+              if ((yield* fs.stat(from)).type !== "Directory") {
+                continue;
+              }
+              const to = path.join(orgDir, child);
+              if (yield* fs.exists(to)) {
+                yield* fs.remove(from, { recursive: true });
+              } else {
+                yield* fs.makeDirectory(orgDir, { recursive: true });
+                yield* fs.rename(from, to);
+              }
+            }
+            yield* fs.remove(legacy, { recursive: true });
+            yield* Effect.logWarning(`Migrated ${legacy} into ${orgDir}`);
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Could not migrate ${legacy} into ${orgDir}`,
+                cause
+              )
+            )
+          );
+        }
+
+        // The folders directly under a directory, by id.
         const foldersIn = (
           dir: string
-        ): Effect.Effect<SkillFolder[], SkillSourceError> =>
+        ): Effect.Effect<Map<string, string[]>, SkillSourceError> =>
           Effect.gen(function* () {
+            const byId = new Map<string, string[]>();
             if (!(yield* fs.exists(dir))) {
-              return [];
+              return byId;
             }
             const entries = (yield* fs.readDirectory(dir)).toSorted();
-            const folders = yield* Effect.forEach(
+            yield* Effect.forEach(
               entries,
               (id) =>
                 Effect.gen(function* () {
                   const target = path.join(dir, id);
                   const info = yield* fs.stat(target);
-                  return id.startsWith(".") || info.type !== "Directory"
-                    ? []
-                    : [
-                        {
-                          id,
-                          files: (yield* listFiles(
-                            fs,
-                            path,
-                            target,
-                            ""
-                          )).toSorted(),
-                        },
-                      ];
+                  if (!id.startsWith(".") && info.type === "Directory") {
+                    byId.set(
+                      id,
+                      (yield* listFiles(fs, path, target, "")).toSorted()
+                    );
+                  }
                 }),
               { concurrency: 8 }
             );
-            return folders.flat();
+            return byId;
           }).pipe(Effect.mapError(fail(`Could not list skills in ${dir}`)));
 
         const list = Effect.gen(function* () {
-          const byId = new Map<string, SkillFolder>();
-          for (const folder of yield* foldersIn(root)) {
-            if (folder.id !== ORG) {
-              byId.set(folder.id, folder);
-            }
-          }
-          for (const folder of yield* foldersIn(orgRoot)) {
-            byId.set(folder.id, folder);
-          }
-          return [...byId.values()].toSorted((a, b) =>
-            a.id.localeCompare(b.id)
-          );
+          const builtin = yield* foldersIn(root);
+          builtin.delete(ORG);
+          return merged(builtin, yield* foldersIn(orgDir));
         });
 
         return SkillSource.of({
@@ -231,7 +262,7 @@ export class SkillSource extends Context.Service<
               return invalidFile(file);
             }
             return Effect.gen(function* () {
-              const orgFile = path.join(orgRoot, id, file);
+              const orgFile = path.join(orgDir, id, file);
               const target = (yield* fs.exists(orgFile))
                 ? orgFile
                 : path.join(root, id, file);
@@ -243,14 +274,19 @@ export class SkillSource extends Context.Service<
             if (invalid !== undefined) {
               return Effect.fail(invalid);
             }
-            const dir = path.join(orgRoot, id);
+            const dir = path.join(orgDir, id);
+            // A concurrent list sees the old folder or the new one, never a half-written one: write to a
+            // dot-prefixed staging dir (foldersIn skips it), then swap.
+            const staging = path.join(orgDir, `.${id}.staging`);
+            const previous = path.join(orgDir, `.${id}.previous`);
             return Effect.gen(function* () {
-              yield* fs.remove(dir, { recursive: true, force: true });
+              yield* fs.remove(staging, { recursive: true, force: true });
+              yield* fs.remove(previous, { recursive: true, force: true });
               yield* Effect.forEach(
                 Object.entries(files),
                 ([file, contents]) =>
                   Effect.gen(function* () {
-                    const target = path.join(dir, file);
+                    const target = path.join(staging, file);
                     yield* fs.makeDirectory(path.dirname(target), {
                       recursive: true,
                     });
@@ -258,12 +294,17 @@ export class SkillSource extends Context.Service<
                   }),
                 { concurrency: 8, discard: true }
               );
+              if (yield* fs.exists(dir)) {
+                yield* fs.rename(dir, previous);
+              }
+              yield* fs.rename(staging, dir);
+              yield* fs.remove(previous, { recursive: true, force: true });
             }).pipe(Effect.mapError(fail(`Could not write ${ORG}/${id}`)));
           },
           remove: (id) =>
             isSkillId(id)
               ? fs
-                  .remove(path.join(orgRoot, id), {
+                  .remove(path.join(orgDir, id), {
                     recursive: true,
                     force: true,
                   })
@@ -401,11 +442,27 @@ export class SkillSource extends Context.Service<
           }
           return Effect.tryPromise({
             try: async () => {
-              await store.removePrefix(bucket, orgKey(id));
+              // The folder is never absent: write first (SKILL.md last, so the old copy still reads as valid
+              // until the final key lands), then remove the keys the new folder does not have.
               await Promise.all(
-                Object.entries(files).map(([file, contents]) =>
-                  store.put(bucket, orgKey(id, file), bytesOf(contents))
-                )
+                Object.entries(files)
+                  .filter(([file]) => file !== SKILL_FILE)
+                  .map(([file, contents]) =>
+                    store.put(bucket, orgKey(id, file), bytesOf(contents))
+                  )
+              );
+              const skill = files[SKILL_FILE];
+              if (skill !== undefined) {
+                await store.put(bucket, orgKey(id, SKILL_FILE), bytesOf(skill));
+              }
+              const kept = new Set(
+                Object.keys(files).map((file) => orgKey(id, file))
+              );
+              const stale = await store.list(bucket, orgKey(id));
+              await Promise.all(
+                stale
+                  .filter(({ key }) => !kept.has(key))
+                  .map(({ key }) => store.remove(bucket, key))
               );
             },
             catch: fail(`Could not write ${ORG}/${id}`),

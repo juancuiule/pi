@@ -27,34 +27,28 @@ export const newConversationSettings = (
   capabilities: Capabilities,
   level: SandboxChoice,
   overrides: Overrides
-): Settings => {
-  const skillsOn = capabilities.skills.some(
-    (skill) => overrides.skills[skill.name] ?? true
-  );
-  return {
-    extensions: capabilities.extensions.map((extension) => {
-      const available = extension.levels.includes(level);
-      // The skills extension comes with the skills: on while any skill is, unless turned off itself.
-      const byDefault = available && (extension.name !== "skills" || skillsOn);
-      return {
-        name: extension.name,
-        available,
-        locked: extension.locked,
-        enabled:
-          available && (overrides.extensions[extension.name] ?? byDefault),
-        tools: extension.tools.map((tool) => ({
-          ...tool,
-          enabled: overrides.tools[tool.name] ?? true,
-        })),
-      };
-    }),
-    skills: capabilities.skills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      enabled: overrides.skills[skill.name] ?? true,
-    })),
-  };
-};
+): Settings => ({
+  extensions: capabilities.extensions.map((extension) => {
+    const available = extension.levels.includes(level);
+    // The skills extension carries the write tools too, so it is on even with no skills.
+    const byDefault = available;
+    return {
+      name: extension.name,
+      available,
+      locked: extension.locked,
+      enabled: available && (overrides.extensions[extension.name] ?? byDefault),
+      tools: extension.tools.map((tool) => ({
+        ...tool,
+        enabled: overrides.tools[tool.name] ?? true,
+      })),
+    };
+  }),
+  skills: capabilities.skills.map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    enabled: overrides.skills[skill.name] ?? true,
+  })),
+});
 
 /** True when no switch was flipped, so the create needs no settings. */
 export const isEmpty = (overrides: Overrides): boolean =>

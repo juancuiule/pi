@@ -130,7 +130,10 @@ describe("Agents with MCP servers", () => {
       },
     };
     const agents = fauxAgents([fauxAssistantMessage([fauxText("ok")])], {
-      skills: Skills.directory("skills"),
+      skills: Skills.directory(
+        "skills",
+        mkdtempSync(path.join(tmpdir(), "effect-pi-skills-org-"))
+      ),
       mcp: [echo, unreachable],
     });
     const capabilities = await Effect.runPromise(

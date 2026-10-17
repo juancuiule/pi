@@ -44,6 +44,11 @@ export interface SettingsChange {
   readonly extensions?: Readonly<Record<string, boolean>> | undefined;
   readonly tools?: Readonly<Record<string, boolean>> | undefined;
   readonly skills?: Readonly<Record<string, boolean>> | undefined;
+  /**
+   * A directive, not a toggle — `applyChange` ignores it: re-read these skills from the source into this
+   * conversation's state and its Sandbox's `.skills/` copies; "all" for every enabled one.
+   */
+  readonly refreshSkills?: "all" | readonly string[] | undefined;
 }
 
 export interface ConversationSettings {
@@ -199,12 +204,11 @@ export const applyChange = (
   if (problem !== undefined) {
     return problem;
   }
-  // The skills extension (the skill tool and the skills list) goes with the last skill, and comes back with a
-  // skill turned on, unless this change turns it off itself; a change that turns no skill on leaves it as it is.
+  // The skills extension also carries the write tools (skill_save, skill_delete), so the last skill going off
+  // leaves it on — turning it off is the person's explicit choice. It still comes back with a skill turned on,
+  // unless this change turns it off itself.
   const turnedOn = [...skills].some((name) => !state.skills.includes(name));
-  if (skills.size === 0) {
-    extensions.delete("skills");
-  } else if (turnedOn && change.extensions?.skills !== false) {
+  if (turnedOn && change.extensions?.skills !== false) {
     extensions.add("skills");
   }
   return {
