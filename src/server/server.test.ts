@@ -39,7 +39,7 @@ const serverWith = (
   // server.ts's shared SkillsLive.
   skills: Layer.Layer<Skills> = Skills.none
 ) =>
-  HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1" }), {
+  HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1", tracing: false }), {
     disableListenLog: true,
     disableLogger: true,
   }).pipe(

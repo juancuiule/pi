@@ -18,12 +18,14 @@ import {
   ConversationArchived,
   ConversationNotFound,
   EmptyMessage,
+  EntryNotFound,
   InvalidDomain,
   InvalidSetting,
   InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
+  TraceUnavailable,
   WorkspaceFileNotFound,
 } from "../errors.ts";
 import { SOFTWARE_IDS } from "../sandbox/software.ts";
@@ -53,12 +55,14 @@ export {
   ConversationArchived,
   ConversationNotFound,
   EmptyMessage,
+  EntryNotFound,
   InvalidDomain,
   InvalidSetting,
   InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
+  TraceUnavailable,
   WorkspaceFileNotFound,
 } from "../errors.ts";
 
@@ -260,6 +264,8 @@ const ById = { id: Schema.Int };
 const Empty = EmptyMessage.pipe(HttpApiSchema.status(400));
 const Refused = AttachmentRefused.pipe(HttpApiSchema.status(400));
 const NoAttachment = AttachmentNotFound.pipe(HttpApiSchema.status(404));
+const NoEntry = EntryNotFound.pipe(HttpApiSchema.status(404));
+const NoTrace = TraceUnavailable.pipe(HttpApiSchema.status(409));
 /** Text, attachments (ids of uploads), or both. */
 const MessageFields = {
   prompt: Schema.optionalKey(Schema.String),
@@ -423,6 +429,27 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     }),
     success: HttpApiSchema.NoContent,
     error: [NotFound, ApprovalNotFound.pipe(HttpApiSchema.status(404))],
+  }),
+  // Thumbs up (`value: 1`) or down (`value: 0`) on an assistant entry, scored on its run's Langfuse trace.
+  HttpApiEndpoint.post("feedback", "/conversations/:id/feedback", {
+    params: ById,
+    payload: Schema.Struct({
+      entry: Schema.Int,
+      value: Schema.Literals([0, 1]),
+      comment: Schema.optionalKey(Schema.NonEmptyString),
+    }),
+    success: HttpApiSchema.NoContent,
+    error: [NotFound, NoEntry, NoTrace],
+  }),
+  // Report an assistant entry; `comment` is required, scored on its run's Langfuse trace.
+  HttpApiEndpoint.post("report", "/conversations/:id/report", {
+    params: ById,
+    payload: Schema.Struct({
+      entry: Schema.Int,
+      comment: Schema.NonEmptyString,
+    }),
+    success: HttpApiSchema.NoContent,
+    error: [NotFound, NoEntry, NoTrace],
   })
 );
 
@@ -683,6 +710,8 @@ const InfoGroup = HttpApiGroup.make("info").add(
       model: Schema.String,
       /** The server's own URL, for things the console cannot reach through its rewrite, like the shell socket. */
       apiUrl: Schema.String,
+      /** Whether the server traces to Langfuse — only then can messages be scored. */
+      tracing: Schema.Boolean,
     }),
   }),
   HttpApiEndpoint.get("capabilities", "/capabilities", {

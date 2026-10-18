@@ -157,10 +157,10 @@ const AgentsLive = Agents.layer({
   Layer.provideMerge(WebSearchLive)
 );
 
-const ConversationsLive = Conversations.layer(config.server).pipe(
-  Layer.provide(AgentsLive),
-  Layer.provide(CapacityLive)
-);
+const ConversationsLive = Conversations.layer({
+  ...config.server,
+  langfuse: config.langfuse,
+}).pipe(Layer.provide(AgentsLive), Layer.provide(CapacityLive));
 
 const NodeHttpServerLayer = NodeHttpServer.layer(createServer, {
   port: config.server.port,
@@ -183,7 +183,10 @@ const UploadLimits = Layer.succeedContext(
 const ServerLive = HttpRouter.serve(
   // Where the console reaches this server directly, skipping Next's rewrite (the shell's socket needs it).
   Layer.mergeAll(
-    apiLayer({ apiUrl: `http://127.0.0.1:${config.server.port}` }),
+    apiLayer({
+      apiUrl: `http://127.0.0.1:${config.server.port}`,
+      tracing: config.langfuse !== undefined,
+    }),
     shellRoute
   )
 ).pipe(

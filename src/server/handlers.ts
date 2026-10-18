@@ -200,6 +200,16 @@ const ConversationsHandlers = HttpApiBuilder.group(
         conversations
           .answer(params.id, payload.key, payload.answers)
           .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("feedback", ({ params, payload }) =>
+        conversations
+          .feedback(params.id, payload)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("report", ({ params, payload }) =>
+        conversations
+          .report(params.id, payload)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
       );
   })
 );
@@ -651,7 +661,10 @@ const TrustedDomainsHandlers = HttpApiBuilder.group(
   })
 );
 
-const infoHandlers = (apiUrl: string) =>
+const infoHandlers = (options: {
+  readonly apiUrl: string;
+  readonly tracing: boolean;
+}) =>
   HttpApiBuilder.group(
     Api,
     "info",
@@ -663,14 +676,26 @@ const infoHandlers = (apiUrl: string) =>
       const { capacity } = yield* Conversations;
       const model = `${provider}/${modelId}`;
       return handlers
-        .handle("get", () => Effect.succeed({ model, apiUrl }))
+        .handle("get", () =>
+          Effect.succeed({
+            model,
+            apiUrl: options.apiUrl,
+            tracing: options.tracing,
+          })
+        )
         .handle("capabilities", () => capabilities)
         .handle("capacity", () => capacity);
     })
   );
 
-/** The HTTP API; `apiUrl` is the server's own address, reported by `/api/info`. */
-export const apiLayer = (options: { readonly apiUrl: string }) =>
+/**
+ * The HTTP API; `apiUrl` is the server's own address, reported by `/api/info`, `tracing` whether the
+ * server traces to Langfuse.
+ */
+export const apiLayer = (options: {
+  readonly apiUrl: string;
+  readonly tracing: boolean;
+}) =>
   HttpApiBuilder.layer(Api).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -680,7 +705,7 @@ export const apiLayer = (options: { readonly apiUrl: string }) =>
         TrustedDomainsHandlers,
         SkillsHandlers,
         FilesHandlers,
-        infoHandlers(options.apiUrl)
+        infoHandlers(options)
       )
     ),
     Layer.merge(loopbackOnly)

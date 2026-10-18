@@ -29,7 +29,10 @@ import { shellRoute } from "./shell.ts";
 
 const server = (responses: FauxResponseStep[]) =>
   HttpRouter.serve(
-    Layer.mergeAll(apiLayer({ apiUrl: "http://127.0.0.1" }), shellRoute),
+    Layer.mergeAll(
+      apiLayer({ apiUrl: "http://127.0.0.1", tracing: false }),
+      shellRoute
+    ),
     { disableListenLog: true, disableLogger: true }
   ).pipe(
     Layer.provide(

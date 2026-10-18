@@ -37,15 +37,19 @@ import {
   ApprovalNotFound,
   ConversationArchived,
   InvalidSetting,
+  TraceUnavailable,
 } from "../errors.ts";
 import type {
   AttachmentNotFound,
   AttachmentRefused,
   CapacityExhausted,
   ConversationNotFound,
+  EntryNotFound,
   InvalidUpgrade,
   SkillNotFound,
 } from "../errors.ts";
+import type { LangfuseOptions } from "../langfuse.ts";
+import { postScore } from "../langfuse.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
@@ -226,6 +230,30 @@ export class Conversations extends Context.Service<
       id: number,
       options?: { before?: number | undefined; limit?: number | undefined }
     ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
+    /**
+     * Score an assistant entry thumbs up (`value: 1`) or down (`value: 0`) on its run's Langfuse trace.
+     * Scores upsert, so scoring the same entry again replaces the earlier one. `TraceUnavailable` with
+     * `disabled` when the server does not trace, `untraced` when the entry's run left no trace.
+     */
+    feedback(
+      id: number,
+      input: {
+        readonly entry: number;
+        readonly value: 0 | 1;
+        readonly comment?: string | undefined;
+      }
+    ): Effect.Effect<
+      void,
+      AgentError | ConversationNotFound | EntryNotFound | TraceUnavailable
+    >;
+    /** Report an assistant entry with a required comment, as a Langfuse score on its run's trace. */
+    report(
+      id: number,
+      input: { readonly entry: number; readonly comment: string }
+    ): Effect.Effect<
+      void,
+      AgentError | ConversationNotFound | EntryNotFound | TraceUnavailable
+    >;
     /** Decide a call waiting for approval; only a Seat has any, so without one every key is unknown. */
     decide(
       id: number,
@@ -251,6 +279,8 @@ export class Conversations extends Context.Service<
   static readonly layer = (options: {
     readonly idleTimeoutMs: number;
     readonly sweepEveryMs: number;
+    /** Langfuse's project keys: feedback and report posts score the entry's run trace. Unset, they are disabled. */
+    readonly langfuse?: LangfuseOptions | undefined;
   }) =>
     Layer.effect(
       Conversations,
@@ -721,6 +751,50 @@ export class Conversations extends Context.Service<
           yield* entry.seat.answer(key, answers);
         });
 
+        // A score goes on the trace of the run that wrote the entry; the score id is deterministic, so
+        // scoring the same entry again upserts it.
+        const score = Effect.fnUntraced(function* (
+          id: number,
+          input: {
+            readonly entry: number;
+            readonly name: "feedback" | "report";
+            readonly value: number;
+            readonly comment?: string | undefined;
+          }
+        ) {
+          const { langfuse } = options;
+          if (langfuse === undefined) {
+            return yield* new TraceUnavailable({ id, reason: "disabled" });
+          }
+          const traceId = yield* agents.entryTrace(asId(id), input.entry);
+          yield* postScore(langfuse, {
+            id: `effect-pi:${input.name}:${id}:${input.entry}`,
+            traceId,
+            name: input.name,
+            value: input.value,
+            dataType: "NUMERIC",
+            ...(input.comment === undefined ? {} : { comment: input.comment }),
+          });
+        });
+
+        const feedback = Effect.fn("Conversations.feedback")(function* (
+          id: number,
+          input: {
+            readonly entry: number;
+            readonly value: 0 | 1;
+            readonly comment?: string | undefined;
+          }
+        ) {
+          yield* score(id, { ...input, name: "feedback" });
+        });
+
+        const report = Effect.fn("Conversations.report")(function* (
+          id: number,
+          input: { readonly entry: number; readonly comment: string }
+        ) {
+          yield* score(id, { ...input, name: "report", value: 1 });
+        });
+
         const list = Effect.gen(function* () {
           const stored = yield* agents.list;
           const listed: ConversationSummary[] = [];
@@ -761,6 +835,8 @@ export class Conversations extends Context.Service<
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),
           history: (id, range) => agents.history(asId(id), range),
+          feedback,
+          report,
           agent: (id) => agents.agent(asId(id)),
           configure: (id, change) => agents.configure(asId(id), change),
           reset: (id) => agents.reset(asId(id)),
