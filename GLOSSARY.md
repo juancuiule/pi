@@ -38,6 +38,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Sandbox**: A running machine over a Workspace. It exists only while its Conversation has a Seat. _Avoid_: container, VM
 
+**Notification**: A message a Sandbox's processes leave for the agent: one file in the Workspace's `.pi-notify/` spool, delivered as a `<sandbox-notification>` input. Unclaimed files outlive their Sandbox and reach the next Seat.
+
 **Shell**: The console's live terminal in a Conversation's Sandbox: a real PTY over a WebSocket, not the agent's command output (that is the Agent tab). A session owned by the Sandbox's lifetime — sockets attach and detach, each attach replays the scrollback. _Avoid_: exec, agent terminal
 
 **Capacity**: How many Sandboxes the server runs at once. _Avoid_: cap, limit, slots

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Leave the agent a message: write it to a hidden temp file, then rename it into the spool,
+# so the host's watcher only ever sees a complete file.
+set -eu
+
+dir="${PI_NOTIFY_DIR:-/workspace/.pi-notify}"
+mkdir -p "$dir"
+if [ "$#" -gt 0 ]; then
+  message="$*"
+else
+  message="$(cat)"
+fi
+if [ -z "$message" ]; then
+  echo "usage: pi-notify TEXT" >&2
+  exit 2
+fi
+tmp="$(mktemp "$dir/.n.XXXXXX")"
+printf '%s' "$message" > "$tmp"
+mv "$tmp" "$dir/$(date +%s%3N)-$$-${tmp##*/.n.}"

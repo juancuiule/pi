@@ -1,6 +1,7 @@
 // An Effect service over a pi-durable harness: how to run a Conversation. `create` records a new one, and `open`
 // gives a Conversation a Seat (see GLOSSARY.md), with a Sandbox over its Workspace when its Level needs one. Which
 // Conversations have Seats, and when that changes, is the server's concern (src/server/conversations.ts).
+import type { Context as ChordContext } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
@@ -87,6 +88,11 @@ import {
 } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
+import {
+  escapeNotificationTags,
+  notifyExtension,
+  watchNotifications,
+} from "../sandbox/notify.ts";
 import type {
   SandboxChoice,
   SandboxInfo,
@@ -320,10 +326,10 @@ export const extensionsFor = (
       return [Calculator];
     }
     case "shell": {
-      return [Calculator, CodingTools];
+      return [Calculator, CodingTools, notifyExtension];
     }
     case "desktop": {
-      return [Calculator, CodingTools, desktop];
+      return [Calculator, CodingTools, desktop, notifyExtension];
     }
     default: {
       throw new TypeError(`Unknown Level: ${level satisfies never}`);
@@ -1352,22 +1358,27 @@ export class Agents extends Context.Service<
                 readonly sandbox: SandboxInfo;
                 readonly storage: StorageRef;
                 shell?: ShellSession;
+                notify?: Scope.Closeable;
               }
             | undefined;
           let levelClaim: Scope.Closeable | undefined;
           let closing = false;
           const upgrading = yield* Semaphore.make(1);
 
-          // One finalizer, in this order: the conversation stops, no tool call can find the Sandbox any more,
-          // then the Sandbox goes and its claim is released. `closing` turns away an Upgrade queued behind it,
-          // and taking `upgrading` lets one still landing finish first: `machine` and `levelClaim` then name
-          // its new Sandbox and claim, and they close too.
+          // One finalizer, in this order: the notification drain stops so it cannot admit a new Run, the
+          // conversation stops, no tool call can find the Sandbox any more, then the Sandbox goes and its
+          // claim is released. `closing` turns away an Upgrade queued behind it, and taking `upgrading`
+          // lets one still landing finish first: `machine` and `levelClaim` then name its new Sandbox
+          // and claim, and they close too.
           yield* Effect.addFinalizer(() =>
             Effect.suspend(() => {
               closing = true;
               return Effect.gen(function* () {
                 upgrades.delete(id);
                 seatSandboxes.delete(id);
+                if (machine?.notify !== undefined) {
+                  yield* Scope.close(machine.notify, Exit.void);
+                }
                 yield* Effect.ignore(attempt(() => handle.abort(context)));
                 yield* Effect.ignore(
                   attempt(() =>
@@ -1410,6 +1421,45 @@ export class Agents extends Context.Service<
               yield* Scope.addFinalizer(scope, claim.release);
               return scope;
             });
+
+          // A spool file exists while no submission claims it: a re-drain submits the same requestId
+          // again, so an existing record means the notification was claimed. One already seen — queued,
+          // placed, answered, or placed then gone unanswered — is done; a queued submission that was
+          // withdrawn without reaching the transcript (Pause, Stop) is submitted once more under a fresh
+          // key, because withdrawn submissions are never resurrected.
+          const submitNotification = async (
+            content: string,
+            requestId: string,
+            notifyContext: ChordContext
+          ) => {
+            // A closing Seat admits nothing: the file stays for the next Seat to claim.
+            if (closing) {
+              throw new Error("Seat is closing");
+            }
+            let key = requestId;
+            for (let tries = 0; ; tries += 1) {
+              key = tries === 0 ? requestId : `${requestId}#${tries}`;
+              // oxlint-disable-next-line no-await-in-loop -- each dedup key is looked up in turn
+              const existing = await durableStorage.submissionByRequest(
+                id,
+                key,
+                notifyContext
+              );
+              if (existing === undefined) {
+                break;
+              }
+              const seen =
+                existing.status !== "unanswered" ||
+                existing.entry !== undefined;
+              if (seen) {
+                return;
+              }
+            }
+            await handle.submit(
+              { type: "input", content, requestId: key },
+              notifyContext
+            );
+          };
 
           const attach = (
             to: SandboxKind,
@@ -1477,7 +1527,15 @@ export class Agents extends Context.Service<
                       files.storage = made.storage;
                     }, context)
                   );
-                  return made;
+                  // Notifications the Sandbox's processes leave in the spool — including ones dropped
+                  // while the conversation was paused — become submissions. Its own scope, a child of
+                  // the machine's, lets the finalizer stop the drain before the conversation aborts.
+                  const notifyScope = yield* Scope.fork(scope);
+                  yield* watchNotifications(
+                    workspaces.env(made.sandbox),
+                    submitNotification
+                  ).pipe(Scope.provide(notifyScope));
+                  return { ...made, notify: notifyScope };
                 }).pipe(Scope.provide(scope))
               );
               if (Exit.isFailure(attached)) {
@@ -1597,7 +1655,7 @@ export class Agents extends Context.Service<
             requestId?: string
           ) {
             // What the person typed can never pass for a block the server appended.
-            const typed = escapeAttachmentTags(text);
+            const typed = escapeNotificationTags(escapeAttachmentTags(text));
             // A message with attachments carries its claim's id, stored with the submission when it is admitted.
             const submit = (content: UserInput, token?: string) =>
               attempt(async () => {
