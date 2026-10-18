@@ -16,7 +16,7 @@ const ok = () => fauxAssistantMessage([fauxText("ok")]);
 const prompt = (mark: string) => `${mark} ${"x".repeat(40_000)}`;
 
 describe("Agents.entries", () => {
-  it.fails("emits every transcript entry oldest first, of every kind", async () => {
+  it("emits every transcript entry oldest first, of every kind", async () => {
     const { layer } = fauxAgents([ok()]);
 
     const entries = await Effect.runPromise(
@@ -39,7 +39,7 @@ describe("Agents.entries", () => {
     expect(ids).toStrictEqual(ids.toSorted((a, b) => a - b));
   });
 
-  it.fails("resumes from an exclusive lower entry-id bound", async () => {
+  it("resumes from an exclusive lower entry-id bound", async () => {
     const { layer } = fauxAgents([ok(), ok()]);
 
     const { whole, rest } = await Effect.runPromise(
@@ -71,7 +71,7 @@ describe("Agents.entries", () => {
     expect(rest.length).toBeGreaterThan(0);
   });
 
-  it.fails("fails with ConversationNotFound for an unknown id", async () => {
+  it("fails with ConversationNotFound for an unknown id", async () => {
     const { layer } = fauxAgents([]);
 
     const exit = await Effect.runPromiseExit(
@@ -85,7 +85,7 @@ describe("Agents.entries", () => {
     expect(JSON.stringify(exit)).toContain("ConversationNotFound");
   });
 
-  it.fails("includes the entries a compaction hides", async () => {
+  it("includes the entries a compaction hides", async () => {
     const { layer } = fauxAgents(Array.from({ length: 8 }, ok), {
       contextWindow: 24_576,
     });
