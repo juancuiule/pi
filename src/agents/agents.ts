@@ -59,6 +59,7 @@ import type {
 } from "../approvals.ts";
 import {
   ApprovalDoc,
+  bulkApprovable,
   clearApprovals,
   isGated,
   stopWaitingCalls,
@@ -101,6 +102,7 @@ import {
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
 import type {
+  ExposedPort,
   SandboxChoice,
   SandboxInfo,
   SandboxKind,
@@ -122,6 +124,7 @@ import type { SkillRemoveOutcome, SkillSaveOutcome } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
 import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
+import { portsExtension } from "../tools/ports.ts";
 import { questionsExtension } from "../tools/questions.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
 import {
@@ -298,6 +301,24 @@ const toolInfo = (tool: ToolRegistration): ToolInfo => ({
   approval: isGated(tool),
 });
 
+const portsOf = (target: {
+  readonly ports: Map<number, { readonly exposed: ExposedPort }>;
+}): ExposedPort[] => [...target.ports.values()].map((entry) => entry.exposed);
+
+/** What the person reads when expose/close loses to a closed Sandbox or a failed publish. */
+const portFailure = (cause: Cause.Cause<unknown>) => {
+  const failure = Cause.squash(cause);
+  const tag =
+    typeof failure === "object" && failure !== null && "_tag" in failure
+      ? failure._tag
+      : undefined;
+  return new Error(
+    tag === "SandboxUnavailable"
+      ? "This conversation has no sandbox to publish a port from."
+      : `The port could not be published: ${failure instanceof Error ? failure.message : String(failure)}`
+  );
+};
+
 const upgradeTarget = (
   id: ConversationId,
   from: {
@@ -332,17 +353,18 @@ const upgradeTarget = (
 /** The extensions a conversation runs with, by its Workspace's Level. */
 export const extensionsFor = (
   level: SandboxChoice,
-  desktop: Extension = desktopExtension()
+  desktop: Extension,
+  ports: Extension
 ): Extension[] => {
   switch (level) {
     case "none": {
       return [Calculator];
     }
     case "shell": {
-      return [Calculator, CodingTools];
+      return [Calculator, CodingTools, ports];
     }
     case "desktop": {
-      return [Calculator, CodingTools, desktop];
+      return [Calculator, CodingTools, desktop, ports];
     }
     default: {
       throw new TypeError(`Unknown Level: ${level satisfies never}`);
@@ -502,6 +524,20 @@ export interface Seat {
    * `SandboxUnavailable` when there is none: Level `none`, or mid-Upgrade while it is replaced.
    */
   readonly env: Effect.Effect<ExecutionEnv, SandboxUnavailable>;
+  /**
+   * Publish `input.port` of this Seat's Sandbox on a random host loopback port; the recorded
+   * `ExposedPort` comes back. Idempotent per port: re-exposing returns the one already open.
+   * `SandboxUnavailable` when there is no Sandbox: Level `none`, or mid-Upgrade while it is replaced.
+   */
+  exposePort(input: {
+    readonly port: number;
+    readonly label?: string;
+  }): Effect.Effect<
+    ExposedPort,
+    AgentError | SandboxError | SandboxUnavailable
+  >;
+  /** Stop publishing `port`; a no-op when it is not open. */
+  closePort(port: number): Effect.Effect<void, AgentError>;
   /**
    * This Seat's Sandbox as it comes, goes, and is replaced (Upgrade, Pause), starting with the current one.
    * Single-use, and must be run; finishing or interrupting it stops its watch.
@@ -760,12 +796,54 @@ export class Agents extends Context.Service<
         for (const extension of mcp.extensions) {
           registry.install(extension);
         }
+        // The exposed-port ops of each conversation with a Seat, for the `expose_port` and `close_port`
+        // tools. A missed id is a conversation without a Seat here, like `upgrades`.
+        const exposes = new Map<
+          ConversationId,
+          {
+            expose(input: {
+              readonly port: number;
+              readonly label?: string;
+            }): Effect.Effect<ExposedPort, unknown>;
+            close(port: number): Effect.Effect<void, unknown>;
+          }
+        >();
+        const portsExt = portsExtension({
+          expose: async (id, input, signal) => {
+            const ops = exposes.get(id);
+            if (ops === undefined) {
+              throw new Error("This conversation is not running here.");
+            }
+            const exit = await Effect.runPromiseExit(
+              ops.expose(input),
+              signal === undefined ? {} : { signal }
+            );
+            if (Exit.isSuccess(exit)) {
+              return { url: exit.value.url };
+            }
+            throw portFailure(exit.cause);
+          },
+          close: async (id, port, signal) => {
+            const ops = exposes.get(id);
+            // Nothing can be open without a Seat: closing stays a no-op.
+            if (ops === undefined) {
+              return;
+            }
+            const exit = await Effect.runPromiseExit(
+              ops.close(port),
+              signal === undefined ? {} : { signal }
+            );
+            if (Exit.isFailure(exit)) {
+              throw portFailure(exit.cause);
+            }
+          },
+        });
         const desktop = desktopExtension(
           options.saveScreenshot === undefined
             ? {}
             : { saveScreenshot: options.saveScreenshot }
         );
-        for (const extension of extensionsFor("desktop", desktop)) {
+        for (const extension of extensionsFor("desktop", desktop, portsExt)) {
           registry.install(extension);
         }
         // The upgrade of each conversation with a Seat, for the `upgrade_workspace` tool.
@@ -829,7 +907,7 @@ export class Agents extends Context.Service<
         }
         // Every installed extension, for the console; and those every conversation selects, whatever its Level.
         const installed = [
-          ...extensionsFor("desktop", desktop),
+          ...extensionsFor("desktop", desktop, portsExt),
           workspaceExt,
           attachmentsExt,
           artifactsExt,
@@ -856,7 +934,7 @@ export class Agents extends Context.Service<
         const levelsOf = (extension: Extension) =>
           LEVELS.filter(
             (level) =>
-              extensionsFor(level, desktop).includes(extension) ||
+              extensionsFor(level, desktop, portsExt).includes(extension) ||
               everyLevel.has(extension)
           );
         const installedInfo: InstalledExtension[] = installed.map(
@@ -879,7 +957,7 @@ export class Agents extends Context.Service<
         // always among them — it also carries the write tools, so it is on even with no skills.
         const defaultExtensions = (level: SandboxChoice) =>
           [
-            ...extensionsFor(level, desktop),
+            ...extensionsFor(level, desktop, portsExt),
             workspaceExt,
             attachmentsExt,
             artifactsExt,
@@ -1540,6 +1618,14 @@ export class Agents extends Context.Service<
                 readonly scope: Scope.Closeable;
                 readonly sandbox: SandboxInfo;
                 readonly storage: StorageRef;
+                /** The ports this Sandbox publishes, by the sandbox port; each listener owns a child scope. */
+                readonly ports: Map<
+                  number,
+                  {
+                    readonly exposed: ExposedPort;
+                    readonly scope: Scope.Closeable;
+                  }
+                >;
                 shell?: ShellSession;
               }
             | undefined;
@@ -1556,6 +1642,7 @@ export class Agents extends Context.Service<
               closing = true;
               return Effect.gen(function* () {
                 upgrades.delete(id);
+                exposes.delete(id);
                 seatSandboxes.delete(id);
                 yield* Effect.ignore(attempt(() => handle.abort(context)));
                 yield* Effect.ignore(
@@ -1673,8 +1760,103 @@ export class Agents extends Context.Service<
                 yield* Scope.close(scope, Exit.void);
                 return yield* Effect.failCause(attached.cause);
               }
-              return { scope, ...attached.value };
+              return { scope, ...attached.value, ports: new Map() };
             });
+
+          // What the Seat reports as its Sandbox: the created one, with the ports it has since opened.
+          const liveSandbox = () => {
+            const target = machine;
+            if (target === undefined) {
+              return;
+            }
+            const ports = portsOf(target);
+            return ports.length === 0
+              ? target.sandbox
+              : { ...target.sandbox, ports };
+          };
+
+          // A port's listener lives on a child of `machine.scope`: `closePort` ends just that one, and
+          // the Sandbox going (Upgrade, Pause, teardown) ends them all. `upgrading` serializes it with
+          // Upgrade and the Seat's finalizer like `shell`.
+          const exposePort = Effect.fn("Seat.exposePort")(
+            function* (input: {
+              readonly port: number;
+              readonly label?: string;
+            }) {
+              const target = machine;
+              if (closing || target === undefined) {
+                return yield* new SandboxUnavailable({ id: Number(id) });
+              }
+              if (
+                !Number.isInteger(input.port) ||
+                input.port < 1 ||
+                input.port > 65_535
+              ) {
+                return yield* new SandboxError({
+                  message: "a port must be an integer in 1-65535",
+                });
+              }
+              const existing = target.ports.get(input.port);
+              if (existing !== undefined) {
+                return existing.exposed;
+              }
+              const forked = yield* Scope.fork(target.scope);
+              const published = yield* workspaces
+                .expose(target.sandbox, input.port)
+                .pipe(
+                  Scope.provide(forked),
+                  Effect.onError(() => Scope.close(forked, Exit.void))
+                );
+              const exposed: ExposedPort = {
+                port: input.port,
+                ...(input.label === undefined ? {} : { label: input.label }),
+                url: published.url,
+              };
+              target.ports.set(input.port, { exposed, scope: forked });
+              // Mirror the live ports onto this same Sandbox's record; on failure the listener
+              // closes and the entry never lands.
+              yield* attempt(() =>
+                harness.commit(async (tx) => {
+                  const doc = await tx.doc(SandboxDoc, id);
+                  if (doc.sandbox?.id === target.sandbox.id) {
+                    doc.sandbox = { ...doc.sandbox, ports: portsOf(target) };
+                  }
+                }, context)
+              ).pipe(
+                Effect.tapError(() =>
+                  Effect.andThen(
+                    Scope.close(forked, Exit.void),
+                    Effect.sync(() => {
+                      target.ports.delete(input.port);
+                    })
+                  )
+                )
+              );
+              return exposed;
+            },
+            (effect) => upgrading.withPermit(effect)
+          );
+
+          const closePort = Effect.fn("Seat.closePort")(
+            function* (port: number) {
+              const target = machine;
+              const existing = target?.ports.get(port);
+              if (closing || target === undefined || existing === undefined) {
+                return;
+              }
+              target.ports.delete(port);
+              yield* Scope.close(existing.scope, Exit.void);
+              yield* attempt(() =>
+                harness.commit(async (tx) => {
+                  const doc = await tx.doc(SandboxDoc, id);
+                  if (doc.sandbox?.id === target.sandbox.id) {
+                    doc.sandbox = { ...doc.sandbox, ports: portsOf(target) };
+                  }
+                }, context)
+              );
+            },
+            (effect) => upgrading.withPermit(effect)
+          );
 
           if (level !== "none") {
             levelClaim = yield* claimLevel(level, {
@@ -1702,9 +1884,13 @@ export class Agents extends Context.Service<
                 return yield* target;
               }
               const previous = machine;
-              const added = extensionsFor(target.level, desktop).filter(
+              const added = extensionsFor(
+                target.level,
+                desktop,
+                portsExt
+              ).filter(
                 (extension) =>
-                  !extensionsFor(level, desktop).includes(extension)
+                  !extensionsFor(level, desktop, portsExt).includes(extension)
               );
               const claimed =
                 target.level === level
@@ -1758,7 +1944,11 @@ export class Agents extends Context.Service<
           upgrades.set(id, (request) =>
             upgrade(request, { wait: true, by: "agent" })
           );
-          seatSandboxes.set(id, () => machine?.sandbox);
+          exposes.set(id, {
+            expose: (input) => exposePort(input),
+            close: (port) => closePort(port),
+          });
+          seatSandboxes.set(id, liveSandbox);
           // A settings change between the Sandbox's copy and this registration found no Sandbox to update.
           yield* locked(id, reconcileSkills(id, { refresh: [], removed: [] }));
 
@@ -1954,11 +2144,12 @@ export class Agents extends Context.Service<
                 if (pending === undefined || pending.question === true) {
                   return false;
                 }
-                if (decision === "always") {
+                if (decision === "always" && pending.personOnly !== true) {
                   // Parallel calls of the same round are already waiting; under `auto` none of them should.
+                  // A personOnly card keeps asking every call: "always" on it decides like "approve".
                   doc.policy = "auto";
                   for (const [waiting, entry] of Object.entries(doc.pending)) {
-                    if (entry.question !== true) {
+                    if (bulkApprovable(entry)) {
                       doc.decisions[waiting] ??= "approve";
                     }
                   }
@@ -2057,12 +2248,20 @@ export class Agents extends Context.Service<
           const sandboxChanges = watchStream(
             () => harness.watchDoc(SandboxDoc, id, context),
             (doc) => doc?.sandbox
+          ).pipe(
+            Effect.map((stream) =>
+              stream.pipe(
+                // Recording a port rewrites the same Sandbox's doc; it neither comes nor goes, so a
+                // consumer ending on the second emission (the console's shell) must not see it.
+                Stream.changesWith((a, b) => a?.id === b?.id)
+              )
+            )
           );
 
           return {
             id,
             get sandbox() {
-              return machine?.sandbox;
+              return liveSandbox();
             },
             get storage() {
               return machine?.storage;
@@ -2081,6 +2280,8 @@ export class Agents extends Context.Service<
             changes,
             shell,
             env,
+            exposePort,
+            closePort,
             sandboxChanges,
           } satisfies Seat;
         });
@@ -2195,8 +2396,9 @@ export class Agents extends Context.Service<
           if (target instanceof InvalidUpgrade) {
             return yield* target;
           }
-          const added = extensionsFor(target.level, desktop).filter(
-            (extension) => !extensionsFor(from, desktop).includes(extension)
+          const added = extensionsFor(target.level, desktop, portsExt).filter(
+            (extension) =>
+              !extensionsFor(from, desktop, portsExt).includes(extension)
           );
           yield* locked(
             id,
@@ -2462,7 +2664,7 @@ export class Agents extends Context.Service<
           // Under `auto` nothing waits: calls already waiting are approved, as "always" does.
           if (next.approvals === "auto") {
             for (const [waiting, entry] of Object.entries(approvals.pending)) {
-              if (entry.question !== true) {
+              if (bulkApprovable(entry)) {
                 approvals.decisions[waiting] ??= "approve";
               }
             }

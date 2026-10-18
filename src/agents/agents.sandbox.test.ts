@@ -128,7 +128,17 @@ describe("Upgrade", () => {
     expect(JSON.stringify(before?.system)).toContain("You have no machine");
     // The chat's own tools stay, the shell's come, and nothing else installed does (no desktop tools).
     expect(after?.tools.toSorted()).toStrictEqual(
-      [...new Set([...(before?.tools ?? []), "bash", "edit", "read", "write"])]
+      [
+        ...new Set([
+          ...(before?.tools ?? []),
+          "bash",
+          "edit",
+          "read",
+          "write",
+          "close_port",
+          "expose_port",
+        ]),
+      ]
         .filter((name) => name !== "desktop_screenshot")
         .toSorted()
     );
