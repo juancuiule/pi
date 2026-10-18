@@ -89,7 +89,7 @@ describe(Conversations, () => {
     expect(listed[0]?.sandbox).toBe("none");
   });
 
-  it.fails("indexes a conversation when its Run ends, even one with no Sandbox", async () => {
+  it("indexes a conversation when its Run ends, even one with no Sandbox", async () => {
     const { layer } = setup([answer("quokkas smile")], {
       search: Search.temporary,
     });
