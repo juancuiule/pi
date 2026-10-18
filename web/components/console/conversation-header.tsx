@@ -8,7 +8,9 @@ import {
   Menu,
   PanelRight,
   ShieldAlert,
+  Sparkles,
 } from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -28,7 +30,12 @@ import type { ConversationState } from "@/lib/conversation-state";
 import { totalUsage } from "@/lib/conversation-state";
 import { exportSlug, toJsonl, toMarkdown } from "@/lib/export";
 import { formatCost, formatTokens } from "@/lib/format";
-import { useConversationAction } from "@/lib/queries";
+import {
+  useConversationAction,
+  useGenerateTitle,
+  useInfo,
+  useRenameConversation,
+} from "@/lib/queries";
 import type { ConversationAction } from "@/lib/queries";
 import {
   useConversationStore,
@@ -42,6 +49,122 @@ import { ConversationSettings } from "./conversation-settings";
 import { ResumingNotice } from "./resuming-notice";
 import { SandboxBadge } from "./sandbox-badge";
 import { WaitingNotice } from "./waiting-notice";
+
+const ConversationTitle = ({
+  conversation,
+}: {
+  conversation: ConversationSummary;
+}) => {
+  const rename = useRenameConversation(conversation.id);
+  const generateTitle = useGenerateTitle(conversation.id);
+  const { data: info } = useInfo();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  // Escape sets this before the input unmounts so its blur can't commit.
+  const cancelled = useRef(false);
+
+  const noModel = info?.titleGeneration === false;
+  const regenerateLabel = noModel
+    ? "Regenerate title — no model configured"
+    : "Regenerate title";
+
+  const startEditing = () => {
+    cancelled.current = false;
+    setDraft(conversation.title);
+    setEditing(true);
+  };
+
+  const commit = () => {
+    // Disabling the input while a rename is in flight can fire blur; a pending one must not commit again.
+    if (rename.isPending) {
+      return;
+    }
+    const title = draft.trim();
+    if (title === "" || title === conversation.title) {
+      setEditing(false);
+      return;
+    }
+    rename.mutate(
+      { title },
+      {
+        onSuccess: () => setEditing(false),
+        onError: (error) => toast.error(error.message),
+      }
+    );
+  };
+
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      <h1 className="min-w-0 flex-1 text-sm font-medium">
+        {editing ? (
+          <input
+            type="text"
+            value={draft}
+            aria-label="Conversation title"
+            autoFocus
+            disabled={rename.isPending}
+            maxLength={200}
+            onFocus={(event) => event.currentTarget.select()}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                cancelled.current = true;
+                setEditing(false);
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                commit();
+              }
+            }}
+            onBlur={() => {
+              if (!cancelled.current) {
+                commit();
+              }
+            }}
+            className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-6 w-full min-w-0 rounded-md border px-1.5 text-sm font-medium outline-none focus-visible:ring-3"
+          />
+        ) : (
+          <button
+            type="button"
+            title={conversation.title}
+            onClick={startEditing}
+            className="focus-visible:ring-ring/50 block w-full truncate rounded-sm text-left outline-none focus-visible:ring-2"
+          >
+            {conversation.title}
+          </button>
+        )}
+      </h1>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={regenerateLabel}
+              disabled={noModel || generateTitle.isPending}
+              onClick={() =>
+                generateTitle.mutate(undefined, {
+                  onError: (error) => toast.error(error.message),
+                })
+              }
+            >
+              {generateTitle.isPending ? (
+                <LoaderCircle
+                  aria-hidden
+                  className="motion-safe:animate-spin"
+                />
+              ) : (
+                <Sparkles />
+              )}
+            </Button>
+          }
+        />
+        <TooltipContent>
+          {noModel ? "No model configured" : "Regenerate title"}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+};
 
 export const ConversationHeader = ({
   conversation,
@@ -105,12 +228,7 @@ export const ConversationHeader = ({
           <Menu />
         </Button>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <h1
-            className="truncate text-sm font-medium"
-            title={conversation.title}
-          >
-            {conversation.title}
-          </h1>
+          <ConversationTitle conversation={conversation} />
           <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             <SandboxBadge sandbox={conversation.sandbox} />
             {conversation.sandboxId === undefined ? null : (

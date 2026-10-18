@@ -185,6 +185,37 @@ export const useConfigure = (id: number | undefined) => {
   });
 };
 
+const updateSummary =
+  (queryClient: ReturnType<typeof useQueryClient>) =>
+  (updated: ConversationSummary) => {
+    queryClient.setQueryData<readonly ConversationSummary[]>(LIST, (all) =>
+      all?.map((each) => (each.id === updated.id ? updated : each))
+    );
+    return queryClient.invalidateQueries({ queryKey: LIST });
+  };
+
+/** The person's rename: automation never touches the title again. */
+export const useRenameConversation = (id: number) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ title }: { title: string }) =>
+      runApi((c) =>
+        c.conversations.rename({ params: { id }, payload: { title } })
+      ),
+    onSuccess: updateSummary(queryClient),
+  });
+};
+
+/** Ask the model for a fresh title; fails when no real model is configured. */
+export const useGenerateTitle = (id: number) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      runApi((c) => c.conversations.generateTitle({ params: { id } })),
+    onSuccess: updateSummary(queryClient),
+  });
+};
+
 /** Every Conversation's summary, fetched now; for waiting on a status change. */
 export const fetchConversations = () => runApi((c) => c.conversations.list());
 

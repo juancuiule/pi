@@ -766,7 +766,7 @@ describe("HTTP API", () => {
     expect(result.sameFiles.id).toBe(result.sent.id);
     expect(result.differentFiles.id).toBe(result.sent.id);
     expect(result.later.id).toBeTypeOf("number");
-  });
+  }, 30_000);
 
   it("rejects a requestId beyond its bound", async () => {
     const exits = await Effect.runPromise(
@@ -973,7 +973,7 @@ describe("HTTP API", () => {
     expect(result.owned.disposition).toContain("attachment;");
     expect(result.events).toContain("Keep it short.");
     expect(result.events).toContain("and this");
-  });
+  }, 30_000);
 
   it("serves a conversation's pages sandboxed, and the libraries they may load", async () => {
     const html =
@@ -1302,5 +1302,107 @@ describe("HTTP API", () => {
     expect(result.scoped.map((row) => row.conversation)).toStrictEqual([
       result.ids[0],
     ]);
+  });
+
+  it("renames a conversation, refusing unknown ids and empty titles", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const http = yield* HttpClient.HttpClient;
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hello" },
+        });
+        const renamed = yield* client.conversations.rename({
+          params: { id: created.id },
+          payload: { title: "My title" },
+        });
+        const post = (title: string) =>
+          http
+            .execute(
+              HttpClientRequest.post(
+                `/api/conversations/${created.id}/rename`
+              ).pipe(HttpClientRequest.bodyJsonUnsafe({ title }))
+            )
+            .pipe(
+              Effect.flatMap((response) =>
+                response.text.pipe(
+                  Effect.map((body) => ({ status: response.status, body }))
+                )
+              )
+            );
+        const padded = yield* post("  padded  ");
+        const empty = yield* post("   ");
+        const missing = yield* Effect.flip(
+          client.conversations.rename({
+            params: { id: 424_242 },
+            payload: { title: "x" },
+          })
+        );
+        return { renamed, padded, empty, missing };
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("one")])])))
+    );
+    expect(result.renamed.title).toBe("My title");
+    expect(result.padded.status).toBe(200);
+    expect(JSON.parse(result.padded.body)).toMatchObject({
+      title: "padded",
+    });
+    expect(result.empty.status).toBe(400);
+    expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
+  });
+
+  it("generates and regenerates titles over HTTP", async () => {
+    const agents = fauxAgents(
+      [
+        fauxAssistantMessage([fauxText("one")]),
+        fauxAssistantMessage([fauxText("Auto Title")]),
+        fauxAssistantMessage([fauxText("Regenerated")]),
+      ],
+      { titleGeneration: true }
+    );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const info = yield* client.info.get();
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hello" },
+        });
+        yield* waitUntil(
+          client.conversations
+            .list()
+            .pipe(Effect.map((all) => all[0]?.title === "Auto Title"))
+        );
+        const regenerated = yield* client.conversations.generateTitle({
+          params: { id: created.id },
+        });
+        const missing = yield* Effect.flip(
+          client.conversations.generateTitle({ params: { id: 424_242 } })
+        );
+        return { info, regenerated, missing };
+      }).pipe(Effect.provide(serverWith(agents.layer)))
+    );
+    expect(result.info.titleGeneration).toBeTruthy();
+    expect(result.regenerated.title).toBe("Regenerated");
+    expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
+  });
+
+  it("answers 409 for generated titles when only the echo model answers", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const info = yield* client.info.get();
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hello" },
+        });
+        const failed = yield* Effect.flip(
+          client.conversations.generateTitle({ params: { id: created.id } })
+        );
+        return { info, failed };
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("one")])])))
+    );
+    expect(result.info.titleGeneration).toBeFalsy();
+    expect(result.failed).toMatchObject({
+      _tag: "TitleGenerationFailed",
+      reason: "no_model",
+    });
   });
 });

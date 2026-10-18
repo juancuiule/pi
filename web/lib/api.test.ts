@@ -10,6 +10,25 @@ describe(apiError, () => {
   });
 });
 
+describe("title generation errors", () => {
+  it("blames the missing model only when that is the reason", () => {
+    expect([
+      apiError({ _tag: "TitleGenerationFailed", id: 1, reason: "no_model" }),
+      apiError({ _tag: "TitleGenerationFailed", id: 1, reason: "no_exchange" }),
+      apiError({
+        _tag: "TitleGenerationFailed",
+        id: 1,
+        reason: "model_error",
+        message: "The model's answer was empty.",
+      }),
+    ]).toStrictEqual([
+      "No model is configured to write titles.",
+      "Couldn't generate a title.",
+      "The model's answer was empty.",
+    ]);
+  });
+});
+
 describe("upload errors", () => {
   it("explains refused files and uploads cut off for size", () => {
     expect([

@@ -24,6 +24,7 @@ import {
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
+  TitleGenerationFailed,
   WorkspaceFileNotFound,
 } from "../errors.ts";
 import { SOFTWARE_IDS } from "../sandbox/software.ts";
@@ -59,6 +60,7 @@ export {
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
+  TitleGenerationFailed,
   WorkspaceFileNotFound,
 } from "../errors.ts";
 
@@ -405,6 +407,21 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     success: HttpApiSchema.NoContent,
     error: NotFound,
   }),
+  // The person's rename: marks the title manual; automation never touches it again.
+  HttpApiEndpoint.post("rename", "/conversations/:id/rename", {
+    params: ById,
+    payload: Schema.Struct({
+      title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    }),
+    success: ConversationSummary,
+    error: NotFound,
+  }),
+  // Regenerate the title with the conversation's model; an explicit click beats "manual".
+  HttpApiEndpoint.post("generateTitle", "/conversations/:id/generate-title", {
+    params: ById,
+    success: ConversationSummary,
+    error: [NotFound, TitleGenerationFailed.pipe(HttpApiSchema.status(409))],
+  }),
   HttpApiEndpoint.post("approvals", "/conversations/:id/approvals", {
     params: ById,
     payload: Schema.Struct({
@@ -719,6 +736,8 @@ const InfoGroup = HttpApiGroup.make("info").add(
       model: Schema.String,
       /** The server's own URL, for things the console cannot reach through its rewrite, like the shell socket. */
       apiUrl: Schema.String,
+      /** Generated titles are on: a real model is configured. */
+      titleGeneration: Schema.Boolean,
     }),
   }),
   HttpApiEndpoint.get("capabilities", "/capabilities", {

@@ -2,7 +2,13 @@
 // gives a Conversation a Seat (see GLOSSARY.md), with a Sandbox over its Workspace when its Level needs one. Which
 // Conversations have Seats, and when that changes, is the server's concern (src/server/conversations.ts).
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  ImageContent,
+  Message,
+  Model,
+} from "@earendil-works/pi-ai";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
 import type {
   Conversation,
@@ -86,6 +92,7 @@ import {
   InvalidSetting,
   InvalidUpgrade,
   SandboxUnavailable,
+  TitleGenerationFailed,
 } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
@@ -113,7 +120,11 @@ import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
 import { questionsExtension } from "../tools/questions.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
-import { makeAgentTracing } from "../tracing.ts";
+import {
+  generationAttributes,
+  makeAgentTracing,
+  traceJson,
+} from "../tracing.ts";
 import { WebSearch, webSearchExtension } from "../web-search/web-search.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
 import type { StorageRef } from "../workspaces/workspaces.ts";
@@ -133,6 +144,7 @@ import type {
   SettingsRecord,
   SettingsState,
 } from "./settings.ts";
+import { capText, SOURCE_CAP, titleMessages, titleText } from "./title.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -500,6 +512,8 @@ export class Agents extends Context.Service<
   {
     /** The model new conversations run on; /api/info reports it. */
     readonly model: AgentModel;
+    /** Whether conversations get generated titles: a real model is configured. */
+    readonly titleGeneration: boolean;
     /** The extensions, skills and MCP servers conversations can use, for the console. */
     readonly capabilities: Effect.Effect<Capabilities>;
     /** What a conversation runs with now: its settings, model and prompt sections. */
@@ -568,6 +582,25 @@ export class Agents extends Context.Service<
       id: ConversationId,
       request: UpgradeRequest
     ): Effect.Effect<void, AgentError | ConversationNotFound | InvalidUpgrade>;
+    /** The person's rename: unconditional, marks the title "manual". Works paused or archived. */
+    renameTitle(
+      id: ConversationId,
+      title: string
+    ): Effect.Effect<StoredConversation, AgentError | ConversationNotFound>;
+    /**
+     * The one automatic title attempt after a run-end; a no-op unless eligible. Internal failures
+     * are logged, not raised.
+     */
+    autoTitle(
+      id: ConversationId
+    ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Explicit (re)generation — always allowed, unconditional apply, marks "generated". */
+    generateTitle(
+      id: ConversationId
+    ): Effect.Effect<
+      StoredConversation,
+      AgentError | ConversationNotFound | TitleGenerationFailed
+    >;
     /** One stored Conversation. */
     get(
       id: ConversationId
@@ -629,6 +662,8 @@ export class Agents extends Context.Service<
     readonly mcpConnectTimeoutMs?: number | undefined;
     /** Keep attachment text in traces; only its size by default. */
     readonly traceAttachmentText?: boolean | undefined;
+    /** Generated titles, off unless passed `true` — production sets it when a real model is configured. */
+    readonly titleGeneration?: boolean | undefined;
   }) =>
     Layer.effect(
       Agents,
@@ -849,7 +884,7 @@ export class Agents extends Context.Service<
           () => SandboxInfo | undefined
         >();
 
-        // Read directly only for what the harness does not expose: a conversation's unanswered inputs.
+        // Read directly only for what the harness does not expose: a conversation's unanswered inputs and recorded exchanges.
         const durableStorage = options.storage ?? new MemoryStorage();
         // The harness is opened when the layer is built and closed when it is torn down.
         const harness = yield* Effect.acquireRelease(
@@ -975,6 +1010,112 @@ export class Agents extends Context.Service<
           }
           return handle;
         });
+
+        // The text of one submission side — the person's message, or the answer's text blocks — capped.
+        const exchangeText = async (
+          conversationId: ConversationId,
+          entryId: EntryId
+        ): Promise<string | undefined> => {
+          const record = await durableStorage.entry(
+            conversationId,
+            entryId,
+            context
+          );
+          const content = record?.entry.model?.[0]?.content;
+          const text =
+            typeof content === "string"
+              ? content
+              : (content ?? [])
+                  .flatMap((c) => (c.type === "text" ? [c.text] : []))
+                  .join("");
+          return text === "" ? undefined : capText(text, SOURCE_CAP);
+        };
+
+        // The first or latest answered exchange with text to name a title from, in paged
+        // scans; `done` also covers `write` submissions (settings records), so `input` is
+        // filtered, and a record whose sides are both textless (an image-only message, an
+        // empty answer) is passed over.
+        const exchange = async (
+          id: ConversationId,
+          order: "ascending" | "descending",
+          cursor?: Cursor
+        ): Promise<
+          | {
+              readonly entry: EntryId;
+              readonly user?: string;
+              readonly answer?: string;
+            }
+          | undefined
+        > => {
+          const page = await durableStorage.scanSubmissions(
+            { conversationId: id, status: "done", order },
+            100,
+            cursor,
+            context
+          );
+          const found = await Promise.all(
+            page.items
+              .filter((item) => item.status === "done" && item.type === "input")
+              .map(async (record) => {
+                const [user, answer] = await Promise.all([
+                  exchangeText(id, record.entry),
+                  exchangeText(id, record.answer),
+                ]);
+                return user === undefined && answer === undefined
+                  ? undefined
+                  : {
+                      entry: record.entry,
+                      ...(user === undefined ? {} : { user }),
+                      ...(answer === undefined ? {} : { answer }),
+                    };
+              })
+          );
+          return (
+            found.find((each) => each !== undefined) ??
+            (page.next === undefined
+              ? undefined
+              : exchange(id, order, page.next))
+          );
+        };
+
+        // A one-shot completion outside the transcript, traced as a generation in the
+        // conversation's Langfuse session. It resolves on provider errors, so the caller
+        // reads `stopReason`.
+        const completeTitle = (
+          id: ConversationId,
+          model: Model<Api>,
+          messages: Message[]
+        ) =>
+          attempt(() =>
+            options.models.completeSimple(
+              model,
+              { messages },
+              { maxTokens: 1024, cacheRetention: "none" }
+            )
+          ).pipe(
+            Effect.tap((message) =>
+              Effect.annotateCurrentSpan(generationAttributes(message))
+            ),
+            Effect.withSpan("conversation title", {
+              attributes: {
+                "langfuse.observation.type": "generation",
+                "langfuse.session.id": tracing.sessionOf(id),
+                "langfuse.observation.input": traceJson(messages),
+              },
+            })
+          );
+
+        const conversationModel = (id: ConversationId) =>
+          attempt(() => harness.snapshot(AgentDoc, id, context)).pipe(
+            Effect.map((agent) =>
+              agent?.model === undefined
+                ? undefined
+                : options.models.getModel(
+                    agent.model.provider,
+                    agent.model.modelId
+                  )
+            )
+          );
 
         // The skills a conversation recorded; every conversation records them when it is created.
         const skillsOf = (id: ConversationId) =>
@@ -2447,8 +2588,175 @@ export class Agents extends Context.Service<
             return false;
           });
 
+        const renameTitle = Effect.fn("Agents.renameTitle")(function* (
+          id: ConversationId,
+          title: string
+        ) {
+          yield* handleOf(id);
+          const trimmed = title.trim();
+          const found = yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const doc = await tx.doc(MetaDoc, id);
+              if (doc.meta === undefined) {
+                return false;
+              }
+              doc.meta = { ...doc.meta, title: trimmed, titleSource: "manual" };
+              return true;
+            }, context)
+          );
+          if (!found) {
+            return yield* new ConversationNotFound({ id: Number(id) });
+          }
+          return yield* get(id);
+        });
+
+        // One automatic attempt after a run-end: the latch and provenance are read first so a
+        // spent or superseded title needs no scan or commit at all, the exchange check runs
+        // before the claim so a run with no usable text never spends the latch, and
+        // `autoTitleAt` is committed before the model call so the attempt is never retried.
+        // A rename or regenerate that lands meanwhile is not stomped: the apply commits only
+        // while the source still reads "prompt".
+        const autoTitle = Effect.fn("Agents.autoTitle")(function* (
+          id: ConversationId
+        ) {
+          if (options.titleGeneration !== true) {
+            return;
+          }
+          yield* handleOf(id);
+          const current = yield* attempt(() =>
+            harness.snapshot(MetaDoc, id, context)
+          );
+          if (
+            current?.meta === undefined ||
+            (current.meta.titleSource ?? "prompt") !== "prompt" ||
+            current.meta.autoTitleAt !== undefined
+          ) {
+            return;
+          }
+          const first = yield* attempt(() => exchange(id, "ascending"));
+          // No exchange carries text yet: the attempt stays unspent for a run-end that does.
+          if (first === undefined) {
+            return;
+          }
+          const claimed = yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const doc = await tx.doc(MetaDoc, id);
+              const { meta } = doc;
+              if (meta === undefined) {
+                return "missing" as const;
+              }
+              if (
+                (meta.titleSource ?? "prompt") !== "prompt" ||
+                meta.autoTitleAt !== undefined
+              ) {
+                return "skip" as const;
+              }
+              doc.meta = { ...meta, autoTitleAt: Date.now() };
+              return "claimed" as const;
+            }, context)
+          );
+          if (claimed !== "claimed") {
+            return;
+          }
+          const model = yield* conversationModel(id);
+          if (model === undefined) {
+            yield* Effect.logWarning(
+              `Conversation ${id}: its model is not available for a title`
+            );
+            return;
+          }
+          const messages = titleMessages({
+            firstUser: first.user,
+            firstAnswer: first.answer,
+          });
+          const message = yield* completeTitle(id, model, messages);
+          const title =
+            message.stopReason === "stop" ? titleText(message) : undefined;
+          if (title === undefined) {
+            yield* Effect.logWarning(
+              `Conversation ${id}: the model gave no usable title`
+            );
+            return;
+          }
+          yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const doc = await tx.doc(MetaDoc, id);
+              const { meta } = doc;
+              if (
+                meta === undefined ||
+                (meta.titleSource ?? "prompt") !== "prompt"
+              ) {
+                return;
+              }
+              doc.meta = { ...meta, title, titleSource: "generated" };
+            }, context)
+          );
+        });
+
+        // An explicit (re)generation: unconditional apply — a click beats a manual title.
+        const generateTitle = Effect.fn("Agents.generateTitle")(function* (
+          id: ConversationId
+        ) {
+          yield* handleOf(id);
+          if (options.titleGeneration !== true) {
+            return yield* new TitleGenerationFailed({
+              id: Number(id),
+              reason: "no_model",
+            });
+          }
+          const [first, latest] = yield* attempt(() =>
+            Promise.all([exchange(id, "ascending"), exchange(id, "descending")])
+          );
+          if (first === undefined && latest === undefined) {
+            return yield* new TitleGenerationFailed({
+              id: Number(id),
+              reason: "no_exchange",
+            });
+          }
+          const model = yield* conversationModel(id);
+          if (model === undefined) {
+            return yield* new TitleGenerationFailed({
+              id: Number(id),
+              reason: "model_unavailable",
+            });
+          }
+          const messages = titleMessages({
+            firstUser: first?.user,
+            firstAnswer: first?.answer,
+            ...(latest !== undefined && latest.entry !== first?.entry
+              ? {
+                  latestUser: latest.user,
+                  latestAnswer: latest.answer,
+                }
+              : {}),
+          });
+          const message = yield* completeTitle(id, model, messages);
+          const title =
+            message.stopReason === "stop" ? titleText(message) : undefined;
+          if (title === undefined) {
+            return yield* new TitleGenerationFailed({
+              id: Number(id),
+              reason: "model_error",
+              ...(message.errorMessage === undefined
+                ? {}
+                : { message: message.errorMessage }),
+            });
+          }
+          yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const doc = await tx.doc(MetaDoc, id);
+              const { meta } = doc;
+              if (meta !== undefined) {
+                doc.meta = { ...meta, title, titleSource: "generated" };
+              }
+            }, context)
+          );
+          return yield* get(id);
+        });
+
         return Agents.of({
           model: options.model,
+          titleGeneration: options.titleGeneration === true,
           capabilities,
           agent: agentOf,
           configure: configureSettings,
@@ -2463,6 +2771,9 @@ export class Agents extends Context.Service<
           events,
           history,
           entries,
+          renameTitle,
+          autoTitle,
+          generateTitle,
         });
       })
     );

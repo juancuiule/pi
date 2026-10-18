@@ -45,6 +45,7 @@ import type {
   ConversationNotFound,
   InvalidUpgrade,
   SkillNotFound,
+  TitleGenerationFailed,
 } from "../errors.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
@@ -196,6 +197,18 @@ export class Conversations extends Context.Service<
     unarchive(
       id: number
     ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Rename a Conversation's title; marks it manual. */
+    rename(
+      id: number,
+      title: string
+    ): Effect.Effect<ConversationSummary, AgentError | ConversationNotFound>;
+    /** Generate a title with the conversation's model; works paused or archived. */
+    generateTitle(
+      id: number
+    ): Effect.Effect<
+      ConversationSummary,
+      AgentError | ConversationNotFound | TitleGenerationFailed
+    >;
     /** What a Conversation runs with now: its settings, model and prompt sections. */
     agent(
       id: number
@@ -347,6 +360,19 @@ export class Conversations extends Context.Service<
                       Effect.forkIn(layerScope)
                     );
                   }
+                }
+                if (was && !value) {
+                  // One answered Run earns one automatic title; the meta latch inside decides.
+                  // Unlike the checkpoint it needs no Sandbox, and a Pause is no reason to skip it.
+                  yield* agents.autoTitle(entry.seat.id).pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning(
+                        `Title generation of conversation ${entry.seat.id} failed`,
+                        cause
+                      )
+                    ),
+                    Effect.forkIn(layerScope)
+                  );
                 }
               })
             ),
@@ -786,6 +812,26 @@ export class Conversations extends Context.Service<
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),
           history: (id, range) => agents.history(asId(id), range),
+          rename: Effect.fn("Conversations.rename")(function* (id, title) {
+            const entry = live.get(id);
+            const stored = yield* agents.renameTitle(asId(id), title);
+            return summaryOf(
+              stored,
+              entry,
+              entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+            );
+          }),
+          generateTitle: Effect.fn("Conversations.generateTitle")(
+            function* (id) {
+              const entry = live.get(id);
+              const stored = yield* agents.generateTitle(asId(id));
+              return summaryOf(
+                stored,
+                entry,
+                entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+              );
+            }
+          ),
           agent: (id) => agents.agent(asId(id)),
           configure: (id, change) => agents.configure(asId(id), change),
           reset: (id) => agents.reset(asId(id)),

@@ -160,6 +160,16 @@ const ConversationsHandlers = HttpApiBuilder.group(
           .unarchive(params.id)
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
+      .handle("rename", ({ params, payload }) =>
+        conversations
+          .rename(params.id, payload.title)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("generateTitle", ({ params }) =>
+        conversations
+          .generateTitle(params.id)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
       .handle("agent", ({ params }) =>
         conversations
           .agent(params.id)
@@ -660,11 +670,12 @@ const infoHandlers = (apiUrl: string) =>
       const {
         capabilities,
         model: { provider, modelId },
+        titleGeneration,
       } = yield* Agents;
       const { capacity } = yield* Conversations;
       const model = `${provider}/${modelId}`;
       return handlers
-        .handle("get", () => Effect.succeed({ model, apiUrl }))
+        .handle("get", () => Effect.succeed({ model, apiUrl, titleGeneration }))
         .handle("capabilities", () => capabilities)
         .handle("capacity", () => capacity);
     })
