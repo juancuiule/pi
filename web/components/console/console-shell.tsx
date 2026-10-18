@@ -12,9 +12,11 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { SearchContext } from "@/lib/search-context";
 import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
 
 import { CapacityGuardProvider } from "./capacity-dialog";
+import { SearchPalette } from "./search-palette";
 import { Sidebar } from "./sidebar";
 
 const MenuContext = createContext<() => void>(() => null);
@@ -25,6 +27,8 @@ export const useOpenMenu = () => useContext(MenuContext);
 export const ConsoleShell = ({ children }: { children: ReactNode }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const openMenu = useCallback(() => setMenuOpen(true), []);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const openSearch = useCallback(() => setSearchOpen(true), []);
   const pathname = usePathname();
   const query = useSearchParams().toString();
   // Any navigation closes the Sheet: a link, a router.push selection, back/forward.
@@ -38,26 +42,33 @@ export const ConsoleShell = ({ children }: { children: ReactNode }) => {
 
   return (
     <MenuContext.Provider value={openMenu}>
-      <CapacityGuardProvider>
-        <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-          <SheetContent side="left" className="w-72">
-            <SheetTitle className="sr-only">Conversations</SheetTitle>
-            <Sidebar />
-          </SheetContent>
-        </Sheet>
-        {isDesktop === true ? (
-          <ResizablePanelGroup orientation="horizontal" className="h-dvh">
-            <ResizablePanel defaultSize="260px" minSize="220px" maxSize="420px">
+      <SearchContext.Provider value={openSearch}>
+        <CapacityGuardProvider>
+          <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
+          <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+            <SheetContent side="left" className="w-72">
+              <SheetTitle className="sr-only">Conversations</SheetTitle>
               <Sidebar />
-            </ResizablePanel>
-            <ResizableHandle />
-            <ResizablePanel minSize="30%">{children}</ResizablePanel>
-          </ResizablePanelGroup>
-        ) : null}
-        {isDesktop === false ? (
-          <div className="flex h-dvh flex-col">{children}</div>
-        ) : null}
-      </CapacityGuardProvider>
+            </SheetContent>
+          </Sheet>
+          {isDesktop === true ? (
+            <ResizablePanelGroup orientation="horizontal" className="h-dvh">
+              <ResizablePanel
+                defaultSize="260px"
+                minSize="220px"
+                maxSize="420px"
+              >
+                <Sidebar />
+              </ResizablePanel>
+              <ResizableHandle />
+              <ResizablePanel minSize="30%">{children}</ResizablePanel>
+            </ResizablePanelGroup>
+          ) : null}
+          {isDesktop === false ? (
+            <div className="flex h-dvh flex-col">{children}</div>
+          ) : null}
+        </CapacityGuardProvider>
+      </SearchContext.Provider>
     </MenuContext.Provider>
   );
 };
