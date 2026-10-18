@@ -140,6 +140,8 @@ const WebSearchLive =
 
 const AgentsLive = Agents.layer({
   ...setup,
+  // Generated titles need a real model; the echo model just keeps the prompt-derived one.
+  titleGeneration: configured !== undefined,
   storage,
   saveScreenshot:
     store === undefined
