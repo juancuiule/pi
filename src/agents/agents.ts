@@ -15,6 +15,7 @@ import type {
   ConversationId,
   Cursor,
   EntryId,
+  EntryRecord,
   Extension,
   Harness as HarnessType,
   Storage,
@@ -41,6 +42,7 @@ import {
   Effect,
   Exit,
   Layer,
+  Option,
   Queue,
   Schema,
   Scope,
@@ -633,6 +635,18 @@ export class Agents extends Context.Service<
       id: ConversationId,
       options?: { before?: number | undefined; limit?: number | undefined }
     ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
+    /**
+     * The conversation's transcript entries oldest first from `from` (an exclusive lower entry-id bound,
+     * so callers pass a cursor verbatim), every kind, including what head markers hide — `history` serves
+     * the console's bounded view, this serves the search indexer. Emitted lazily, one commit per page.
+     */
+    entries(
+      id: ConversationId,
+      options?: { from?: number | undefined }
+    ): Effect.Effect<
+      Stream.Stream<EntryRecord, AgentError>,
+      AgentError | ConversationNotFound
+    >;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -2208,6 +2222,48 @@ export class Agents extends Context.Service<
           );
         });
 
+        /** Transcript pages for the indexer; each page is one commit. */
+        const ENTRIES_PAGE = 200;
+
+        const entries = Effect.fn("Agents.entries")(function* (
+          id: ConversationId,
+          range: { readonly from?: number | undefined } = {}
+        ) {
+          yield* handleOf(id);
+          const first =
+            range.from === undefined
+              ? undefined
+              : ((range.from + 1) as EntryId);
+          // Paged by entry id rather than the durable cursor: the bound is order-stable,
+          // so a re-run from any cursor reads the same suffix.
+          return Stream.paginate(first, (minEntryId) =>
+            attempt(() =>
+              harness.commit(
+                (tx) =>
+                  tx.scanEntries(
+                    {
+                      conversationId: id,
+                      ...(minEntryId === undefined ? {} : { minEntryId }),
+                      order: "ascending",
+                    },
+                    ENTRIES_PAGE
+                  ),
+                context
+              )
+            ).pipe(
+              Effect.map((page) => {
+                const last = page.items.at(-1);
+                return [
+                  page.items,
+                  page.items.length < ENTRIES_PAGE || last === undefined
+                    ? Option.none<EntryId>()
+                    : Option.some((Number(last.id) + 1) as EntryId),
+                ] as const;
+              })
+            )
+          );
+        });
+
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
         ) {
@@ -2714,6 +2770,7 @@ export class Agents extends Context.Service<
           unarchive,
           events,
           history,
+          entries,
           renameTitle,
           autoTitle,
           generateTitle,

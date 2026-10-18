@@ -10,6 +10,7 @@ import {
   Monitor,
   Moon,
   Plus,
+  Search,
   Settings,
   ShieldAlert,
   Sun,
@@ -32,6 +33,7 @@ import {
 import { parseConversationId } from "@/lib/conversation-id";
 import { relativeTime } from "@/lib/format";
 import { useConversations, useInfo } from "@/lib/queries";
+import { useOpenSearch } from "@/lib/search-context";
 import { useConversationStore } from "@/lib/store";
 import { useMounted } from "@/lib/use-media-query";
 import { useNow } from "@/lib/use-now";
@@ -114,6 +116,7 @@ const ThemeToggle = () => {
 
 export const Sidebar = () => {
   const router = useRouter();
+  const openSearch = useOpenSearch();
   const pathname = usePathname();
   const param = useSearchParams().get("c");
   // A conversation is current only on the chat route.
@@ -240,6 +243,17 @@ export const Sidebar = () => {
         >
           <Plus />
           New conversation
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={openSearch}
+          className="mt-1 w-full justify-start"
+        >
+          <Search />
+          Search
+          <kbd className="bg-muted text-tiny text-muted-foreground ml-auto rounded border px-1 py-0.5 font-sans">
+            ⌘K
+          </kbd>
         </Button>
       </div>
       <ScrollArea className="mt-2 min-h-0 flex-1">

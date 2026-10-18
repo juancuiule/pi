@@ -20,6 +20,7 @@ import { Artifacts } from "../artifacts/artifacts.ts";
 import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
+import { Search } from "../search/search.ts";
 import { Skills, SkillSource } from "../skills/skills.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
@@ -37,7 +38,9 @@ const serverWith = (
   >,
   // One Skills serves both the API group and the agents — the provide overrides the agents' own, like
   // server.ts's shared SkillsLive.
-  skills: Layer.Layer<Skills> = Skills.none
+  skills: Layer.Layer<Skills> = Skills.none,
+  // Search sits between Conversations (which indexes into it) and the API's search group.
+  search: Layer.Layer<Search, unknown, Agents> = Search.none
 ) =>
   HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1" }), {
     disableListenLog: true,
@@ -49,6 +52,8 @@ const serverWith = (
         sweepEveryMs: 60_000,
       })
     ),
+    // Merge so a test can reach the same Search the API and Conversations use.
+    Layer.provideMerge(search),
     Layer.provide(agents),
     Layer.provide(skills),
     Layer.provideMerge(NodeHttpServer.layerTest)
@@ -82,6 +87,47 @@ const form = (name: string, body: string, conversation?: number) => {
 };
 
 describe("HTTP API", () => {
+  it("serves search hits grouped by conversation, an unmatchable query the recent list", async () => {
+    const agents = fauxAgents([
+      fauxAssistantMessage([fauxText("Quokkas smile.")]),
+    ]);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        // Let the startup sweep pass first, so only run-end indexing can find this one.
+        yield* (yield* Search).catchUp;
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "tell me about quokkas" },
+        });
+        // Run-end indexing is forked; poll until the prompt lands in the index.
+        let hits = yield* client.search.query({ query: { q: "quokkas" } });
+        for (
+          let attempt = 0;
+          attempt < 300 &&
+          !hits.some((row) => row.id === created.id && row.matches.length > 0);
+          attempt += 1
+        ) {
+          yield* Effect.sleep("10 millis");
+          hits = yield* client.search.query({ query: { q: "quokkas" } });
+        }
+        const empty = yield* client.search.query({ query: { q: "!!!" } });
+        return { created, hits, empty };
+      }).pipe(
+        Effect.provide(serverWith(agents.layer, Skills.none, Search.temporary))
+      )
+    );
+
+    const hit = result.hits.find((row) => row.id === result.created.id);
+    expect(hit).toMatchObject({ archived: false });
+    expect(
+      hit?.matches.some((match) =>
+        match.snippet.some((segment) => segment.match)
+      )
+    ).toBeTruthy();
+    expect(result.empty.every((row) => row.matches.length === 0)).toBeTruthy();
+  });
+
   it("lists skills and MCP servers", async () => {
     const echo = fakeMcpServer("test", [
       { name: "echo", call: () => ({ content: [] }) },

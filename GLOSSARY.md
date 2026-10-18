@@ -26,6 +26,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Trusted domain**: A host the person lists under Settings so an Artifact's images may load from it (`cdn.example.com`, or `*.example.com` for its subdomains). Everything else an Artifact could fetch stays blocked. _Avoid_: allowlist, whitelist
 
+**Search**: Full-text search over Conversation transcripts — titles, prompts and answers, never tool calls — kept in a rebuildable index beside the durable store, updated when a Run ends. Person-facing only (`/api/search` and the console's palette); the agent has no search tool.
+
 ## Workspaces
 
 **Workspace**: The durable machine side of a Conversation: its Level, its Software and its files. _Avoid_: volume, environment

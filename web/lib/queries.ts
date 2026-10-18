@@ -1,6 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type {
   ApprovalChoice,
   ConversationSummary,
@@ -32,6 +37,18 @@ export const useArtifacts = () =>
     queryFn: () => runApi((c) => c.artifacts.list({ query: {} })),
     // A run can write a page between polls of the conversation list.
     refetchInterval: 2000,
+  });
+
+/** Full-text over Conversation titles and messages, for the ⌘K palette; fetched while it is open. */
+export const useSearch = (q: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ["search", q],
+    queryFn: () => runApi((c) => c.search.query({ query: { q } })),
+    enabled,
+    // A search answer is per-keystroke; a rejected one (over the 500-char cap) is not worth retrying.
+    retry: false,
+    // The previous list stays while the next keystroke's query loads.
+    placeholderData: keepPreviousData,
   });
 
 export const useInfo = () =>

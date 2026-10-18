@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import { Agents } from "./agents/agents.ts";
 import { approvalKey, STOPPED, withApproval } from "./approvals.ts";
 import type { SandboxChoice } from "./sandbox/sandbox.ts";
+import { Search } from "./search/search.ts";
 import { Conversations } from "./server/conversations.ts";
 import {
   callTool,
@@ -412,7 +413,7 @@ describe("tool approvals", () => {
     const layer = Conversations.layer({
       idleTimeoutMs: 60_000,
       sweepEveryMs: 60_000,
-    }).pipe(Layer.provide(agents.layer));
+    }).pipe(Layer.provide(Search.none), Layer.provide(agents.layer));
 
     const { listed, reply, ran } = await Effect.runPromise(
       Effect.gen(function* () {

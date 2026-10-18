@@ -694,6 +694,42 @@ const FileGroup = HttpApiGroup.make("files").add(
   })
 );
 
+/** One span of a search snippet; `match` flags the part that hit the query. */
+export const SnippetSegment = Schema.Struct({
+  text: Schema.String,
+  match: Schema.Boolean,
+});
+export type SnippetSegment = typeof SnippetSegment.Type;
+
+/** One match inside a Conversation: its role, a highlighted snippet, and when it was written. */
+export const SearchMatch = Schema.Struct({
+  /** The matched entry; absent when the Conversation's title matched. */
+  entry: Schema.optionalKey(Schema.Number),
+  role: Schema.Literals(["title", "user", "assistant"]),
+  snippet: Schema.Array(SnippetSegment),
+  createdAt: Schema.Number,
+});
+export type SearchMatch = typeof SearchMatch.Type;
+
+/** A Conversation and its best matches, best first. */
+export const SearchResult = Schema.Struct({
+  id: Schema.Number,
+  title: Schema.String,
+  archived: Schema.Boolean,
+  createdAt: Schema.Number,
+  matches: Schema.Array(SearchMatch),
+});
+export type SearchResult = typeof SearchResult.Type;
+
+const SearchGroup = HttpApiGroup.make("search").add(
+  // Full-text over Conversation titles, prompts and assistant answers, grouped by Conversation, best
+  // first; archived Conversations are included, flagged. An empty q lists the most recent.
+  HttpApiEndpoint.get("query", "/search", {
+    query: { q: Schema.String.check(Schema.isMaxLength(500)) },
+    success: Schema.Array(SearchResult),
+  })
+);
+
 const InfoGroup = HttpApiGroup.make("info").add(
   HttpApiEndpoint.get("get", "/info", {
     success: Schema.Struct({
@@ -720,5 +756,6 @@ export const Api = HttpApi.make("effect-pi")
   .add(TrustedDomainGroup)
   .add(SkillGroup)
   .add(FileGroup)
+  .add(SearchGroup)
   .add(InfoGroup)
   .prefix("/api");

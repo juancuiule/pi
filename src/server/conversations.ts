@@ -50,6 +50,7 @@ import type {
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
+import { Search } from "../search/search.ts";
 import { Workspaces } from "../workspaces/workspaces.ts";
 
 export type ConversationStatus = "running" | "idle" | "paused" | "archived";
@@ -272,6 +273,7 @@ export class Conversations extends Context.Service<
         const attachments = yield* Attachments;
         const capacity = yield* Capacity;
         const workspaces = yield* Workspaces;
+        const search = yield* Search;
         const live = new Map<number, Live>();
         // A Seat mid-open, before `register` lands it in `live`: its Conversation is recorded already, so it
         // reads as paused. Look-ups wait on the gate instead of opening a second Seat or writing its Workspace;
@@ -327,7 +329,20 @@ export class Conversations extends Context.Service<
                 entry.running = value;
                 if (value) {
                   entry.checkpointed = false;
-                } else if (was && !entry.pausing && !entry.checkpointed) {
+                } else if (was) {
+                  // A Run's entries are committed when it ends, Sandbox or none — this edge is
+                  // the only signal that fires for every run, paused ones included.
+                  yield* search.indexConversation(entry.seat.id).pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning(
+                        `Search indexing of conversation ${entry.seat.id} failed`,
+                        cause
+                      )
+                    ),
+                    Effect.forkIn(layerScope)
+                  );
+                }
+                if (was && !value && !entry.pausing && !entry.checkpointed) {
                   const { sandbox, storage } = entry.seat;
                   if (sandbox !== undefined && storage !== undefined) {
                     entry.checkpointed = true;
@@ -719,6 +734,16 @@ export class Conversations extends Context.Service<
             yield* close(id);
           }
           yield* agents.archive(asId(id), yield* Clock.currentTimeMillis);
+          // A stopped seat may have entries its last run-end missed; index them while archived.
+          yield* search.indexConversation(asId(id)).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Search indexing of conversation ${id} failed`,
+                cause
+              )
+            ),
+            Effect.forkIn(layerScope)
+          );
         });
 
         const decide = Effect.fn("Conversations.decide")(function* (

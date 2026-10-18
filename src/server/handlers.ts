@@ -35,6 +35,7 @@ import {
   SkillNotFound,
   WorkspaceFileNotFound,
 } from "../errors.ts";
+import { Search } from "../search/search.ts";
 import { Skills } from "../skills/skills.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
@@ -680,6 +681,20 @@ const infoHandlers = (apiUrl: string) =>
     })
   );
 
+const SearchHandlers = HttpApiBuilder.group(Api, "search", (handlers) =>
+  Effect.gen(function* () {
+    const search = yield* Search;
+    return handlers.handle("query", ({ query }) =>
+      search.query(query.q).pipe(
+        Effect.catchTags({
+          AgentError: Effect.die,
+          SearchError: Effect.die,
+        })
+      )
+    );
+  })
+);
+
 /** The HTTP API; `apiUrl` is the server's own address, reported by `/api/info`. */
 export const apiLayer = (options: { readonly apiUrl: string }) =>
   HttpApiBuilder.layer(Api).pipe(
@@ -691,6 +706,7 @@ export const apiLayer = (options: { readonly apiUrl: string }) =>
         TrustedDomainsHandlers,
         SkillsHandlers,
         FilesHandlers,
+        SearchHandlers,
         infoHandlers(options.apiUrl)
       )
     ),

@@ -6,6 +6,7 @@
 // Validates the environment against .env.schema and loads .env before anything reads it (pi-ai reads API keys itself).
 import "varlock/auto-load";
 import { createServer } from "node:http";
+import path from "node:path";
 
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
@@ -31,6 +32,7 @@ import {
   saveScreenshotsTo,
   saveScreenshotsToBlobs,
 } from "./src/screenshots.ts";
+import { Search } from "./src/search/search.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
@@ -159,9 +161,20 @@ const AgentsLive = Agents.layer({
   Layer.provideMerge(WebSearchLive)
 );
 
+// The index is a rebuildable projection; pointing it at the durable store would quietly write
+// search tables into EFFECT_PI_DB, so the misconfiguration is refused at startup.
+if (path.resolve(config.paths.searchDb) === path.resolve(config.paths.db)) {
+  throw new Error("SEARCH_DB must be its own file, not EFFECT_PI_DB");
+}
+
+const SearchLive = Search.layer({ database: config.paths.searchDb }).pipe(
+  Layer.provide(AgentsLive)
+);
+
 const ConversationsLive = Conversations.layer(config.server).pipe(
   Layer.provide(AgentsLive),
-  Layer.provide(CapacityLive)
+  Layer.provide(CapacityLive),
+  Layer.provide(SearchLive)
 );
 
 const NodeHttpServerLayer = NodeHttpServer.layer(createServer, {
@@ -191,6 +204,7 @@ const ServerLive = HttpRouter.serve(
 ).pipe(
   Layer.provide(ConversationsLive),
   Layer.provide(AgentsLive),
+  Layer.provide(SearchLive),
   // The skills group reads and writes through the same Skills the Agents layer uses.
   Layer.provide(SkillsLive),
   Layer.provide(NodeHttpServerLayer),

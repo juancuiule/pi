@@ -48,6 +48,7 @@ export const capacity = {
 /** Where the server keeps conversations and attachments, where skills are read from, and where desktop screenshots go. */
 export const paths = {
   db: ENV.EFFECT_PI_DB,
+  searchDb: ENV.SEARCH_DB,
   skills: ENV.SKILLS_DIR,
   skillsOrg: ENV.SKILLS_ORG_DIR,
   screenshots: ENV.SCREENSHOTS_DIR,
