@@ -9,6 +9,7 @@ import type {
   ConversationId,
   Cursor,
   EntryId,
+  EntryRecord,
   Extension,
   Harness as HarnessType,
   Storage,
@@ -600,6 +601,18 @@ export class Agents extends Context.Service<
       id: ConversationId,
       options?: { before?: number | undefined; limit?: number | undefined }
     ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
+    /**
+     * The conversation's transcript entries oldest first from `from` (an exclusive lower entry-id bound,
+     * so callers pass a cursor verbatim), every kind, including what head markers hide — `history` serves
+     * the console's bounded view, this serves the search indexer. Emitted lazily, one commit per page.
+     */
+    entries(
+      id: ConversationId,
+      options?: { from?: number | undefined }
+    ): Effect.Effect<
+      Stream.Stream<EntryRecord, AgentError>,
+      AgentError | ConversationNotFound
+    >;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -2406,6 +2419,7 @@ export class Agents extends Context.Service<
           unarchive,
           events,
           history,
+          entries: () => Effect.succeed(Stream.empty),
         });
       })
     );
