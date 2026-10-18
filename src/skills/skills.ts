@@ -23,11 +23,14 @@ import type {
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Schema, Semaphore } from "effect";
 
+import { withApproval } from "../approvals.ts";
 import { SkillNotFound } from "../errors.ts";
 import {
+  checkSkillFiles,
   decodeSkill,
+  InvalidSkill,
   formatSkillHints,
   formatSkillMessage,
   parseSkillCommand,
@@ -39,10 +42,24 @@ import {
 } from "./format.ts";
 import type { Skill } from "./format.ts";
 import { SkillSource } from "./source.ts";
-import type { SkillSourceError } from "./source.ts";
+import type { SkillOrigin, SkillSourceError } from "./source.ts";
 
 export type { Skill } from "./format.ts";
+export type { SkillOrigin } from "./source.ts";
 export { SkillSource, SkillSourceError } from "./source.ts";
+
+/** What writing a skill's org folder did: created it, replaced the org copy, or shadowed a builtin one. */
+export type SkillSaveOutcome = "created" | "updated" | "shadowed";
+
+/**
+ * What deleting a skill's org copy did: `removed` when the folder is gone, `reverted` when the builtin copy it
+ * shadowed shows again. `unchanged` (builtin-only) and `missing` (unknown) write nothing.
+ */
+export type SkillRemoveOutcome =
+  | "removed"
+  | "reverted"
+  | "unchanged"
+  | "missing";
 
 /** Where sandboxed conversations find their skills, relative to the sandbox's working directory. */
 export const SANDBOX_SKILLS_DIR = ".skills";
@@ -130,6 +147,33 @@ export class Skills extends Context.Service<
     /** The source's skills now: every folder with a valid SKILL.md, and why the others were skipped. */
     readonly catalog: Effect.Effect<SkillCatalog, SkillSourceError>;
     /**
+     * Create or replace the org folder `name` with `files` (the whole folder, text only), after it passes
+     * `checkSkillFiles` — a folder that fails is never written. `outcome` says what the write did.
+     */
+    readonly save: (
+      name: string,
+      files: Readonly<Record<string, string>>
+    ) => Effect.Effect<
+      { readonly skill: Skill; readonly outcome: SkillSaveOutcome },
+      InvalidSkill | SkillSourceError
+    >;
+    /** Delete `name`'s org copy; the outcome says what changed, and builtin folders are never touched. */
+    readonly remove: (
+      name: string
+    ) => Effect.Effect<SkillRemoveOutcome, SkillSourceError>;
+    /**
+     * The listed folder's files — the org copy wholesale when the skill is overridden — or `undefined` when no
+     * folder lists `id`. For the console's editor.
+     */
+    readonly folder: (id: string) => Effect.Effect<
+      | {
+          readonly origin: SkillOrigin;
+          readonly files: Record<string, Uint8Array>;
+        }
+      | undefined,
+      SkillSourceError
+    >;
+    /**
      * What the `skill` tool returns: a bundled file, or SKILL.md with a header listing the other files. `sandboxDir`
      * is the skill's folder in the sandbox, when there is one.
      */
@@ -182,6 +226,9 @@ export class Skills extends Context.Service<
     Skills,
     Effect.gen(function* () {
       const source = yield* SkillSource;
+      // The outcome of a save or remove is computed from a list: serialize the two, or a racing writer could
+      // turn the other's "created" into an "updated" — or lose a folder between the read and the write.
+      const writing = yield* Semaphore.make(1);
       const decoder = new TextDecoder();
       const readText = (id: string, file: string) =>
         source
@@ -200,6 +247,11 @@ export class Skills extends Context.Service<
           );
           if (decoded._tag === "Failure") {
             problems.push(`${folder.id}: ${decoded.failure.message}`);
+          } else if (decoded.success.name !== folder.id) {
+            // GET, folder and remove resolve by folder id: a mismatched name would list a skill they cannot reach.
+            problems.push(
+              `${folder.id}: skill name "${decoded.success.name}" doesn't match its folder`
+            );
           } else if (skills.some((s) => s.name === decoded.success.name)) {
             problems.push(
               `${folder.id}: another skill is already named ${decoded.success.name}`
@@ -209,6 +261,65 @@ export class Skills extends Context.Service<
           }
         }
         return { skills, problems };
+      });
+
+      const save = Effect.fnUntraced(function* (
+        name: string,
+        files: Readonly<Record<string, string>>
+      ) {
+        // Validate fully before anything is written: a folder that fails leaves the source untouched.
+        const skill = yield* checkSkillFiles(name, files);
+        const outcome = yield* writing.withPermit(
+          Effect.gen(function* () {
+            const listed = (yield* source.list).find(
+              (folder) => folder.id === name
+            );
+            yield* source.put(name, files);
+            if (listed === undefined) {
+              return "created" as const;
+            }
+            return listed.origin === "builtin"
+              ? ("shadowed" as const)
+              : ("updated" as const);
+          })
+        );
+        return { skill, outcome };
+      });
+
+      const remove = Effect.fnUntraced(function* (name: string) {
+        return yield* writing.withPermit(
+          Effect.gen(function* () {
+            const listed = (yield* source.list).find(
+              (folder) => folder.id === name
+            );
+            if (listed === undefined) {
+              return "missing" as const;
+            }
+            if (listed.origin === "builtin") {
+              return "unchanged" as const;
+            }
+            yield* source.remove(name);
+            return listed.origin === "org"
+              ? ("removed" as const)
+              : ("reverted" as const);
+          })
+        );
+      });
+
+      const folder = Effect.fnUntraced(function* (id: string) {
+        const listed = (yield* source.list).find((each) => each.id === id);
+        if (listed === undefined) {
+          return;
+        }
+        const files = yield* Effect.forEach(
+          listed.files,
+          (file) =>
+            source
+              .read(id, file)
+              .pipe(Effect.map((bytes) => [file, bytes] as const)),
+          { concurrency: 8 }
+        );
+        return { origin: listed.origin, files: Object.fromEntries(files) };
       });
 
       const read = Effect.fnUntraced(function* (
@@ -366,6 +477,9 @@ export class Skills extends Context.Service<
 
       return Skills.of({
         catalog,
+        save,
+        remove,
+        folder,
         read,
         body,
         expand,
@@ -377,10 +491,10 @@ export class Skills extends Context.Service<
     })
   );
 
-  /** Skills from folders under `root` on the host. */
-  static readonly directory = (root: string) =>
+  /** Skills from folders under `root` on the host; `orgRoot` keeps the writable overlay outside it. */
+  static readonly directory = (root: string, orgRoot?: string) =>
     Skills.layer.pipe(
-      Layer.provide(SkillSource.directory(root)),
+      Layer.provide(SkillSource.directory(root, orgRoot)),
       Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))
     );
 
@@ -400,8 +514,127 @@ const conversationSkills = async (
   return doc?.skills ?? [];
 };
 
-/** The `skill` tool and the section listing the skills, both reading the conversation's `SkillsDoc`. */
-export const skillsExtension = (skills: Skills["Service"]): Extension =>
+/**
+ * What `skill_save`/`skill_delete` report so the calling conversation's settings can follow: `onSaved` enables a
+ * created skill or refreshes an enabled edited one, `onDeleted` disables a removed one or refreshes a reverted
+ * one. Each resolves whether the conversation's state was applied; the tool's text tells the model.
+ */
+export interface SkillEditHooks {
+  readonly onSaved: (
+    id: ConversationId,
+    name: string,
+    outcome: SkillSaveOutcome
+  ) => Promise<boolean>;
+  readonly onDeleted: (
+    id: ConversationId,
+    name: string,
+    outcome: SkillRemoveOutcome
+  ) => Promise<boolean>;
+}
+
+// Models sometimes send `files` as a JSON string; a copy is repaired, the call's arguments stay unchanged.
+const prepareSkillSaveArguments = (input: unknown) => {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return input as {
+      name: string;
+      files: Record<string, string>;
+      reason: string;
+    };
+  }
+  const args = { ...input } as Record<string, unknown>;
+  if (typeof args.files === "string") {
+    try {
+      const parsed: unknown = JSON.parse(args.files);
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed)
+      ) {
+        args.files = parsed;
+      }
+    } catch {
+      // Left as the string: the schema reports it.
+    }
+  }
+  return args as {
+    name: string;
+    files: Record<string, string>;
+    reason: string;
+  };
+};
+
+const savedText = (
+  name: string,
+  outcome: SkillSaveOutcome,
+  applied: boolean
+): string => {
+  if (outcome === "created") {
+    // `applied` only fails when the hook threw, after the write landed.
+    return applied
+      ? `Saved new skill "${name}"; it's on in this conversation and in every new one.`
+      : `Saved new skill "${name}". New conversations get it; turning it on here failed.`;
+  }
+  if (applied) {
+    return `Updated skill "${name}"; this conversation's copy is refreshed.${
+      outcome === "shadowed"
+        ? " It overrides the built-in; skill_delete restores the built-in."
+        : ""
+    }`;
+  }
+  return `Updated skill "${name}". It's off here; new conversations get it.`;
+};
+
+const deletedText = (
+  name: string,
+  outcome: SkillRemoveOutcome,
+  applied: boolean
+): string => {
+  switch (outcome) {
+    case "removed": {
+      return applied
+        ? `Deleted skill "${name}"; it's off in this conversation.`
+        : `Deleted skill "${name}".`;
+    }
+    case "reverted": {
+      return applied
+        ? `Reverted "${name}" to the built-in version; this conversation's copy is refreshed.`
+        : `Reverted "${name}" to the built-in version.`;
+    }
+    case "unchanged": {
+      return `"${name}" is built in — nothing to delete; save an override with skill_save.`;
+    }
+    case "missing": {
+      return `No skill named "${name}" — nothing to delete.`;
+    }
+    default: {
+      throw new TypeError(`Unknown outcome: ${outcome satisfies never}`);
+    }
+  }
+};
+
+/**
+ * The write already landed when a hook runs: a hook that throws only means the calling conversation's copy
+ * fell behind — say so rather than reporting a failed call.
+ */
+const appliedFrom = async (run: () => Promise<boolean>) => {
+  try {
+    return { applied: await run(), note: "" };
+  } catch (error) {
+    return {
+      applied: false,
+      note: ` This conversation's copy could not be updated: ${error instanceof Error ? error.message : String(error)}.`,
+    };
+  }
+};
+
+/**
+ * The `skill` read tool plus the `skill_save`/`skill_delete` write tools, and the section listing the skills;
+ * reads go through the conversation's `SkillsDoc`, writes through the source and back via `hooks`.
+ */
+export const skillsExtension = (
+  skills: Skills["Service"],
+  hooks: SkillEditHooks
+): Extension =>
   defineExtension({
     name: "skills",
     sections: [
@@ -452,5 +685,80 @@ export const skillsExtension = (skills: Skills["Service"]): Extension =>
           return { content: [{ type: "text" as const, text }] };
         },
       }),
+      withApproval(
+        defineTool({
+          name: "skill_save",
+          description:
+            "Create a skill, or replace one wholesale: `files` is every file the skill's folder will hold (relative paths, text only) and must include SKILL.md with frontmatter `name` (equal to `name`, lowercase letters, digits and single hyphens) and `description` — a task matching the description is when the skill applies. Saving over a built-in skill's name shadows it; skill_delete restores the built-in. A new skill turns on in this conversation and in every new one; editing one that is on refreshes its sandbox copy.",
+          parameters: Type.Object({
+            name: Type.String({ description: "The skill's name" }),
+            files: Type.Record(Type.String(), Type.String(), {
+              description:
+                "Every file the folder will hold, relative paths to text contents; must include SKILL.md",
+            }),
+            reason: Type.String({
+              description: "Why, shown to the person approving",
+            }),
+          }),
+          prepareArguments: prepareSkillSaveArguments,
+          // Writes the source: never rerun blindly after a crash.
+          replay: "unsafe",
+          execute: async (args, api) => {
+            const saved = await Effect.runPromiseExit(
+              skills.save(args.name, args.files)
+            );
+            if (Exit.isFailure(saved)) {
+              const failure = Cause.squash(saved.cause);
+              // An InvalidSkill is the model's to fix; anything else is a defect.
+              throw failure instanceof InvalidSkill
+                ? new Error(failure.message)
+                : failure;
+            }
+            const { applied, note } = await appliedFrom(() =>
+              hooks.onSaved(api.conversationId, args.name, saved.value.outcome)
+            );
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text:
+                    savedText(args.name, saved.value.outcome, applied) + note,
+                },
+              ],
+            };
+          },
+        })
+      ),
+      withApproval(
+        defineTool({
+          name: "skill_delete",
+          description:
+            "Delete a skill's editable copy: one that exists only there is gone, one shadowing a built-in reverts to the built-in version, and a deleted skill turns off in this conversation. A built-in skill cannot be deleted — shadow it with skill_save first.",
+          parameters: Type.Object({
+            name: Type.String({ description: "The skill's name" }),
+            reason: Type.String({
+              description: "Why, shown to the person approving",
+            }),
+          }),
+          replay: "unsafe",
+          execute: async (args, api) => {
+            const outcome = await Effect.runPromise(skills.remove(args.name));
+            const { applied, note } =
+              outcome === "removed" || outcome === "reverted"
+                ? await appliedFrom(() =>
+                    hooks.onDeleted(api.conversationId, args.name, outcome)
+                  )
+                : { applied: false, note: "" };
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: deletedText(args.name, outcome, applied) + note,
+                },
+              ],
+            };
+          },
+        })
+      ),
     ],
   });

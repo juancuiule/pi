@@ -45,8 +45,9 @@ export const useCapabilities = () =>
   useQuery({
     queryKey: ["capabilities"],
     queryFn: () => runApi((c) => c.info.capabilities()),
-    // MCP servers connect once, at server start; reloading the page refetches.
-    staleTime: Number.POSITIVE_INFINITY,
+    // MCP servers still connect once, but skills now change under us — the agent writes them and other tabs
+    // save. A short staleness refetches on remount or focus, enough for the /skills page.
+    staleTime: 30_000,
   });
 
 const TRUSTED_DOMAINS = ["trusted-domains"] as const;
@@ -75,6 +76,54 @@ export const useRemoveDomain = () => {
       runApi((c) => c.trustedDomains.remove({ params: { domain } })),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: TRUSTED_DOMAINS }),
+  });
+};
+
+/** One skill's folder — text contents plus the binary files' names — for the /skills editor. */
+export const useSkill = (name: string | undefined) =>
+  useQuery({
+    queryKey: ["skill", name],
+    queryFn: () =>
+      runApi((c) => c.skills.get({ params: { name: name ?? "" } })),
+    enabled: name !== undefined,
+  });
+
+// A skill write changes the catalog; refetch it even though it never goes stale on its own.
+const invalidateSkill = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  name: string
+) =>
+  Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: ["capabilities"],
+      refetchType: "all",
+    }),
+    queryClient.invalidateQueries({ queryKey: ["skill", name] }),
+  ]);
+
+/** Create a skill or replace one wholesale: `files` is every file its folder will hold. */
+export const useSaveSkill = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      files,
+    }: {
+      name: string;
+      files: Record<string, string>;
+    }) =>
+      runApi((c) => c.skills.save({ params: { name }, payload: { files } })),
+    onSuccess: (_saved, { name }) => invalidateSkill(queryClient, name),
+  });
+};
+
+/** Delete a skill's org copy — gone, or reverted to the builtin it shadowed. */
+export const useDeleteSkill = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      runApi((c) => c.skills.remove({ params: { name } })),
+    onSuccess: (_result, name) => invalidateSkill(queryClient, name),
   });
 };
 

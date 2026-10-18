@@ -230,7 +230,13 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
           );
         }).pipe(
           Effect.provide(
-            Layer.merge(testWorkspaces(), Skills.directory("skills"))
+            Layer.merge(
+              testWorkspaces(),
+              Skills.directory(
+                "skills",
+                mkdtempSync(path.join(tmpdir(), "effect-pi-skills-org-"))
+              )
+            )
           )
         )
       );

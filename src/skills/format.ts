@@ -5,10 +5,20 @@ import { parse as parseYaml } from "yaml";
 
 import { InvalidSkill } from "../errors.ts";
 import { toXml } from "../prompt/xml.ts";
+import type { SkillOrigin } from "./source.ts";
 
 export { InvalidSkill } from "../errors.ts";
 
 export const SKILL_FILE = "SKILL.md";
+
+/** A folder's file path: `/`-joined segments of plain names — no `.`-names (list skips them), `..`, empties or `\`. */
+export const isSkillFile = (file: string): boolean =>
+  file
+    .split("/")
+    .every(
+      (segment) =>
+        segment !== "" && !segment.startsWith(".") && !segment.includes("\\")
+    );
 
 // The name rule, also checked on the wire in src/server/api.ts, which cannot import this module.
 export const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
@@ -43,6 +53,8 @@ export type Skill = {
   readonly files: string[];
   /** Hidden from the model's list; loaded only through `/skill:<name>`. */
   readonly disableModelInvocation: boolean;
+  /** Which namespace the folder's listed copy comes from. */
+  readonly origin?: SkillOrigin;
 };
 
 const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
@@ -64,7 +76,11 @@ export const parseSkillFile = (
 
 /** The skill a folder's SKILL.md describes, or why it is not one. */
 export const decodeSkill = Effect.fnUntraced(function* (
-  folder: { readonly id: string; readonly files: readonly string[] },
+  folder: {
+    readonly id: string;
+    readonly files: readonly string[];
+    readonly origin?: SkillOrigin;
+  },
   text: string
 ) {
   const frontmatter = yield* Effect.try({
@@ -99,8 +115,77 @@ export const decodeSkill = Effect.fnUntraced(function* (
       ...folder.files.filter((file) => file !== SKILL_FILE).toSorted(),
     ],
     disableModelInvocation: fields["disable-model-invocation"] ?? false,
+    ...(folder.origin === undefined ? {} : { origin: folder.origin }),
   } satisfies Skill;
 });
+
+/** A skill's folder caps at 50 files of 256 KiB each, so one write cannot flood the shared source. */
+const MAX_SKILL_FILES = 50;
+const MAX_SKILL_FILE_BYTES = 256 * 1024;
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+const fileSize = (contents: string | Uint8Array) =>
+  typeof contents === "string"
+    ? encoder.encode(contents).byteLength
+    : contents.byteLength;
+
+/**
+ * Everything a folder of `files` must pass before it may be written as skill `id`: a non-empty, bounded file
+ * list of valid paths, a SKILL.md whose frontmatter decodes and names `id` (which is therefore a valid skill
+ * name), and `id` not naming a source namespace. `Skills.save` and the skills API validate with this before
+ * anything is written.
+ */
+export const checkSkillFiles = (
+  id: string,
+  files: Readonly<Record<string, string | Uint8Array>>
+): Effect.Effect<Skill, InvalidSkill> =>
+  Effect.gen(function* () {
+    const fileNames = Object.keys(files);
+    if (fileNames.length === 0) {
+      return yield* new InvalidSkill({ message: "files is empty" });
+    }
+    // `org` and `builtin` collide with the source's namespaces.
+    if (id === "org" || id === "builtin") {
+      return yield* new InvalidSkill({
+        message: `${id} is a reserved skill name`,
+      });
+    }
+    if (fileNames.length > MAX_SKILL_FILES) {
+      return yield* new InvalidSkill({
+        message: `a skill may have at most ${MAX_SKILL_FILES} files`,
+      });
+    }
+    for (const file of fileNames) {
+      if (!isSkillFile(file)) {
+        return yield* new InvalidSkill({
+          message: `${file} is not a valid skill file path`,
+        });
+      }
+      if (fileSize(files[file] ?? "") > MAX_SKILL_FILE_BYTES) {
+        return yield* new InvalidSkill({
+          message: `${file} is over the 256 KiB file limit`,
+        });
+      }
+    }
+    const contents = files[SKILL_FILE];
+    if (contents === undefined) {
+      return yield* new InvalidSkill({
+        message: `files must include ${SKILL_FILE}`,
+      });
+    }
+    const skill = yield* decodeSkill(
+      { id, files: fileNames },
+      typeof contents === "string" ? contents : decoder.decode(contents)
+    );
+    if (skill.name !== id) {
+      return yield* new InvalidSkill({
+        message: `${SKILL_FILE} names ${skill.name}, not ${id}`,
+      });
+    }
+    return skill;
+  });
 
 /**
  * What the `skill` tool returns for SKILL.md: a header listing the other files, then the file. Paths in a skill are

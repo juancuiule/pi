@@ -49,6 +49,7 @@ export const capacity = {
 export const paths = {
   db: ENV.EFFECT_PI_DB,
   skills: ENV.SKILLS_DIR,
+  skillsOrg: ENV.SKILLS_ORG_DIR,
   screenshots: ENV.SCREENSHOTS_DIR,
   attachments: ENV.ATTACHMENTS_DIR,
 };

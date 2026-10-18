@@ -60,6 +60,7 @@ export const sourceContract = (options: {
       expect(folders.find((folder) => folder.id === ids[0])).toStrictEqual({
         id: ids[0],
         files: ["SKILL.md", "docs/guide.md"],
+        origin: "builtin",
       });
       expect(
         textOf(await use((source) => source.read(ids[0], "SKILL.md")))
@@ -93,6 +94,7 @@ export const sourceContract = (options: {
       expect(folders.find((folder) => folder.id === id)).toStrictEqual({
         id,
         files: ["SKILL.md", "docs/a.md"],
+        origin: "org",
       });
       expect(textOf(await use((source) => source.read(id, "docs/a.md")))).toBe(
         "deep"
@@ -132,9 +134,10 @@ export const sourceContract = (options: {
       await use((source) => source.put(id, { "SKILL.md": "org" }));
 
       const folders = await use((source) => source.list);
-      expect(folders.find((folder) => folder.id === id)?.files).toStrictEqual([
-        "SKILL.md",
-      ]);
+      expect(folders.find((folder) => folder.id === id)).toMatchObject({
+        files: ["SKILL.md"],
+        origin: "overridden",
+      });
       expect(textOf(await use((source) => source.read(id, "SKILL.md")))).toBe(
         "org"
       );

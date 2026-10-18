@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -10,6 +17,7 @@ import { memory as memoryStore } from "../storage/object-store.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 import { sourceContract } from "./source.contract.ts";
 import { convergeBuiltin, SkillSource } from "./source.ts";
+import type { SkillSourceError } from "./source.ts";
 
 const nodeContext = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 
@@ -36,6 +44,119 @@ describe("SkillSource.directory", () => {
   });
 });
 
+const idAndOrigin = (folder: { id: string; origin: string }) => [
+  folder.id,
+  folder.origin,
+];
+
+describe("SkillSource.directory with a separate org root", () => {
+  let root = "";
+  let orgRoot = "";
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(orgRoot, { recursive: true, force: true });
+  });
+
+  const layer = () =>
+    SkillSource.directory(root, orgRoot).pipe(Layer.provide(nodeContext));
+  const use = <A>(
+    f: (source: SkillSource["Service"]) => Effect.Effect<A, SkillSourceError>
+  ) =>
+    Effect.runPromise(
+      Effect.flatMap(Effect.service(SkillSource), f).pipe(
+        Effect.provide(layer())
+      )
+    );
+
+  it("writes and removes org folders under orgRoot, never under root", async () => {
+    root = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-root-"));
+    orgRoot = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-org-"));
+    mkdirSync(path.join(root, "kept"), { recursive: true });
+    writeFileSync(path.join(root, "kept", "SKILL.md"), "builtin");
+
+    await use((source) => source.put("made", { "SKILL.md": "org" }));
+    // A second put over an existing folder goes through the staging swap.
+    await use((source) =>
+      source.put("made", { "SKILL.md": "org2", "extra.md": "e" })
+    );
+    await use((source) => source.put("kept", { "SKILL.md": "shadow" }));
+    const shadowing = await use((source) => source.list);
+    // The writes went to orgRoot; root gained nothing but the seeded folders.
+    const writes = {
+      orgMade: existsSync(path.join(orgRoot, "made", "SKILL.md")),
+      orgKept: existsSync(path.join(orgRoot, "kept", "SKILL.md")),
+      // Staging and backup dirs are gone: every entry is a skill folder.
+      orgEntries: readdirSync(orgRoot).toSorted(),
+      root: readdirSync(root).toSorted(),
+    };
+    await use((source) => source.remove("made"));
+    await use((source) => source.remove("kept"));
+    const after = await use((source) => source.list);
+    const keptText = new TextDecoder().decode(
+      await use((source) => source.read("kept", "SKILL.md"))
+    );
+
+    expect({
+      shadowing: shadowing.map(idAndOrigin),
+      writes,
+      after: after.map(idAndOrigin),
+      keptText,
+    }).toStrictEqual({
+      shadowing: [
+        ["kept", "overridden"],
+        ["made", "org"],
+      ],
+      writes: {
+        orgMade: true,
+        orgKept: true,
+        orgEntries: ["kept", "made"],
+        root: ["kept"],
+      },
+      after: [["kept", "builtin"]],
+      keptText: "builtin",
+    });
+  });
+
+  it("migrates a legacy root/org into the org root, losing to a folder already there", async () => {
+    root = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-root-"));
+    orgRoot = mkdtempSync(path.join(tmpdir(), "effect-pi-skill-org-"));
+    mkdirSync(path.join(root, "kept"), { recursive: true });
+    writeFileSync(path.join(root, "kept", "SKILL.md"), "builtin");
+    // Checkout-era org skills under root/org: "old" moves over, "clash" loses to the newer copy.
+    for (const [id, text] of [
+      ["old", "legacy"],
+      ["clash", "legacy"],
+    ]) {
+      mkdirSync(path.join(root, "org", id), { recursive: true });
+      writeFileSync(path.join(root, "org", id, "SKILL.md"), text);
+    }
+    mkdirSync(path.join(orgRoot, "clash"), { recursive: true });
+    writeFileSync(path.join(orgRoot, "clash", "SKILL.md"), "wins");
+
+    const folders = await use((source) => source.list);
+
+    expect({
+      folders: folders.map(idAndOrigin),
+      oldText: new TextDecoder().decode(
+        await use((source) => source.read("old", "SKILL.md"))
+      ),
+      clashText: new TextDecoder().decode(
+        await use((source) => source.read("clash", "SKILL.md"))
+      ),
+      root: readdirSync(root).toSorted(),
+    }).toStrictEqual({
+      folders: [
+        ["clash", "org"],
+        ["kept", "builtin"],
+        ["old", "org"],
+      ],
+      oldText: "legacy",
+      clashText: "wins",
+      root: ["kept"],
+    });
+  });
+});
+
 describe("SkillSource.memory", () => {
   const files: Record<string, string | Uint8Array> = {};
   sourceContract({
@@ -57,7 +178,9 @@ describe("SkillSource.memory", () => {
         Effect.provide(SkillSource.memory(bare))
       )
     );
-    expect(folders).toStrictEqual([{ id: "plain", files: ["SKILL.md"] }]);
+    expect(folders).toStrictEqual([
+      { id: "plain", files: ["SKILL.md"], origin: "overridden" },
+    ]);
     const text = await Effect.runPromise(
       Effect.flatMap(Effect.service(SkillSource), (source) =>
         source.read("plain", "SKILL.md")

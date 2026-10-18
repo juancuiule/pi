@@ -43,6 +43,7 @@ const capabilities: Capabilities = {
       name: "convert",
       description: "",
       modelInvocable: true,
+      origin: "builtin" as const,
       files: ["SKILL.md"],
       body: "",
     },
@@ -50,6 +51,7 @@ const capabilities: Capabilities = {
       name: "notes",
       description: "",
       modelInvocable: true,
+      origin: "builtin" as const,
       files: ["SKILL.md"],
       body: "",
     },
@@ -75,7 +77,7 @@ describe(newConversationSettings, () => {
     ]);
   });
 
-  it("applies flipped switches, and drops the skills extension with the last skill", () => {
+  it("applies flipped switches, and keeps the skills extension without skills", () => {
     let overrides = flip(NO_OVERRIDES, "tools", "bash", false);
     overrides = flip(overrides, "skills", "convert", false);
     overrides = flip(overrides, "skills", "notes", false);
@@ -88,7 +90,7 @@ describe(newConversationSettings, () => {
       isEmpty(overrides),
       isEmpty(NO_OVERRIDES),
     ]).toStrictEqual([
-      ["calculator", "coding-tools"],
+      ["calculator", "coding-tools", "skills"],
       [
         ["read", true],
         ["bash", false],

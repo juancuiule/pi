@@ -157,6 +157,10 @@ export const SettingsChange = Schema.Struct({
   extensions: Toggles,
   tools: Toggles,
   skills: Toggles,
+  /** Re-read these skills from the source into the conversation's state and Sandbox copies; "all" for every enabled one. */
+  refreshSkills: Schema.optionalKey(
+    Schema.Union([Schema.Literal("all"), Schema.Array(Schema.String)])
+  ),
 });
 export type SettingsChange = typeof SettingsChange.Type;
 
@@ -205,6 +209,8 @@ export const Capabilities = Schema.Struct({
       name: Schema.String,
       description: Schema.String,
       modelInvocable: Schema.Boolean,
+      /** `builtin` from the repository, `org` written at runtime, `overridden` an org copy shadowing a builtin. */
+      origin: Schema.Literals(["builtin", "org", "overridden"]),
       /** Every file in the skill's folder, `SKILL.md` first. */
       files: Schema.Array(Schema.String),
       /** The SKILL.md body after its frontmatter, for the console's skills page. */
@@ -558,6 +564,7 @@ const ArtifactGroup = HttpApiGroup.make("artifacts").add(
 const BadDomain = InvalidDomain.pipe(HttpApiSchema.status(400));
 
 const BadSkill = InvalidSkill.pipe(HttpApiSchema.status(400));
+const NoSkill = SkillNotFound.pipe(HttpApiSchema.status(404));
 
 // The name rule is SKILL_NAME in src/skills/format.ts; this module must stay free of runtime imports for web/.
 const SkillName = Schema.String.check(
@@ -582,6 +589,22 @@ const SkillGroup = HttpApiGroup.make("skills").add(
       files: Schema.Array(Schema.String),
     }),
     error: [BadSkill],
+  }),
+  // A skill folder's contents for the console's editor: text files decoded, non-UTF-8 ones named in binaryFiles.
+  HttpApiEndpoint.get("get", "/skills/:name", {
+    params: { name: SkillName },
+    success: Schema.Struct({
+      name: Schema.String,
+      origin: Schema.Literals(["builtin", "org", "overridden"]),
+      files: Schema.Record(Schema.String, Schema.String),
+      binaryFiles: Schema.Array(Schema.String),
+    }),
+    error: NoSkill,
+  }),
+  // Delete the org copy: gone, or reverted to the builtin it shadowed. Idempotent like trustedDomains.remove.
+  HttpApiEndpoint.delete("remove", "/skills/:name", {
+    params: { name: SkillName },
+    success: HttpApiSchema.NoContent,
   })
 );
 
