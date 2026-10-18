@@ -263,7 +263,7 @@ describe("HTTP API", () => {
         "skill_save",
         "skill_delete",
       ],
-      ["coding-tools", "desktop"],
+      ["coding-tools", "desktop", "ports"],
       ["workspace", "attachments", "artifacts", "skills"],
     ]);
   });

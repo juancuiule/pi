@@ -85,6 +85,16 @@ export const QuestionAnswer = Schema.Struct({
 });
 export type QuestionAnswer = typeof QuestionAnswer.Type;
 
+/** A port a Conversation's Sandbox publishes on the host loopback: `expose_port` opened it. */
+export const ExposedPort = Schema.Struct({
+  /** The port the service listens on inside the Sandbox. */
+  port: Schema.Int,
+  label: Schema.optionalKey(Schema.String),
+  /** Where the person's browser reaches it: `http://127.0.0.1:<random host port>/`. */
+  url: Schema.String,
+});
+export type ExposedPort = typeof ExposedPort.Type;
+
 export const ConversationSummary = Schema.Struct({
   id: Schema.Number,
   sandbox: SandboxChoice,
@@ -92,6 +102,8 @@ export const ConversationSummary = Schema.Struct({
   software: Schema.Array(SoftwareId),
   sandboxId: Schema.optionalKey(Schema.String),
   vncUrl: Schema.optionalKey(Schema.String),
+  /** The ports the Sandbox currently publishes; only while the Conversation has a Seat. */
+  ports: Schema.optionalKey(Schema.Array(ExposedPort)),
   title: Schema.String,
   /** `running` and `idle` have a Seat; `paused` and `archived` do not. */
   status: Schema.Literals(["running", "idle", "paused", "archived"]),
@@ -446,6 +458,12 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     }),
     success: HttpApiSchema.NoContent,
     error: [NotFound, ApprovalNotFound.pipe(HttpApiSchema.status(404))],
+  }),
+  // The person closes a port the agent exposed; idempotent like trustedDomains.remove.
+  HttpApiEndpoint.delete("closePort", "/conversations/:id/ports/:port", {
+    params: { ...ById, port: Schema.Int },
+    success: HttpApiSchema.NoContent,
+    error: NotFound,
   }),
   // Thumbs up (`value: 1`) or down (`value: 0`) on an assistant entry, scored on its run's Langfuse trace.
   HttpApiEndpoint.post("feedback", "/conversations/:id/feedback", {
