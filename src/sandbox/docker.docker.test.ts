@@ -399,5 +399,38 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       expect(observed.killed).toBeTruthy();
       rmSync(dir, { recursive: true, force: true });
     });
+
+    it("serves an in-container service at a localhost URL only while the Sandbox lives", async () => {
+      let published: string | undefined;
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const workspaces = yield* Workspaces;
+            const { sandbox } = yield* workspaces.sandbox({ level: "shell" });
+            yield* run(
+              workspaces.env(sandbox),
+              "cd /tmp && nohup python3 -m http.server 8123 >/dev/null 2>&1 &"
+            );
+            const { url } = yield* workspaces.expose(sandbox, 8123);
+            published = url;
+            const response = yield* Effect.promise(() =>
+              fetch(url).then((r) => {
+                if (!r.ok) {
+                  throw new Error(`status ${r.status}`);
+                }
+                return r.text();
+              })
+            ).pipe(
+              Effect.retry({
+                schedule: Schedule.spaced("200 millis"),
+                times: 100,
+              })
+            );
+            expect(response).toContain("Directory listing");
+          })
+        ).pipe(Effect.provide(testWorkspaces()))
+      );
+      await expect(fetch(published as string)).rejects.toThrow("fetch failed");
+    });
   }
 );

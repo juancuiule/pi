@@ -1,5 +1,7 @@
 // Per-conversation sandboxes: the user picks a kind when a conversation starts, the sandbox is created first,
 // and the conversation records it in a document that the harness environment function reads on every tool call.
+import type { Duplex } from "node:stream";
+
 import { defineDoc } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Context, Schema } from "effect";
@@ -25,6 +27,18 @@ export type SandboxInfo = {
   readonly id: string;
   /** A URL where a person can watch the desktop, when there is one. */
   readonly vncUrl?: string;
+  /** The ports this Sandbox publishes on the host loopback, dying with it. */
+  readonly ports?: ExposedPort[];
+};
+
+// A type, not an interface: it is stored in a pi-durable document, which must be a JSON type.
+// oxlint-disable-next-line typescript/consistent-type-definitions
+export type ExposedPort = {
+  /** The port inside the sandbox the agent named. */
+  readonly port: number;
+  readonly label?: string;
+  /** Where the person's browser reaches it: http://127.0.0.1:<random host port>/. */
+  readonly url: string;
 };
 
 /** The sandbox a conversation runs in. A fork gets none until assigned. */
@@ -88,5 +102,14 @@ export class Sandboxes extends Context.Service<
       sandbox: SandboxInfo,
       options: { readonly columns: number; readonly rows: number }
     ): Effect.Effect<SandboxShell, SandboxError, Scope.Scope>;
+    /**
+     * A raw bidirectional byte channel to 127.0.0.1:`port` inside the sandbox; one per connection, and the
+     * caller owns and destroys it. Fails when the sandbox is gone — a port with nothing listening may still
+     * "connect" when the backend's channel opens eagerly, e.g. Docker's forwarder dies after connect.
+     */
+    connect(
+      sandbox: SandboxInfo,
+      port: number
+    ): Effect.Effect<Duplex, SandboxError>;
   }
 >()("effect-pi/Sandboxes") {}

@@ -2,6 +2,7 @@
 // Workspace storage as temporary directories that those Sandboxes use as their working directory.
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -130,6 +131,26 @@ export const localSandboxes = (
             write,
             resize: () => Effect.void,
           } satisfies SandboxShell;
+        }),
+      // A local Sandbox is the host: the channel is a plain TCP connection.
+      connect: (_sandbox: SandboxInfo, port: number) =>
+        Effect.callback<net.Socket, SandboxError>((resume) => {
+          const socket = net.connect(port, "127.0.0.1");
+          const fail = (cause: Error) =>
+            resume(
+              Effect.fail(
+                new SandboxError({
+                  message: `nothing listens on port ${port}`,
+                  cause,
+                })
+              )
+            );
+          socket.once("error", fail);
+          socket.once("connect", () => {
+            socket.removeListener("error", fail);
+            resume(Effect.succeed(socket));
+          });
+          return Effect.sync(() => socket.destroy());
         }),
     })
   );
