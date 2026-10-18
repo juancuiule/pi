@@ -2,9 +2,11 @@ import {
   fauxAssistantMessage,
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Effect, Tracer } from "effect";
+import { Effect, Stream, Tracer } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { Agents } from "./agents/agents.ts";
+import type { ConversationEvent } from "./conversation-events.ts";
 import { ask, callTool, fauxAgents, openSeat } from "./testing/faux.ts";
 import {
   redactArtifactArguments,
@@ -35,6 +37,11 @@ const tree = (spans: readonly Tracer.NativeSpan[]) =>
   spans
     .filter((span) => !span.name.startsWith("Agents."))
     .map((span) => `${span.name} < ${parentName(span) ?? "-"}`);
+
+const firstOf = <E, R>(stream: Stream.Stream<ConversationEvent, E, R>) =>
+  stream
+    .pipe(Stream.take(1), Stream.runCollect)
+    .pipe(Effect.map((chunk) => [...chunk][0]));
 
 const waitUntil = (check: Effect.Effect<boolean, unknown>, timeoutMs = 5000) =>
   Effect.gen(function* () {
@@ -120,21 +127,34 @@ describe("agent tracing", () => {
     });
   });
 
-  // it.fails until issue 52's run tracing lands: send-driven runs trace one span per trace today.
-  it.fails("puts a send-driven run's spans on one trace", async () => {
+  it("puts a send-driven run's spans on one trace, recorded for feedback", async () => {
     const { spans, tracer } = recordingTracer();
     const { layer } = fauxAgents([
       callTool("calculate", { op: "multiply", a: 6, b: 7 }),
       fauxAssistantMessage([fauxText("42")]),
     ]);
-    await Effect.runPromise(
+    const traced = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
+          const agents = yield* Agents;
           const seat = yield* openSeat();
           yield* seat.send("What is 6 times 7?");
           yield* waitUntil(
             seat.running.pipe(Effect.map((running) => !running))
           );
+          const snapshot = yield* agents
+            .events(seat.id)
+            .pipe(Effect.flatMap(firstOf));
+          const entry =
+            snapshot?.type === "snapshot"
+              ? snapshot.entries.find(
+                  (each) => each.model?.[0]?.role === "assistant"
+                )
+              : undefined;
+          if (entry === undefined) {
+            return yield* Effect.die(new Error("no assistant entry"));
+          }
+          return yield* agents.entryTrace(seat.id, Number(entry.id));
         })
       ).pipe(
         Effect.provide(layer),
@@ -147,9 +167,10 @@ describe("agent tracing", () => {
     );
     expect(run).toHaveLength(3);
     expect(new Set(run.map((span) => span.traceId)).size).toBe(1);
+    expect(traced).toBe(run[0]?.traceId);
   });
 
-  it.fails("starts a fresh trace for the next run of the same conversation", async () => {
+  it("starts a fresh trace for the next run of the same conversation", async () => {
     const { spans, tracer } = recordingTracer();
     const { layer } = fauxAgents([
       callTool("calculate", { op: "multiply", a: 6, b: 7 }),

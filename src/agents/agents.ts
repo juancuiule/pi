@@ -1,3 +1,4 @@
+import type { Context as ChordContext } from "@earendil-works/chord";
 // An Effect service over a pi-durable harness: how to run a Conversation. `create` records a new one, and `open`
 // gives a Conversation a Seat (see GLOSSARY.md), with a Sandbox over its Workspace when its Level needs one. Which
 // Conversations have Seats, and when that changes, is the server's concern (src/server/conversations.ts).
@@ -13,6 +14,7 @@ import type {
   Harness as HarnessType,
   Storage,
   SubmissionRecord,
+  TaskId,
   ToolRegistration,
   Tx,
   UserInput,
@@ -81,9 +83,11 @@ import {
   ApprovalNotFound,
   ConversationArchived,
   ConversationNotFound,
+  EntryNotFound,
   InvalidSetting,
   InvalidUpgrade,
   SandboxUnavailable,
+  TraceUnavailable,
 } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
@@ -111,7 +115,7 @@ import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
 import { questionsExtension } from "../tools/questions.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
-import { makeAgentTracing } from "../tracing.ts";
+import { makeAgentTracing, TraceDoc } from "../tracing.ts";
 import { WebSearch, webSearchExtension } from "../web-search/web-search.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
 import type { StorageRef } from "../workspaces/workspaces.ts";
@@ -600,6 +604,17 @@ export class Agents extends Context.Service<
       id: ConversationId,
       options?: { before?: number | undefined; limit?: number | undefined }
     ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
+    /**
+     * The OTEL trace id of the run that wrote an assistant entry — where its feedback is scored in Langfuse.
+     * `EntryNotFound` for a missing or non-assistant entry; `TraceUnavailable` when its run left no trace.
+     */
+    entryTrace(
+      id: ConversationId,
+      entry: number
+    ): Effect.Effect<
+      string,
+      AgentError | ConversationNotFound | EntryNotFound | TraceUnavailable
+    >;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -622,9 +637,20 @@ export class Agents extends Context.Service<
         const workspaces = yield* Workspaces;
         const capacity = yield* Capacity;
         const registry = createRegistry();
+        // Each run's generation records its trace id into TraceDoc, so a message's feedback finds the run's
+        // trace. Built before the harness like `skillEdits`, it is filled in once `harness` exists below.
+        const traceWrites: {
+          record?: (
+            conversationId: ConversationId,
+            taskId: TaskId,
+            traceId: string,
+            commitContext: ChordContext
+          ) => Promise<void>;
+        } = {};
         // Spans for model requests and tool calls use the tracer this layer is built with.
         const tracing = makeAgentTracing(yield* Effect.context<never>(), {
           attachmentText: options.traceAttachmentText === true,
+          traceWrites,
         });
         registry.install(tracing.extension);
         const attachments = yield* Attachments;
@@ -863,6 +889,13 @@ export class Agents extends Context.Service<
           ),
           (opened) => Effect.promise(() => opened.close(context))
         );
+
+        // Idempotent: the generation task's every request attempts the same key.
+        traceWrites.record = (conversationId, taskId, traceId, commitContext) =>
+          harness.commit(async (tx) => {
+            const doc = await tx.doc(TraceDoc, conversationId);
+            doc.traces[String(taskId)] ??= traceId;
+          }, commitContext);
 
         // No Seat survives a restart, so a run interrupted by a crash would resume against a Sandbox that no
         // longer exists: every conversation with live work is aborted before the service answers. The first
@@ -2067,6 +2100,44 @@ export class Agents extends Context.Service<
           );
         });
 
+        // The trace an assistant entry's run was recorded under: where its Langfuse scores go. A committed
+        // partial (an aborted run) has no `byTaskId`, and a run whose hook could not write has no row.
+        const entryTrace = Effect.fn("Agents.entryTrace")(function* (
+          id: ConversationId,
+          entryId: number
+        ) {
+          yield* handleOf(id);
+          const found = yield* attempt(() =>
+            durableStorage.entry(id, entryId as EntryId, context)
+          );
+          if (
+            found === undefined ||
+            found.entry.model?.[0]?.role !== "assistant"
+          ) {
+            return yield* new EntryNotFound({ id: Number(id), entry: entryId });
+          }
+          const taskId = found.entry.byTaskId;
+          if (taskId === undefined) {
+            return yield* new TraceUnavailable({
+              id: Number(id),
+              entry: entryId,
+              reason: "untraced",
+            });
+          }
+          const doc = yield* attempt(() =>
+            harness.snapshot(TraceDoc, id, context)
+          );
+          const traceId = doc?.traces[String(taskId)];
+          if (traceId === undefined) {
+            return yield* new TraceUnavailable({
+              id: Number(id),
+              entry: entryId,
+              reason: "untraced",
+            });
+          }
+          return traceId;
+        });
+
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
         ) {
@@ -2406,6 +2477,7 @@ export class Agents extends Context.Service<
           unarchive,
           events,
           history,
+          entryTrace,
         });
       })
     );
