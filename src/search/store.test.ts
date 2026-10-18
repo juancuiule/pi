@@ -21,7 +21,7 @@ describe(sqliteIndex, () => {
     index.close();
   });
 
-  it.fails("finds indexed text with a marked snippet and a rank", () => {
+  it("finds indexed text with a marked snippet and a rank", () => {
     const index = sqliteIndex(":memory:");
     index.putPage(1, 9, [
       row(4, "the echidna lays eggs", "user"),
@@ -44,7 +44,7 @@ describe(sqliteIndex, () => {
     index.close();
   });
 
-  it.fails("indexes the title under a row without an entry", () => {
+  it("indexes the title under a row without an entry", () => {
     const index = sqliteIndex(":memory:");
     index.putTitle(2, "quokka notes", 50);
     const hits = index.query('"quokka"*', 10);
@@ -58,7 +58,7 @@ describe(sqliteIndex, () => {
     index.close();
   });
 
-  it.fails("advances the cursor over a page, including an empty one", () => {
+  it("advances the cursor over a page, including an empty one", () => {
     const index = sqliteIndex(":memory:");
     index.putPage(1, 12, [row(10, "anything")]);
     expect(index.cursorOf(1)).toBe(12);
@@ -67,7 +67,7 @@ describe(sqliteIndex, () => {
     index.close();
   });
 
-  it.fails("replaces rows instead of duplicating them on a re-run", () => {
+  it("replaces rows instead of duplicating them on a re-run", () => {
     const index = sqliteIndex(":memory:");
     index.putPage(1, 5, [row(4, "same words")]);
     index.putPage(1, 5, [row(4, "same words")]);
@@ -76,7 +76,7 @@ describe(sqliteIndex, () => {
     index.close();
   });
 
-  it.fails("requires every query term", () => {
+  it("requires every query term", () => {
     const index = sqliteIndex(":memory:");
     index.putPage(1, 2, [row(1, "only alpha appears")]);
     expect(index.query(matchQuery("alpha beta") ?? "", 10)).toHaveLength(0);
@@ -84,7 +84,7 @@ describe(sqliteIndex, () => {
     index.close();
   });
 
-  it.fails("keeps rows and cursors across reopen", () => {
+  it("keeps rows and cursors across reopen", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "effect-pi-search-store-"));
     try {
       const file = path.join(dir, "search.sqlite");

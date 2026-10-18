@@ -37,7 +37,7 @@ const assistant = (
   }) as AssistantMessage;
 
 describe(indexedText, () => {
-  it.fails("takes a user message's text and timestamp", () => {
+  it("takes a user message's text and timestamp", () => {
     expect(indexedText(entry("pi.user", user("hello there")))).toStrictEqual({
       role: "user",
       text: "hello there",
@@ -45,7 +45,7 @@ describe(indexedText, () => {
     });
   });
 
-  it.fails("joins a user message's text parts, skipping images", () => {
+  it("joins a user message's text parts, skipping images", () => {
     expect(
       indexedText(
         entry(
@@ -64,7 +64,7 @@ describe(indexedText, () => {
     });
   });
 
-  it.fails("takes only an assistant message's text parts", () => {
+  it("takes only an assistant message's text parts", () => {
     expect(
       indexedText(
         entry(
@@ -131,11 +131,11 @@ describe(matchQuery, () => {
     }
   });
 
-  it.fails("quotes each term as a prefix and ANDs them", () => {
+  it("quotes each term as a prefix and ANDs them", () => {
     expect(matchQuery("unclosed quote")).toBe('"unclosed"* AND "quote"*');
   });
 
-  it.fails("sanitizes FTS syntax out of the terms", () => {
+  it("sanitizes FTS syntax out of the terms", () => {
     expect(matchQuery("a:b")).toBe('"a"* AND "b"*');
     expect(matchQuery('"OR AND')).toBe('"OR"* AND "AND"*');
     expect(matchQuery("hello-world")).toBe('"hello"* AND "world"*');
@@ -148,7 +148,7 @@ describe(splitSnippet, () => {
     expect(splitSnippet("")).toStrictEqual([]);
   });
 
-  it.fails("splits on the match markers, flagging the marked spans", () => {
+  it("splits on the match markers, flagging the marked spans", () => {
     expect(
       splitSnippet("the \u0002echidna\u0003 lays \u0002eggs\u0003")
     ).toStrictEqual([
