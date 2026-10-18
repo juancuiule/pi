@@ -13,6 +13,7 @@ import {
   RotateCcw,
   SeparatorHorizontal,
   SlidersHorizontal,
+  Terminal,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -34,6 +35,8 @@ import { splitAttachments } from "@/lib/attachments";
 import { boundaryNote } from "@/lib/boundary-note";
 import type { BoundaryNote } from "@/lib/boundary-note";
 import type { ConversationState, PendingInput } from "@/lib/conversation-state";
+import { parseSandboxNotification } from "@/lib/notify-message";
+import type { SandboxNotification } from "@/lib/notify-message";
 import { settingsNote } from "@/lib/settings-note";
 import {
   parseSkillMessage,
@@ -266,6 +269,21 @@ const BoundaryRow = ({ note }: { note: BoundaryNote }) => {
   );
 };
 
+/** A message the Sandbox's processes left: a quiet machine row, never the person's bubble. */
+const NotificationRow = ({ note }: { note: SandboxNotification }) => (
+  <div className="text-muted-foreground flex max-w-[85%] flex-col items-start gap-1.5">
+    <span
+      title={note.at}
+      className="bg-muted inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs"
+    >
+      <Terminal aria-hidden className="size-3" />
+      Sandbox
+    </span>
+    <p className="text-prose whitespace-pre-wrap">{note.text}</p>
+    {note.truncated ? <span className="text-xs">[cut]</span> : null}
+  </div>
+);
+
 const Entry = ({
   entry,
   state,
@@ -320,6 +338,11 @@ const Entry = ({
   switch (message.role) {
     case "user": {
       const parsed = userParts(message);
+      // A machine's message, not something the person typed — rendered before anything else is tried.
+      const notification = parseSandboxNotification(parsed.text);
+      if (notification !== undefined) {
+        return <NotificationRow note={notification} />;
+      }
       // Attachment blocks come last, after any skill hints.
       const files = splitAttachments(parsed.text);
       const { text, hinted } = splitSkillHints(files.text);
