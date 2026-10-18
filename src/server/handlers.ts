@@ -669,6 +669,10 @@ const infoHandlers = (apiUrl: string) =>
     })
   );
 
+const SearchHandlers = HttpApiBuilder.group(Api, "search", (handlers) =>
+  Effect.succeed(handlers.handle("query", () => Effect.succeed([])))
+);
+
 /** The HTTP API; `apiUrl` is the server's own address, reported by `/api/info`. */
 export const apiLayer = (options: { readonly apiUrl: string }) =>
   HttpApiBuilder.layer(Api).pipe(
@@ -680,6 +684,7 @@ export const apiLayer = (options: { readonly apiUrl: string }) =>
         TrustedDomainsHandlers,
         SkillsHandlers,
         FilesHandlers,
+        SearchHandlers,
         infoHandlers(options.apiUrl)
       )
     ),
