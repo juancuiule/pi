@@ -2,16 +2,33 @@
 // SQLite file of its own (SEARCH_DB), indexed when a Run ends and caught up at boot. Human-facing
 // only — through /api/search and the console's palette; the agent gets no search tool.
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema, Semaphore, Stream } from "effect";
 
+import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
 import type { ConversationNotFound } from "../errors.ts";
 import type { SearchResult } from "../server/api.ts";
+import { indexedText, matchQuery, splitSnippet } from "./format.ts";
+import { sqliteIndex } from "./store.ts";
+import type { QueryRow } from "./store.ts";
 
 export class SearchError extends Schema.TaggedError<SearchError>()(
   "SearchError",
   { cause: Schema.Defect() }
 ) {}
+
+/** Store calls are synchronous; anything they throw is a SearchError. */
+const indexed = <A>(run: () => A): Effect.Effect<A, SearchError> =>
+  Effect.try({ try: run, catch: (cause) => new SearchError({ cause }) });
+
+/** How many FTS rows a query reads before grouping; one conversation gets at most a few of them. */
+const QUERY_ROWS = 200;
+const QUERY_CONVERSATIONS = 20;
+const QUERY_MATCHES = 3;
+/** The zero-state list length — the palette's most-recent view. */
+const RECENT = 12;
+/** Entries are grouped into pages of this size for one putPage transaction each. */
+const INDEX_PAGE = 200;
 
 export class Search extends Context.Service<
   Search,
@@ -38,13 +55,130 @@ export class Search extends Context.Service<
     readonly catchUp: Effect.Effect<void>;
   }
 >()("effect-pi/search/Search") {
-  static readonly layer = (_options: { readonly database: string }) =>
-    Layer.succeed(
+  static readonly layer = (options: { readonly database: string }) =>
+    Layer.effect(
       Search,
-      Search.of({
-        query: () => Effect.succeed([]),
-        indexConversation: () => Effect.void,
-        catchUp: Effect.void,
+      Effect.gen(function* () {
+        const agents = yield* Agents;
+        const index = yield* Effect.acquireRelease(
+          Effect.sync(() => sqliteIndex(options.database)),
+          (opened) => Effect.sync(() => opened.close())
+        );
+        // One indexing run at a time: run-end and catch-up indexing can overlap.
+        const writing = yield* Semaphore.make(1);
+
+        const indexOne = Effect.fn("Search.indexConversation")(function* (
+          id: ConversationId
+        ) {
+          const stored = yield* agents.get(id);
+          yield* indexed(() =>
+            index.putTitle(Number(id), stored.meta.title, stored.meta.createdAt)
+          );
+          const from = yield* indexed(() => index.cursorOf(Number(id)));
+          const entries = yield* agents.entries(id, { from });
+          yield* entries.pipe(
+            Stream.grouped(INDEX_PAGE),
+            Stream.runForEach((chunk) =>
+              indexed(() => {
+                const rows = chunk.flatMap((entry) => {
+                  const text = indexedText(entry);
+                  return text === undefined
+                    ? []
+                    : [{ ...text, entryId: Number(entry.id) }];
+                });
+                const last = chunk.at(-1);
+                if (last !== undefined) {
+                  index.putPage(Number(id), Number(last.id), rows);
+                }
+              })
+            )
+          );
+        });
+
+        const indexConversation = (id: ConversationId) =>
+          writing.withPermit(indexOne(id));
+
+        const query = Effect.fn("Search.query")(function* (q: string) {
+          const match = matchQuery(q);
+          if (match === undefined) {
+            const stored = yield* agents.list;
+            return stored
+              .toSorted((a, b) => b.meta.createdAt - a.meta.createdAt)
+              .slice(0, RECENT)
+              .map((each): SearchResult => ({
+                id: Number(each.id),
+                title: each.meta.title,
+                archived: each.meta.archivedAt !== undefined,
+                createdAt: each.meta.createdAt,
+                matches: [],
+              }));
+          }
+          const rows = yield* indexed(() => index.query(match, QUERY_ROWS));
+          const groups = new Map<number, QueryRow[]>();
+          for (const row of rows) {
+            const group = groups.get(row.conversationId);
+            if (group !== undefined) {
+              if (group.length < QUERY_MATCHES) {
+                group.push(row);
+              }
+            } else if (groups.size < QUERY_CONVERSATIONS) {
+              groups.set(row.conversationId, [row]);
+            }
+          }
+          const results: SearchResult[] = [];
+          for (const [conversationId, matched] of groups) {
+            // A hit can outlive its conversation if the index and the store disagree;
+            // MetaDoc is authoritative, so the hit is dropped.
+            const stored = yield* agents
+              .get(conversationId as ConversationId)
+              .pipe(
+                Effect.catchTag("ConversationNotFound", () =>
+                  Effect.succeed(null)
+                )
+              );
+            if (stored === null) {
+              continue;
+            }
+            results.push({
+              id: conversationId,
+              title: stored.meta.title,
+              archived: stored.meta.archivedAt !== undefined,
+              createdAt: stored.meta.createdAt,
+              matches: matched.map((row) => ({
+                ...(row.entryId === undefined ? {} : { entry: row.entryId }),
+                role: row.role,
+                snippet: splitSnippet(row.snippet),
+                createdAt: row.createdAt,
+              })),
+            });
+          }
+          return results;
+        });
+
+        const catchUp = Effect.gen(function* () {
+          const all = yield* agents.list;
+          yield* Effect.forEach(
+            all,
+            (each) =>
+              indexConversation(each.id).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(
+                    `Indexing conversation ${each.id} failed`,
+                    cause
+                  )
+                )
+              ),
+            { discard: true }
+          );
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Search index catch-up failed", cause)
+          )
+        );
+
+        yield* Effect.forkScoped(catchUp);
+
+        return Search.of({ query, indexConversation, catchUp });
       })
     );
 

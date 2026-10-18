@@ -8,7 +8,7 @@ import {
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { MemoryStorage } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { Effect, Exit, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -47,7 +47,7 @@ const converse = (title: string, prompt: string, createdAt = Date.now()) =>
   });
 
 describe(Search, () => {
-  it.fails("finds a conversation's prompts and answers", async () => {
+  it("finds a conversation's prompts and answers", async () => {
     const { layer } = setup([answer("The echidna is a monotreme.")]);
 
     const { byAnswer, byPrompt, id } = await Effect.runPromise(
@@ -74,7 +74,7 @@ describe(Search, () => {
     expect(byPrompt[0]?.matches[0]).toMatchObject({ role: "user" });
   });
 
-  it.fails("finds a conversation by its title, with no entry on the hit", async () => {
+  it("finds a conversation by its title, with no entry on the hit", async () => {
     const { layer } = setup([answer("done")]);
 
     const found = await Effect.runPromise(
@@ -91,7 +91,7 @@ describe(Search, () => {
     expect(found[0]?.matches[0]?.entry).toBeUndefined();
   });
 
-  it.fails("leaves tool calls and results out of the index", async () => {
+  it("leaves tool calls and results out of the index", async () => {
     const { layer } = setup([
       callTool("bash", { command: "echo unindextoken" }),
       answer("done without tools"),
@@ -115,7 +115,7 @@ describe(Search, () => {
     expect(toolHit).toStrictEqual([]);
   });
 
-  it.fails("still finds an archived conversation, flagged", async () => {
+  it("still finds an archived conversation, flagged", async () => {
     const { layer } = setup([answer("done")]);
 
     const found = await Effect.runPromise(
@@ -133,7 +133,7 @@ describe(Search, () => {
     expect(found[0]).toMatchObject({ title: "mellohi", archived: true });
   });
 
-  it.fails("indexes a second time without duplicating results", async () => {
+  it("indexes a second time without duplicating results", async () => {
     const { layer } = setup([answer("done")]);
 
     const { first, second } = await Effect.runPromise(
@@ -151,7 +151,7 @@ describe(Search, () => {
     expect(first.length).toBeGreaterThan(0);
   });
 
-  it.fails("lists the most recent conversations for an unmatchable query", async () => {
+  it("lists the most recent conversations for an unmatchable query", async () => {
     const { layer } = setup([answer("a"), answer("b")]);
 
     const { hits, ids } = await Effect.runPromise(
@@ -168,7 +168,7 @@ describe(Search, () => {
     expect(hits.every((hit) => hit.matches.length === 0)).toBeTruthy();
   });
 
-  it.fails("fails indexConversation for an unknown conversation", async () => {
+  it("fails indexConversation for an unknown conversation", async () => {
     const { layer } = setup([]);
 
     const exit = await Effect.runPromiseExit(
@@ -182,15 +182,21 @@ describe(Search, () => {
     expect(JSON.stringify(exit)).toContain("ConversationNotFound");
   });
 
-  it.fails("resumes from the cursor stored in the index file", async () => {
+  it("resumes from the cursor stored in the index file", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "effect-pi-search-"));
     try {
       const file = path.join(dir, "search.sqlite");
-      // One storage for both builds, so the second sees the first build's conversation.
-      const storage = new MemoryStorage();
+      const transcript = path.join(dir, "transcript.sqlite");
+      // The transcript store is a real file so a second layer build reopens it.
       const layer = (responses: FauxResponseStep[]) =>
-        Search.layer({ database: file }).pipe(
-          Layer.provideMerge(fauxAgents(responses, { storage }).layer)
+        Layer.unwrap(
+          Effect.map(
+            Effect.promise(() => openNodeSqliteStorage(transcript)),
+            (storage) =>
+              Search.layer({ database: file }).pipe(
+                Layer.provideMerge(fauxAgents(responses, { storage }).layer)
+              )
+          )
         );
 
       const { hits: first, created } = await Effect.runPromise(
