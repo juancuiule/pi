@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AssistantMessage, EntryRecord, Message } from "effect-pi/api";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -61,18 +62,24 @@ const compaction = (reason: string): EntryRecord =>
     ],
   }) as unknown as EntryRecord;
 
+// The assistant rows' feedback controls read /api/info through useInfo; a bare client never fetches
+// during SSR rendering, so `tracing` stays unset and they hide.
 const transcript = (
   state: ConversationState,
   resuming = false,
   showThinking = true
 ) =>
   renderToStaticMarkup(
-    createElement(Transcript, {
-      state,
-      conversation: 1,
-      resuming,
-      showThinking,
-    })
+    createElement(
+      QueryClientProvider,
+      { client: new QueryClient() },
+      createElement(Transcript, {
+        state,
+        conversation: 1,
+        resuming,
+        showThinking,
+      })
+    )
   );
 const toolCall = (state: ConversationState) =>
   renderToStaticMarkup(createElement(ToolCall, { call, state }));
@@ -598,6 +605,70 @@ describe("head markers and earlier history", () => {
       },
     });
     expect(loading).toContain("Loading earlier entries…");
+  });
+});
+
+const transcriptWithInfo = (state: ConversationState, tracing: boolean) => {
+  const client = new QueryClient();
+  client.setQueryData(["info"], {
+    model: "faux/faux-1",
+    apiUrl: "http://127.0.0.1:3000",
+    tracing,
+  });
+  return renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(Transcript, {
+        state,
+        conversation: 1,
+        resuming: false,
+        showThinking: true,
+      })
+    )
+  );
+};
+const answeredEntry = (): ConversationState => ({
+  ...initialState,
+  entries: [
+    entry({
+      role: "assistant",
+      content: [{ type: "text", text: "42" }],
+      timestamp: 0,
+    } as Message),
+  ],
+});
+
+describe("feedback controls", () => {
+  it("shows thumbs and report on an assistant message when the server traces", () => {
+    const html = transcriptWithInfo(answeredEntry(), true);
+    expect(html).toContain('aria-label="Good answer"');
+    expect(html).toContain('aria-label="Bad answer"');
+    expect(html).toContain('aria-label="Report this answer"');
+  });
+
+  it("hides them when the server does not trace, or info has not loaded", () => {
+    const untraced = transcriptWithInfo(answeredEntry(), false);
+    expect(untraced).not.toContain("Good answer");
+    expect(untraced).not.toContain("Report this answer");
+    expect(transcript(answeredEntry())).not.toContain("Report this answer");
+  });
+
+  it("shows none on a user message even when the server traces", () => {
+    const html = transcriptWithInfo(
+      {
+        ...initialState,
+        entries: [
+          entry({
+            role: "user",
+            content: [{ type: "text", text: "hi" }],
+            timestamp: 0,
+          } as Message),
+        ],
+      },
+      true
+    );
+    expect(html).not.toContain("Good answer");
   });
 });
 

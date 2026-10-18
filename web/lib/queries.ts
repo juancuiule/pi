@@ -9,6 +9,7 @@ import type {
   SettingsChange,
   SoftwareId,
 } from "effect-pi/api";
+import { toast } from "sonner";
 
 import { runApi } from "./api";
 import type { CapacityGuard } from "./capacity-context";
@@ -242,6 +243,22 @@ export const useAnswerQuestions = (id: number) => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: LIST }),
   });
 };
+
+/** Thumbs up or down on an assistant entry, scored on its run's trace; there is no feedback state to read back. */
+export const useFeedback = (id: number) =>
+  useMutation({
+    mutationFn: (payload: { entry: number; value: 0 | 1; comment?: string }) =>
+      runApi((c) => c.conversations.feedback({ params: { id }, payload })),
+    onError: (error) => toast.error(error.message),
+  });
+
+/** Report an assistant entry, scored on its run's trace; `comment` is required. */
+export const useReport = (id: number) =>
+  useMutation({
+    mutationFn: (payload: { entry: number; comment: string }) =>
+      runApi((c) => c.conversations.report({ params: { id }, payload })),
+    onError: (error) => toast.error(error.message),
+  });
 
 /** Each Capacity resource's limit, holders and waiters; polled for the agent's waiting Upgrade. */
 export const useCapacity = () =>
