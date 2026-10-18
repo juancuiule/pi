@@ -29,3 +29,16 @@ describe(isSearchShortcut, () => {
     ).toBeFalsy();
   });
 });
+
+describe("key repeat", () => {
+  it("ignores auto-repeated shortcuts", () => {
+    expect(
+      isSearchShortcut({
+        key: "k",
+        metaKey: true,
+        ctrlKey: false,
+        repeat: true,
+      })
+    ).toBeFalsy();
+  });
+});

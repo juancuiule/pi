@@ -46,8 +46,9 @@ export const SearchPalette = ({
   const input = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
-  const debounced = useDebouncedValue(query, 150);
-  const { data } = useSearch(debounced, open);
+  // While closed the debounced value settles on "", so a reopen never re-fires the old query.
+  const debounced = useDebouncedValue(open ? query : "", 150);
+  const { data, isError } = useSearch(debounced, open);
   const results = data ?? [];
   const active =
     results.length === 0 ? -1 : Math.min(selected, results.length - 1);
@@ -102,7 +103,13 @@ export const SearchPalette = ({
   };
 
   let list: ReactNode;
-  if (data === undefined) {
+  if (isError) {
+    list = (
+      <p className="text-muted-foreground px-2 py-6 text-center text-sm">
+        Search failed — try again
+      </p>
+    );
+  } else if (data === undefined) {
     list = (
       <p className="text-muted-foreground px-2 py-6 text-center text-sm">
         Searching…
@@ -176,6 +183,7 @@ export const SearchPalette = ({
             aria-activedescendant={active >= 0 ? optionId(active) : undefined}
             autoComplete="off"
             spellCheck={false}
+            maxLength={500}
             placeholder="Search conversations…"
             value={query}
             onChange={(event) => {

@@ -45,6 +45,8 @@ export const useSearch = (q: string, enabled: boolean) =>
     queryKey: ["search", q],
     queryFn: () => runApi((c) => c.search.query({ query: { q } })),
     enabled,
+    // A search answer is per-keystroke; a rejected one (over the 500-char cap) is not worth retrying.
+    retry: false,
     // The previous list stays while the next keystroke's query loads.
     placeholderData: keepPreviousData,
   });
