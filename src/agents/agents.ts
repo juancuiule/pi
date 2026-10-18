@@ -87,6 +87,11 @@ import {
 } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
+import {
+  escapeNotificationTags,
+  notifyExtension,
+  watchNotifications,
+} from "../sandbox/notify.ts";
 import type {
   SandboxChoice,
   SandboxInfo,
@@ -320,10 +325,10 @@ export const extensionsFor = (
       return [Calculator];
     }
     case "shell": {
-      return [Calculator, CodingTools];
+      return [Calculator, CodingTools, notifyExtension];
     }
     case "desktop": {
-      return [Calculator, CodingTools, desktop];
+      return [Calculator, CodingTools, desktop, notifyExtension];
     }
     default: {
       throw new TypeError(`Unknown Level: ${level satisfies never}`);
@@ -1411,6 +1416,40 @@ export class Agents extends Context.Service<
               return scope;
             });
 
+          // A spool file exists while no submission claims it: a re-drain submits the same requestId
+          // again, so an existing record means the notification was claimed. One already seen — queued,
+          // placed, answered, or placed then gone unanswered — is done; a queued submission that was
+          // withdrawn without reaching the transcript (Pause, Stop) is submitted once more under a fresh
+          // key, because withdrawn submissions are never resurrected.
+          const submitNotification = async (
+            content: string,
+            requestId: string
+          ) => {
+            let key = requestId;
+            for (let tries = 0; ; tries += 1) {
+              key = tries === 0 ? requestId : `${requestId}#${tries}`;
+              // oxlint-disable-next-line no-await-in-loop -- each dedup key is looked up in turn
+              const existing = await durableStorage.submissionByRequest(
+                id,
+                key,
+                context
+              );
+              if (existing === undefined) {
+                break;
+              }
+              const seen =
+                existing.status !== "unanswered" ||
+                existing.entry !== undefined;
+              if (seen) {
+                return;
+              }
+            }
+            await handle.submit(
+              { type: "input", content, requestId: key },
+              context
+            );
+          };
+
           const attach = (
             to: SandboxKind,
             withSoftware: readonly SoftwareId[]
@@ -1476,6 +1515,12 @@ export class Agents extends Context.Service<
                       }
                       files.storage = made.storage;
                     }, context)
+                  );
+                  // Notifications the Sandbox's processes leave in the spool — including ones dropped
+                  // while the conversation was paused — become submissions. Scoped like the Sandbox is.
+                  yield* watchNotifications(
+                    workspaces.env(made.sandbox),
+                    submitNotification
                   );
                   return made;
                 }).pipe(Scope.provide(scope))
@@ -1597,7 +1642,7 @@ export class Agents extends Context.Service<
             requestId?: string
           ) {
             // What the person typed can never pass for a block the server appended.
-            const typed = escapeAttachmentTags(text);
+            const typed = escapeNotificationTags(escapeAttachmentTags(text));
             // A message with attachments carries its claim's id, stored with the submission when it is admitted.
             const submit = (content: UserInput, token?: string) =>
               attempt(async () => {

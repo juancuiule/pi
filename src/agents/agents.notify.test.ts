@@ -145,10 +145,12 @@ describe("sandbox notifications", () => {
           expect(message).toContain('<sandbox-notification at="');
           expect(message).toContain("build finished");
           expect(message).toContain("</sandbox-notification>");
+          yield* waitUntil(
+            Effect.sync(
+              () => !existsSync(path.join(dir, ".pi-notify", "thing-done"))
+            )
+          );
           yield* waitUntil(hasRunEnd(ref));
-          expect(
-            existsSync(path.join(dir, ".pi-notify", "thing-done"))
-          ).toBeFalsy();
         })
       ).pipe(Effect.provide(layer))
     );
