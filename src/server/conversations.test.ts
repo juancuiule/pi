@@ -973,7 +973,7 @@ const metaOf = (agents: Agents["Service"], id: number) =>
   agents.get(id as ConversationId).pipe(Effect.map((stored) => stored.meta));
 
 describe("titles", () => {
-  it.fails("generates a title once when a conversation's first run ends", async () => {
+  it("generates a title once when a conversation's first run ends", async () => {
     const { layer, faux } = setup([answer("reply"), answer("Greetings Chat")], {
       titleGeneration: true,
     });
@@ -1003,7 +1003,7 @@ describe("titles", () => {
     expect(faux.state.callCount).toBe(2);
   });
 
-  it.fails("does not generate again after a later run", async () => {
+  it("does not generate again after a later run", async () => {
     const { layer, faux } = setup(
       [answer("reply"), answer("Greetings Chat"), answer("more")],
       { titleGeneration: true }
@@ -1035,7 +1035,7 @@ describe("titles", () => {
     );
   });
 
-  it.fails("keeps the prompt title when generation fails, and does not retry", async () => {
+  it("keeps the prompt title when generation fails, and does not retry", async () => {
     const { layer, faux } = setup(
       [
         answer("reply"),
@@ -1077,7 +1077,7 @@ describe("titles", () => {
     );
   });
 
-  it.fails("never overwrites a rename that lands while a title generates", async () => {
+  it("never overwrites a rename that lands while a title generates", async () => {
     const gate = Deferred.makeUnsafe<boolean>();
     let asked = 0;
     const gated: FauxResponseStep = () => {
@@ -1107,7 +1107,7 @@ describe("titles", () => {
     );
   });
 
-  it.fails("skips generation for a conversation renamed before its first run ended", async () => {
+  it("skips generation for a conversation renamed before its first run ended", async () => {
     const gate = Deferred.makeUnsafe<boolean>();
     const gatedRun: FauxResponseStep = () =>
       Effect.runPromise(Deferred.await(gate)).then(() => answer("hi"));
@@ -1139,7 +1139,7 @@ describe("titles", () => {
     );
   });
 
-  it.fails("regenerates on demand, over a manual title, paused or archived", async () => {
+  it("regenerates on demand, over a manual title, paused or archived", async () => {
     const { layer } = setup(
       [
         answer("reply"),
@@ -1185,7 +1185,7 @@ describe("titles", () => {
     );
   });
 
-  it.fails("titles a regeneration from the first and the latest exchange", async () => {
+  it("titles a regeneration from the first and the latest exchange", async () => {
     const captured: Message[][] = [];
     const recording: FauxResponseStep = (request) => {
       captured.push([...request.messages]);
@@ -1231,7 +1231,7 @@ describe("titles", () => {
     }
   });
 
-  it.fails("never generates when titleGeneration is off", async () => {
+  it("never generates when titleGeneration is off", async () => {
     const { layer, faux } = setup([answer("reply")]);
 
     const { meta, failed } = await Effect.runPromise(
@@ -1264,7 +1264,7 @@ describe("titles", () => {
     expect(faux.state.callCount).toBe(1);
   });
 
-  it.fails("fails a regeneration for a conversation with no answered exchange", async () => {
+  it("fails a regeneration for a conversation with no answered exchange", async () => {
     const gate = Deferred.makeUnsafe<boolean>();
     const gatedRun: FauxResponseStep = () =>
       Effect.runPromise(Deferred.await(gate)).then(() => answer("late"));

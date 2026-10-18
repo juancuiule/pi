@@ -1258,7 +1258,7 @@ describe("HTTP API", () => {
     ]);
   });
 
-  it.fails("renames a conversation, refusing unknown ids and empty titles", async () => {
+  it("renames a conversation, refusing unknown ids and empty titles", async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const client = yield* HttpApiClient.make(Api);
@@ -1304,7 +1304,7 @@ describe("HTTP API", () => {
     expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
   });
 
-  it.fails("generates and regenerates titles over HTTP", async () => {
+  it("generates and regenerates titles over HTTP", async () => {
     const agents = fauxAgents(
       [
         fauxAssistantMessage([fauxText("one")]),
@@ -1339,7 +1339,7 @@ describe("HTTP API", () => {
     expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
   });
 
-  it.fails("answers 409 for generated titles when only the echo model answers", async () => {
+  it("answers 409 for generated titles when only the echo model answers", async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const client = yield* HttpApiClient.make(Api);

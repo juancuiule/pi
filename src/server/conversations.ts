@@ -346,6 +346,19 @@ export class Conversations extends Context.Service<
                     );
                   }
                 }
+                if (was && !value) {
+                  // One answered Run earns one automatic title; the meta latch inside decides.
+                  // Unlike the checkpoint it needs no Sandbox, and a Pause is no reason to skip it.
+                  yield* agents.autoTitle(entry.seat.id).pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning(
+                        `Title generation of conversation ${entry.seat.id} failed`,
+                        cause
+                      )
+                    ),
+                    Effect.forkIn(layerScope)
+                  );
+                }
               })
             ),
             Effect.orDie,
@@ -774,10 +787,26 @@ export class Conversations extends Context.Service<
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),
           history: (id, range) => agents.history(asId(id), range),
-          rename: (_id, _title) =>
-            Effect.die(new Error("title generation is not implemented")),
-          generateTitle: (_id) =>
-            Effect.die(new Error("title generation is not implemented")),
+          rename: Effect.fn("Conversations.rename")(function* (id, title) {
+            const entry = live.get(id);
+            const stored = yield* agents.renameTitle(asId(id), title);
+            return summaryOf(
+              stored,
+              entry,
+              entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+            );
+          }),
+          generateTitle: Effect.fn("Conversations.generateTitle")(
+            function* (id) {
+              const entry = live.get(id);
+              const stored = yield* agents.generateTitle(asId(id));
+              return summaryOf(
+                stored,
+                entry,
+                entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+              );
+            }
+          ),
           agent: (id) => agents.agent(asId(id)),
           configure: (id, change) => agents.configure(asId(id), change),
           reset: (id) => agents.reset(asId(id)),
