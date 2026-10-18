@@ -168,6 +168,10 @@ describe("agent tracing", () => {
     expect(run).toHaveLength(3);
     expect(new Set(run.map((span) => span.traceId)).size).toBe(1);
     expect(traced).toBe(run[0]?.traceId);
+    // The send's own span ends at admission; it must never parent the run — feedback scores the run's trace.
+    const sent = spans.find((span) => span.name === "Seat.send");
+    expect(sent).toBeDefined();
+    expect(sent?.traceId).not.toBe(run[0]?.traceId);
   });
 
   it("starts a fresh trace for the next run of the same conversation", async () => {

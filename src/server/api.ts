@@ -436,7 +436,7 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     payload: Schema.Struct({
       entry: Schema.Int,
       value: Schema.Literals([0, 1]),
-      comment: Schema.optionalKey(Schema.NonEmptyString),
+      comment: Schema.optionalKey(Schema.Trim.check(Schema.isNonEmpty())),
     }),
     success: HttpApiSchema.NoContent,
     error: [NotFound, NoEntry, NoTrace],
@@ -446,7 +446,7 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     params: ById,
     payload: Schema.Struct({
       entry: Schema.Int,
-      comment: Schema.NonEmptyString,
+      comment: Schema.Trim.check(Schema.isNonEmpty()),
     }),
     success: HttpApiSchema.NoContent,
     error: [NotFound, NoEntry, NoTrace],

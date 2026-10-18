@@ -1743,10 +1743,13 @@ export class Agents extends Context.Service<
             const expanded = yield* expand(prompt, id);
             yield* annotate(expanded);
             // Admitted without waiting: a busy conversation queues it, steering the run when it waits on a person
-            // and as a follow-up while it works, and the answer arrives as events.
-            const submission = yield* tracing.traced(
-              id,
-              admit(expanded, attachmentIds, "steerWhenWaiting", requestId)
+            // and as a follow-up while it works, and the answer arrives as events. No `tracing.traced`: the send
+            // span ends at admission, before the run's task hooks — its spans adopt their own run root instead.
+            const submission = yield* admit(
+              expanded,
+              attachmentIds,
+              "steerWhenWaiting",
+              requestId
             );
             return yield* attempt(() => submission.status(context));
           });

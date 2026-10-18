@@ -135,6 +135,19 @@ describe("HTTP API", () => {
     ]);
   });
 
+  it("rejects a whitespace-only report comment before the wire", async () => {
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        return yield* client.conversations.report({
+          params: { id: 1 },
+          payload: { entry: 1, comment: "   " },
+        });
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("ok")])])))
+    );
+    expect(Exit.isFailure(exit)).toBeTruthy();
+  });
+
   it("lists every extension, and what one conversation runs with", async () => {
     const { extensions, agent } = await Effect.runPromise(
       Effect.gen(function* () {
