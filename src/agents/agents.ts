@@ -1,6 +1,7 @@
 // An Effect service over a pi-durable harness: how to run a Conversation. `create` records a new one, and `open`
 // gives a Conversation a Seat (see GLOSSARY.md), with a Sandbox over its Workspace when its Level needs one. Which
 // Conversations have Seats, and when that changes, is the server's concern (src/server/conversations.ts).
+import type { Context as ChordContext } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
@@ -1357,22 +1358,27 @@ export class Agents extends Context.Service<
                 readonly sandbox: SandboxInfo;
                 readonly storage: StorageRef;
                 shell?: ShellSession;
+                notify?: Scope.Closeable;
               }
             | undefined;
           let levelClaim: Scope.Closeable | undefined;
           let closing = false;
           const upgrading = yield* Semaphore.make(1);
 
-          // One finalizer, in this order: the conversation stops, no tool call can find the Sandbox any more,
-          // then the Sandbox goes and its claim is released. `closing` turns away an Upgrade queued behind it,
-          // and taking `upgrading` lets one still landing finish first: `machine` and `levelClaim` then name
-          // its new Sandbox and claim, and they close too.
+          // One finalizer, in this order: the notification drain stops so it cannot admit a new Run, the
+          // conversation stops, no tool call can find the Sandbox any more, then the Sandbox goes and its
+          // claim is released. `closing` turns away an Upgrade queued behind it, and taking `upgrading`
+          // lets one still landing finish first: `machine` and `levelClaim` then name its new Sandbox
+          // and claim, and they close too.
           yield* Effect.addFinalizer(() =>
             Effect.suspend(() => {
               closing = true;
               return Effect.gen(function* () {
                 upgrades.delete(id);
                 seatSandboxes.delete(id);
+                if (machine?.notify !== undefined) {
+                  yield* Scope.close(machine.notify, Exit.void);
+                }
                 yield* Effect.ignore(attempt(() => handle.abort(context)));
                 yield* Effect.ignore(
                   attempt(() =>
@@ -1423,8 +1429,13 @@ export class Agents extends Context.Service<
           // key, because withdrawn submissions are never resurrected.
           const submitNotification = async (
             content: string,
-            requestId: string
+            requestId: string,
+            notifyContext: ChordContext
           ) => {
+            // A closing Seat admits nothing: the file stays for the next Seat to claim.
+            if (closing) {
+              throw new Error("Seat is closing");
+            }
             let key = requestId;
             for (let tries = 0; ; tries += 1) {
               key = tries === 0 ? requestId : `${requestId}#${tries}`;
@@ -1432,7 +1443,7 @@ export class Agents extends Context.Service<
               const existing = await durableStorage.submissionByRequest(
                 id,
                 key,
-                context
+                notifyContext
               );
               if (existing === undefined) {
                 break;
@@ -1446,7 +1457,7 @@ export class Agents extends Context.Service<
             }
             await handle.submit(
               { type: "input", content, requestId: key },
-              context
+              notifyContext
             );
           };
 
@@ -1517,12 +1528,14 @@ export class Agents extends Context.Service<
                     }, context)
                   );
                   // Notifications the Sandbox's processes leave in the spool — including ones dropped
-                  // while the conversation was paused — become submissions. Scoped like the Sandbox is.
+                  // while the conversation was paused — become submissions. Its own scope, a child of
+                  // the machine's, lets the finalizer stop the drain before the conversation aborts.
+                  const notifyScope = yield* Scope.fork(scope);
                   yield* watchNotifications(
                     workspaces.env(made.sandbox),
                     submitNotification
-                  );
-                  return made;
+                  ).pipe(Scope.provide(notifyScope));
+                  return { ...made, notify: notifyScope };
                 }).pipe(Scope.provide(scope))
               );
               if (Exit.isFailure(attached)) {

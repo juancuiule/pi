@@ -15,10 +15,10 @@ describe(parseSandboxNotification, () => {
     });
   });
 
-  it("marks a cut payload and strips the marker", () => {
+  it("reads the cut attribute the host writes", () => {
     expect(
       parseSandboxNotification(
-        '<sandbox-notification at="2026-05-01T12:34:56.789Z">\n12345678\n[notification cut at 8 bytes]\n</sandbox-notification>'
+        '<sandbox-notification at="2026-05-01T12:34:56.789Z" cut="8192">\n12345678\n</sandbox-notification>'
       )
     ).toStrictEqual({
       at: "2026-05-01T12:34:56.789Z",
@@ -27,12 +27,16 @@ describe(parseSandboxNotification, () => {
     });
   });
 
-  it("keeps a payload that only looks like the cut marker", () => {
+  it("keeps a payload that only looks like a cut marker", () => {
     expect(
       parseSandboxNotification(
-        '<sandbox-notification at="2026-05-01T12:34:56.789Z">\n[notification cut at noon]\n</sandbox-notification>'
-      )?.truncated
-    ).toBeFalsy();
+        '<sandbox-notification at="2026-05-01T12:34:56.789Z">\n123\n[notification cut at 8 bytes]\n</sandbox-notification>'
+      )
+    ).toStrictEqual({
+      at: "2026-05-01T12:34:56.789Z",
+      text: "123\n[notification cut at 8 bytes]",
+      truncated: false,
+    });
   });
 
   it("rejects anything but the exact produced shape", () => {

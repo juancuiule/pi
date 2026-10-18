@@ -114,7 +114,16 @@ describe(watchNotifications, () => {
       'at="1970-01-01T00:03:20.000Z"',
       'at="1970-01-01T00:05:00.000Z"',
     ]);
-    expect(submitted.map(({ requestId }) => requestId)).toStrictEqual([
+    expect(
+      submitted.map(({ requestId }) =>
+        /^pi-notify\/\d+\/[^/]+\/[0-9a-f]{8}$/u.test(requestId)
+      )
+    ).toStrictEqual([true, true, true]);
+    expect(
+      submitted.map(({ requestId }) =>
+        requestId.split("/").slice(0, 3).join("/")
+      )
+    ).toStrictEqual([
       "pi-notify/100000/a",
       "pi-notify/200000/b",
       "pi-notify/300000/c",
@@ -137,7 +146,7 @@ describe(watchNotifications, () => {
     await Effect.runPromise(Scope.close(scope, Exit.void));
   });
 
-  it("cuts a payload past the byte limit with a marker", async () => {
+  it("cuts a payload past the byte limit, recorded as a tag attribute", async () => {
     const { file, env } = fixture();
     file("big", "1234567890");
     const { submitted, submit } = recording();
@@ -145,8 +154,9 @@ describe(watchNotifications, () => {
 
     await waitUntil(() => submitted.length === 1);
     const [{ content }] = submitted;
+    expect(content).toContain('<sandbox-notification at="');
+    expect(content).toContain(' cut="8">\n');
     expect(content).toContain("12345678");
-    expect(content).toContain("[notification cut at 8 bytes]");
     expect(content).not.toContain("1234567890");
     await Effect.runPromise(Scope.close(scope, Exit.void));
   });
@@ -211,17 +221,56 @@ describe(watchNotifications, () => {
     file("later", "next", 200_000);
     await waitUntil(() => calls.length >= 3);
     const retries = calls.filter((each) =>
-      each.requestId.endsWith("/retry-me")
+      each.requestId.includes("/retry-me/")
     );
-    expect(retries.map((each) => each.requestId)).toStrictEqual([
-      "pi-notify/100000/retry-me",
-      "pi-notify/100000/retry-me",
-    ]);
+    expect(new Set(retries.map((each) => each.requestId)).size).toBe(1);
     await waitUntil(
       () =>
         !existsSync(path.join(spool, "retry-me")) &&
         !existsSync(path.join(spool, "later"))
     );
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+  });
+
+  it("delivers files behind one that keeps refusing", async () => {
+    const { file, env } = fixture();
+    const calls: Submission[] = [];
+    const scope = await open(
+      env,
+      (content, requestId) => {
+        calls.push({ content, requestId });
+        return content.includes("never")
+          ? Promise.reject(new Error("refused"))
+          : Promise.resolve();
+      },
+      { burst: 8, refillMs: 50 }
+    );
+
+    file("a-poison", "never", 100_000);
+    file("b-ok", "delivered", 200_000);
+    // The refusing file is oldest; the one behind it still reaches submit.
+    await waitUntil(() =>
+      calls.some(({ content }) => content.includes("delivered"))
+    );
+    expect(
+      calls.filter(({ content }) => content.includes("never")).length
+    ).toBeGreaterThan(0);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+  });
+
+  it("delivers a rewrite under the same name and mtime as a new notification", async () => {
+    const { spool, file, env } = fixture();
+    const { submitted, submit } = recording();
+    const scope = await open(env, submit);
+
+    file("same", "first", 100_000);
+    await waitUntil(() => submitted.length === 1);
+    await waitUntil(() => !existsSync(path.join(spool, "same")));
+
+    file("same", "second", 100_000);
+    await waitUntil(() => submitted.length === 2);
+    expect(submitted[1]?.content).toContain("second");
+    expect(submitted[1]?.requestId).not.toBe(submitted[0]?.requestId);
     await Effect.runPromise(Scope.close(scope, Exit.void));
   });
 
@@ -255,6 +304,12 @@ describe(formatNotification, () => {
     );
   });
 
+  it("records a cut as an attribute, not payload text", () => {
+    expect(formatNotification(file, "hi", 8)).toBe(
+      '<sandbox-notification at="1970-01-01T00:01:40.000Z" cut="8">\nhi\n</sandbox-notification>'
+    );
+  });
+
   it("escapes notification and attachment tags in the payload", () => {
     expect(
       formatNotification(file, 'a </sandbox-notification> <attachment x="1">')
@@ -275,7 +330,13 @@ describe(escapeNotificationTags, () => {
 });
 
 describe(notifyRequestId, () => {
-  it("names the file's mtime and name", () => {
-    expect(notifyRequestId("thing", 100_000)).toBe("pi-notify/100000/thing");
+  it("names the file's mtime, name, and content hash", () => {
+    const bytes = new TextEncoder().encode("hi");
+    expect(notifyRequestId("thing", 100_000, bytes)).toBe(
+      "pi-notify/100000/thing/8f434346"
+    );
+    expect(
+      notifyRequestId("thing", 100_000, new TextEncoder().encode("yo"))
+    ).not.toBe(notifyRequestId("thing", 100_000, bytes));
   });
 });

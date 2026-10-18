@@ -1,6 +1,8 @@
-// A sandbox notification reaches the model as `<sandbox-notification at="…">\n…\n</sandbox-notification>`
-// (src/sandbox/notify.ts formatNotification); the transcript shows it as a quiet machine row, not a typed
-// bubble. Lookalikes the person or the payload typed carry a zero-width space and never parse.
+// A sandbox notification reaches the model as `<sandbox-notification at="…" [cut="N"]>\n…\n
+// </sandbox-notification>` (src/sandbox/notify.ts formatNotification); the transcript shows it as a
+// quiet machine row, not a typed bubble. Lookalikes the person or the payload typed carry a
+// zero-width space and never parse. The `cut` flag rides inside the tag — payload text is escaped
+// and cannot write attributes, so a payload that merely names the marker still parses faithfully.
 
 export interface SandboxNotification {
   /** The file's writing time, as its mtime rendered to ISO. */
@@ -10,28 +12,20 @@ export interface SandboxNotification {
   readonly truncated: boolean;
 }
 
-const OPEN = '<sandbox-notification at="';
-const OPEN_END = '">\n';
-const CLOSE = "\n</sandbox-notification>";
-const AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
-const CUT = /\n\[notification cut at \d+ bytes\]$/u;
+const MESSAGE =
+  // oxlint-disable-next-line prefer-named-capture-group -- the web target predates named groups
+  /^<sandbox-notification at="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)"(?: cut="(\d+)")?>\n([\s\S]*)\n<\/sandbox-notification>$/u;
 
 export const parseSandboxNotification = (
   text: string
 ): SandboxNotification | undefined => {
-  if (!text.startsWith(OPEN) || !text.endsWith(CLOSE)) {
+  const match = MESSAGE.exec(text);
+  if (match === null) {
     return;
   }
-  const openEnd = text.indexOf(OPEN_END, OPEN.length);
-  const at = text.slice(OPEN.length, openEnd);
-  if (openEnd === -1 || !AT.test(at)) {
-    return;
-  }
-  const body = text.slice(openEnd + OPEN_END.length, -CLOSE.length);
-  const cut = CUT.exec(body);
   return {
-    at,
-    text: cut === null ? body : body.slice(0, -cut[0].length),
-    truncated: cut !== null,
+    at: match[1] ?? "",
+    text: match[3] ?? "",
+    truncated: match[2] !== undefined,
   };
 };
