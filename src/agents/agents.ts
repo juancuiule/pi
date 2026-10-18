@@ -76,6 +76,7 @@ import type {
   AttachmentRefused,
   CapacityExhausted,
   SkillNotFound,
+  TitleGenerationFailed,
 } from "../errors.ts";
 import {
   ApprovalNotFound,
@@ -498,6 +499,8 @@ export class Agents extends Context.Service<
   {
     /** The model new conversations run on; /api/info reports it. */
     readonly model: AgentModel;
+    /** Whether conversations get generated titles: a real model is configured. */
+    readonly titleGeneration: boolean;
     /** The extensions, skills and MCP servers conversations can use, for the console. */
     readonly capabilities: Effect.Effect<Capabilities>;
     /** What a conversation runs with now: its settings, model and prompt sections. */
@@ -566,6 +569,25 @@ export class Agents extends Context.Service<
       id: ConversationId,
       request: UpgradeRequest
     ): Effect.Effect<void, AgentError | ConversationNotFound | InvalidUpgrade>;
+    /** The person's rename: unconditional, marks the title "manual". Works paused or archived. */
+    renameTitle(
+      id: ConversationId,
+      title: string
+    ): Effect.Effect<StoredConversation, AgentError | ConversationNotFound>;
+    /**
+     * The one automatic title attempt after a run-end; a no-op unless eligible. Internal failures
+     * are logged, not raised.
+     */
+    autoTitle(
+      id: ConversationId
+    ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Explicit (re)generation — always allowed, unconditional apply, marks "generated". */
+    generateTitle(
+      id: ConversationId
+    ): Effect.Effect<
+      StoredConversation,
+      AgentError | ConversationNotFound | TitleGenerationFailed
+    >;
     /** One stored Conversation. */
     get(
       id: ConversationId
@@ -615,6 +637,8 @@ export class Agents extends Context.Service<
     readonly mcpConnectTimeoutMs?: number | undefined;
     /** Keep attachment text in traces; only its size by default. */
     readonly traceAttachmentText?: boolean | undefined;
+    /** Generated titles, on by default; `false` when only an echo model answers. */
+    readonly titleGeneration?: boolean | undefined;
   }) =>
     Layer.effect(
       Agents,
@@ -2393,6 +2417,7 @@ export class Agents extends Context.Service<
 
         return Agents.of({
           model: options.model,
+          titleGeneration: options.titleGeneration !== false,
           capabilities,
           agent: agentOf,
           configure: configureSettings,
@@ -2406,6 +2431,12 @@ export class Agents extends Context.Service<
           unarchive,
           events,
           history,
+          renameTitle: (_id, _title) =>
+            Effect.die(new Error("title generation is not implemented")),
+          autoTitle: (_id) =>
+            Effect.die(new Error("title generation is not implemented")),
+          generateTitle: (_id) =>
+            Effect.die(new Error("title generation is not implemented")),
         });
       })
     );

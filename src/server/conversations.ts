@@ -45,6 +45,7 @@ import type {
   ConversationNotFound,
   InvalidUpgrade,
   SkillNotFound,
+  TitleGenerationFailed,
 } from "../errors.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
@@ -195,6 +196,18 @@ export class Conversations extends Context.Service<
     unarchive(
       id: number
     ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Rename a Conversation's title; marks it manual. */
+    rename(
+      id: number,
+      title: string
+    ): Effect.Effect<ConversationSummary, AgentError | ConversationNotFound>;
+    /** Generate a title with the conversation's model; works paused or archived. */
+    generateTitle(
+      id: number
+    ): Effect.Effect<
+      ConversationSummary,
+      AgentError | ConversationNotFound | TitleGenerationFailed
+    >;
     /** What a Conversation runs with now: its settings, model and prompt sections. */
     agent(
       id: number
@@ -761,6 +774,10 @@ export class Conversations extends Context.Service<
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),
           history: (id, range) => agents.history(asId(id), range),
+          rename: (_id, _title) =>
+            Effect.die(new Error("title generation is not implemented")),
+          generateTitle: (_id) =>
+            Effect.die(new Error("title generation is not implemented")),
           agent: (id) => agents.agent(asId(id)),
           configure: (id, change) => agents.configure(asId(id), change),
           reset: (id) => agents.reset(asId(id)),
