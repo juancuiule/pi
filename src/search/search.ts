@@ -2,7 +2,15 @@
 // SQLite file of its own (SEARCH_DB), indexed when a Run ends and caught up at boot. Human-facing
 // only — through /api/search and the console's palette; the agent gets no search tool.
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { Context, Effect, Layer, Schema, Semaphore, Stream } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Layer,
+  Schema,
+  Semaphore,
+  Stream,
+} from "effect";
 
 import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
@@ -49,8 +57,9 @@ export class Search extends Context.Service<
       id: ConversationId
     ): Effect.Effect<void, SearchError | AgentError | ConversationNotFound>;
     /**
-     * Startup catch-up over every stored conversation, archived ones included; a conversation's
-     * indexing failure is logged and does not stop the others.
+     * The startup catch-up over every stored conversation, archived ones included: running it
+     * waits until that sweep has finished (a conversation's indexing failure is logged and does
+     * not stop the others).
      */
     readonly catchUp: Effect.Effect<void>;
   }
@@ -155,28 +164,35 @@ export class Search extends Context.Service<
           return results;
         });
 
-        const catchUp = Effect.gen(function* () {
-          const all = yield* agents.list;
-          yield* Effect.forEach(
-            all,
-            (each) =>
-              indexConversation(each.id).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning(
-                    `Indexing conversation ${each.id} failed`,
-                    cause
+        const swept = yield* Deferred.make<boolean, never>();
+        yield* Effect.forkScoped(
+          Effect.gen(function* () {
+            const all = yield* agents.list;
+            yield* Effect.forEach(
+              all,
+              (each) =>
+                indexConversation(each.id).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning(
+                      `Indexing conversation ${each.id} failed`,
+                      cause
+                    )
                   )
-                )
-              ),
-            { discard: true }
-          );
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Search index catch-up failed", cause)
+                ),
+              { discard: true }
+            );
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Search index catch-up failed", cause)
+            ),
+            // Done or failed, the sweep is over — awaiters continue either way.
+            Effect.ensuring(Deferred.succeed(swept, true))
           )
         );
 
-        yield* Effect.forkScoped(catchUp);
+        // Awaiting the sweep's end lets callers (tests, the API) take it as a point-in-time
+        // "everything stored is indexed" before they act.
+        const catchUp = Deferred.await(swept).pipe(Effect.asVoid);
 
         return Search.of({ query, indexConversation, catchUp });
       })

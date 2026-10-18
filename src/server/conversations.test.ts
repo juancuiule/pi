@@ -6,8 +6,10 @@ import {
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
+import type { Agents } from "../agents/agents.ts";
 import { InvalidSetting } from "../errors.ts";
 import { SandboxError } from "../sandbox/sandbox.ts";
+import { Search } from "../search/search.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
 import type { LocalSandboxes } from "../testing/sandboxes.ts";
@@ -25,9 +27,10 @@ const setup = (
   options: Partial<typeof defaults> & {
     readonly shells?: number;
     readonly sandboxes?: LocalSandboxes;
+    readonly search?: Layer.Layer<Search, unknown, Agents>;
   } = {}
 ) => {
-  const { shells = 3, sandboxes, ...rest } = options;
+  const { shells = 3, sandboxes, search = Search.none, ...rest } = options;
   const agents = fauxAgents(responses, {
     limits: { shells },
     ...(sandboxes === undefined ? {} : { sandboxes }),
@@ -35,6 +38,8 @@ const setup = (
   return {
     ...agents,
     layer: Conversations.layer({ ...defaults, ...rest }).pipe(
+      // Merge so a test can reach the same Search Conversations indexes into.
+      Layer.provideMerge(search),
       Layer.provide(agents.layer)
     ),
   };
@@ -82,6 +87,38 @@ describe(Conversations, () => {
 
     expect(listed).toHaveLength(1);
     expect(listed[0]?.sandbox).toBe("none");
+  });
+
+  it.fails("indexes a conversation when its Run ends, even one with no Sandbox", async () => {
+    const { layer } = setup([answer("quokkas smile")], {
+      search: Search.temporary,
+    });
+
+    const { created, found } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const search = yield* Search;
+        // Let the startup sweep pass first, so only run-end indexing can find this one.
+        yield* search.catchUp;
+        const started = yield* conversations.create({
+          sandbox: "none",
+          prompt: "quokka facts",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        // Indexing is forked at run end, so poll for it.
+        yield* waitUntil(
+          search.query("quokka").pipe(Effect.map((hits) => hits.length > 0))
+        );
+        return { created: started, found: yield* search.query("quokka") };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(found[0]?.id).toBe(created.id);
+    expect(found[0]?.title).toBe("quokka facts");
   });
 
   it("pauses an idle Conversation, freeing its Sandbox, and a send resumes it with its files", async () => {
