@@ -4,11 +4,14 @@
 // per conversation (rowid = -conversation_id); `search_cursors` is how far each conversation has
 // been scanned. `putPage` writes a page's rows and advances the cursor in one transaction, so
 // re-runs are idempotent and a crash resumes where the index left off.
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { IndexedText } from "./format.ts";
 
-// The markers snippet() wraps matches in; control characters, so real text never collides.
+// The markers snippet() wraps matches in; control characters — indexedText strips them from
+// stored text so a pasted \x02 cannot spoof a highlight.
 const MATCH_OPEN = "\u0002";
 const MATCH_CLOSE = "\u0003";
 
@@ -37,14 +40,18 @@ export interface SearchIndex {
   /** The conversation's title row, replaced when it changes. */
   putTitle(conversationId: number, title: string, createdAt: number): void;
   /**
-   * One scanned page: `rows` are its indexable entries and `upTo` its last scanned entry id —
-   * skipped entries advance the cursor too. Rows and cursor land in one transaction, so a crash
-   * resumes without losing progress and a re-run replaces rows rather than duplicating them.
+   * One scanned page: `rows` are its indexable entries (each carrying the id of the conversation
+   * that actually owns it — fork ancestors keep the parent's id) and `upTo` its last scanned
+   * entry id — skipped entries advance the cursor too. Rows and cursor land in one transaction,
+   * so a crash resumes without losing progress and a re-run replaces rows rather than duplicating.
    */
   putPage(
     conversationId: number,
     upTo: number,
-    rows: readonly (IndexedText & { readonly entryId: number })[]
+    rows: readonly (IndexedText & {
+      readonly entryId: number;
+      readonly conversationId: number;
+    })[]
   ): void;
   /** The best `limit` rows matching a sanitized FTS5 expression, best rank first. */
   query(match: string, limit: number): QueryRow[];
@@ -53,6 +60,9 @@ export interface SearchIndex {
 
 /** The index in a SQLite file (`:memory:` for tests), tables created if missing. */
 export const sqliteIndex = (file: string): SearchIndex => {
+  if (file !== ":memory:") {
+    mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  }
   const db = new DatabaseSync(file);
   db.exec(`
     PRAGMA busy_timeout = 5000;
@@ -120,7 +130,7 @@ export const sqliteIndex = (file: string): SearchIndex => {
           insert.run(
             row.entryId,
             row.text,
-            conversationId,
+            row.conversationId,
             row.entryId,
             row.role,
             row.createdAt

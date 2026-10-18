@@ -36,6 +36,13 @@ const assistant = (
     timestamp,
   }) as AssistantMessage;
 
+const malformed = (content: unknown, role: "user" | "assistant") =>
+  entry(role === "user" ? "pi.user" : "pi.assistant", {
+    role,
+    content,
+    timestamp: 1000,
+  } as unknown as UserMessage);
+
 describe(indexedText, () => {
   it("takes a user message's text and timestamp", () => {
     expect(indexedText(entry("pi.user", user("hello there")))).toStrictEqual({
@@ -105,6 +112,22 @@ describe(indexedText, () => {
     ).toBeUndefined();
   });
 
+  it("tolerates malformed content instead of throwing", () => {
+    expect(indexedText(malformed(null, "user"))).toBeUndefined();
+    expect(indexedText(malformed(42, "assistant"))).toBeUndefined();
+    expect(
+      indexedText(
+        malformed([null, { type: "text", text: "kept" }, "junk"], "user")
+      )
+    ).toStrictEqual({ role: "user", text: "kept", createdAt: 1000 });
+  });
+
+  it("strips the snippet markers from indexed text", () => {
+    expect(
+      indexedText(entry("pi.user", user("a \u0002spoofed\u0003 mark")))
+    ).toStrictEqual({ role: "user", text: "a spoofed mark", createdAt: 1000 });
+  });
+
   it("skips entries with no text", () => {
     expect(indexedText(entry("pi.user"))).toBeUndefined();
     expect(indexedText(entry("pi.user", user("   ")))).toBeUndefined();
@@ -133,6 +156,12 @@ describe(matchQuery, () => {
 
   it("quotes each term as a prefix and ANDs them", () => {
     expect(matchQuery("unclosed quote")).toBe('"unclosed"* AND "quote"*');
+  });
+
+  it("never splits a surrogate pair when truncating a term", () => {
+    const wide = String.fromCodePoint(0x2_04_00);
+    const q = `${"a".repeat(39)}${wide}tail`;
+    expect(matchQuery(q)).toBe(`"${"a".repeat(39)}${wide}"*`);
   });
 
   it("sanitizes FTS syntax out of the terms", () => {

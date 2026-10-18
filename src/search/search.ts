@@ -90,10 +90,22 @@ export class Search extends Context.Service<
             Stream.runForEach((chunk) =>
               indexed(() => {
                 const rows = chunk.flatMap((entry) => {
-                  const text = indexedText(entry);
-                  return text === undefined
-                    ? []
-                    : [{ ...text, entryId: Number(entry.id) }];
+                  try {
+                    const text = indexedText(entry);
+                    return text === undefined
+                      ? []
+                      : [
+                          {
+                            ...text,
+                            entryId: Number(entry.id),
+                            conversationId: Number(entry.conversationId),
+                          },
+                        ];
+                  } catch {
+                    // One malformed entry is skipped, not fatal: the page's cursor still
+                    // advances past it so indexing never wedges on a poisoned record.
+                    return [];
+                  }
                 });
                 const last = chunk.at(-1);
                 if (last !== undefined) {

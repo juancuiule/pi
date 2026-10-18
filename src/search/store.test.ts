@@ -11,8 +11,9 @@ const row = (
   entryId: number,
   text: string,
   role: "user" | "assistant" = "user",
-  createdAt = entryId
-) => ({ entryId, role, text, createdAt });
+  createdAt = entryId,
+  conversationId = 1
+) => ({ entryId, role, text, createdAt, conversationId });
 
 describe(sqliteIndex, () => {
   it("reports a cursor of 0 before any page", () => {
@@ -64,6 +65,17 @@ describe(sqliteIndex, () => {
     expect(index.cursorOf(1)).toBe(12);
     index.putPage(1, 20, []);
     expect(index.cursorOf(1)).toBe(20);
+    index.close();
+  });
+
+  it("records the entry's owning conversation, not the scanned one", () => {
+    const index = sqliteIndex(":memory:");
+    // A fork's scan returns ancestor entries; their rows belong to the parent.
+    index.putPage(2, 10, [row(5, "inherited words", "user", 5, 9)]);
+    expect(index.cursorOf(2)).toBe(10);
+    const hits = index.query('"inherited"*', 10);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.conversationId).toBe(9);
     index.close();
   });
 

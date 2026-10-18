@@ -3,7 +3,6 @@
 // entries never reach the index (the kind allowlist is the whole policy, the same rule the
 // transcript applies). `matchQuery` is the only place user input meets FTS5 syntax: raw or
 // malformed input throws inside MATCH, so it emits a sanitized expression.
-import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 
 /** The indexable text of one transcript entry, with its role and when it was written. */
@@ -13,17 +12,36 @@ export interface IndexedText {
   readonly createdAt: number;
 }
 
-const userText = (message: UserMessage) =>
-  typeof message.content === "string"
-    ? message.content
-    : message.content
-        .flatMap((part) => (part.type === "text" ? [part.text] : []))
-        .join("\n");
+/**
+ * The text parts of a message's content, joined. Tolerates stored records whose shape drifted:
+ * a missing, non-array or `null`-bearing content yields "" rather than throwing — one malformed
+ * entry must not wedge a conversation's indexing, the cursor still advances past it.
+ */
+// oxlint-disable-next-line no-control-regex -- the snippet markers are control characters by design
+const MARKERS = /[\u0002\u0003]/gu;
 
-const assistantText = (message: AssistantMessage) =>
-  message.content
-    .flatMap((part) => (part.type === "text" ? [part.text] : []))
-    .join("\n");
+const textParts = (content: unknown): string => {
+  if (typeof content === "string") {
+    return content.replaceAll(MARKERS, "");
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return (
+    content
+      .flatMap((part) =>
+        part !== null &&
+        typeof part === "object" &&
+        (part as { type?: unknown }).type === "text" &&
+        typeof (part as { text?: unknown }).text === "string"
+          ? [(part as { text: string }).text]
+          : []
+      )
+      .join("\n")
+      // \x02/\x03 are the store's snippet markers; pasted into a prompt they would spoof highlights.
+      .replaceAll(MARKERS, "")
+  );
+};
 
 /**
  * The text a transcript entry contributes to the index, or `undefined` for anything outside
@@ -35,13 +53,13 @@ const assistantText = (message: AssistantMessage) =>
 export const indexedText = (entry: EntryRecord): IndexedText | undefined => {
   const message = entry.model?.[0];
   if (entry.kind === "pi.user" && message?.role === "user") {
-    const text = userText(message);
+    const text = textParts(message.content);
     return text.trim() === ""
       ? undefined
       : { role: "user", text, createdAt: message.timestamp };
   }
   if (entry.kind === "pi.assistant" && message?.role === "assistant") {
-    const text = assistantText(message);
+    const text = textParts(message.content);
     return text.trim() === ""
       ? undefined
       : { role: "assistant", text, createdAt: message.timestamp };
@@ -60,7 +78,7 @@ const TERM_CHARS = 40;
  */
 export const matchQuery = (q: string): string | undefined => {
   const terms = (q.match(/[\p{L}\p{N}_]+/gu) ?? [])
-    .map((term) => term.slice(0, TERM_CHARS))
+    .map((term) => [...term].slice(0, TERM_CHARS).join(""))
     .slice(0, MAX_TERMS);
   return terms.length === 0
     ? undefined
@@ -81,8 +99,7 @@ export interface SnippetSegment {
 export const splitSnippet = (raw: string): SnippetSegment[] => {
   const segments: SnippetSegment[] = [];
   let match = false;
-  // oxlint-disable-next-line no-control-regex -- markers are control characters by design
-  for (const part of raw.split(/[\u0002\u0003]/u)) {
+  for (const part of raw.split(MARKERS)) {
     if (part !== "") {
       segments.push({ text: part, match });
     }
