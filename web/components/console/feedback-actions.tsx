@@ -35,8 +35,10 @@ export const FeedbackActions = ({
   const feedback = useFeedback(conversation);
   const report = useReport(conversation);
   const [picked, setPicked] = useState<0 | 1>();
+  const [reported, setReported] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [comment, setComment] = useState("");
+  const marked = picked !== undefined || reported;
 
   const thumb = (value: 0 | 1, label: string, icon: ReactNode) => (
     <Tooltip>
@@ -65,17 +67,25 @@ export const FeedbackActions = ({
   );
 
   return (
-    // Revealed on hover like the code-block's actions; always shown on touch (pointer-coarse).
-    <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-focus-within/feedback:opacity-100 group-hover/feedback:opacity-100 pointer-coarse:opacity-100">
+    // Revealed on hover like the code-block's actions; always shown on touch (pointer-coarse). Once the
+    // person rates or reports, the controls stay put so the answer keeps its mark.
+    <div
+      className={`flex items-center gap-0.5 transition-opacity ${
+        marked
+          ? "opacity-100"
+          : "opacity-0 group-focus-within/feedback:opacity-100 group-hover/feedback:opacity-100 pointer-coarse:opacity-100"
+      }`}
+    >
       {thumb(1, "Good answer", <ThumbsUp />)}
       {thumb(0, "Bad answer", <ThumbsDown />)}
       <Tooltip>
         <TooltipTrigger
           render={
             <Button
-              variant="ghost"
+              variant={reported ? "secondary" : "ghost"}
               size="icon-sm"
               aria-label="Report this answer"
+              aria-pressed={reported}
               onClick={() => setReporting(true)}
             >
               <Flag />
@@ -108,6 +118,7 @@ export const FeedbackActions = ({
                   {
                     onSuccess: () => {
                       setReporting(false);
+                      setReported(true);
                       setComment("");
                     },
                   }
