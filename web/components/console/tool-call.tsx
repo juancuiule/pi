@@ -154,7 +154,13 @@ const Arguments = ({
   );
 };
 
-const ApprovalActions = ({ approvalKey }: { approvalKey: string }) => {
+const ApprovalActions = ({
+  approvalKey,
+  alwaysAllowed,
+}: {
+  approvalKey: string;
+  alwaysAllowed: boolean;
+}) => {
   const approvalMutation = useApproval();
   const decide = (decision: ApprovalChoice) => {
     approvalMutation?.mutate(
@@ -167,7 +173,9 @@ const ApprovalActions = ({ approvalKey }: { approvalKey: string }) => {
       {(
         [
           ["approve", "Run", "default"],
-          ["always", "Always allow", "outline"],
+          ...(alwaysAllowed
+            ? ([["always", "Always allow", "outline"]] as const)
+            : []),
           ["deny", "Deny", "destructive"],
         ] as const
       ).map(([decision, label, variant]) => (
@@ -218,6 +226,7 @@ const approvalFor = (
   const approval = approvalOf(toolResult?.details) ?? approvalOf(tool?.details);
   return {
     key: approval?.state === "pending" ? approval.key : undefined,
+    alwaysAllowed: approval?.state !== "pending" || approval.alwaysAllowed,
     awaiting: approval?.state === "pending" && toolResult === undefined,
     denied: approval?.state === "denied",
     stopped: approval?.state === "stopped",
@@ -499,6 +508,7 @@ const CallBody = ({
   toolResult,
   diagnostics,
   pendingKey,
+  alwaysAllowed,
   step,
 }: {
   readonly call: ToolCallBlock;
@@ -506,6 +516,7 @@ const CallBody = ({
   readonly toolResult: ToolResult | undefined;
   readonly diagnostics: readonly ToolDiagnostic[];
   readonly pendingKey: string | undefined;
+  readonly alwaysAllowed: boolean;
   readonly step: CallState;
 }) => {
   const asking =
@@ -527,7 +538,10 @@ const CallBody = ({
             </Section>
           ) : null}
           {pendingKey === undefined ? null : (
-            <ApprovalActions approvalKey={pendingKey} />
+            <ApprovalActions
+              approvalKey={pendingKey}
+              alwaysAllowed={alwaysAllowed}
+            />
           )}
         </>
       )}
@@ -613,6 +627,7 @@ export const ToolCall = ({
             toolResult={toolResult}
             diagnostics={diagnostics}
             pendingKey={approval.awaiting ? approval.key : undefined}
+            alwaysAllowed={approval.alwaysAllowed}
             step={step}
           />
         </TraceCollapsibleContent>

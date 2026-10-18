@@ -6,7 +6,12 @@ import type { ConversationSummary } from "effect-pi/api";
 import type { ConversationState } from "./conversation-state";
 
 export type Approval =
-  | { readonly state: "pending"; readonly key: string }
+  | {
+      readonly state: "pending";
+      readonly key: string;
+      /** False when the call always asks the person: "Always allow" would promise what it cannot do. */
+      readonly alwaysAllowed: boolean;
+    }
   | { readonly state: "approved" }
   | { readonly state: "denied" }
   | { readonly state: "stopped" }
@@ -17,9 +22,16 @@ export const approvalOf = (details: unknown): Approval | undefined => {
   if (typeof details !== "object" || details === null) {
     return undefined;
   }
-  const { approval, approvalKey } = details as Record<string, unknown>;
+  const { approval, approvalKey, alwaysAllow } = details as Record<
+    string,
+    unknown
+  >;
   if (approval === "pending" && typeof approvalKey === "string") {
-    return { state: "pending", key: approvalKey };
+    return {
+      state: "pending",
+      key: approvalKey,
+      alwaysAllowed: alwaysAllow !== false,
+    };
   }
   if (approval === "approved") {
     return { state: "approved" };
