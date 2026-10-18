@@ -1,13 +1,16 @@
-import type { FauxResponseStep } from "@earendil-works/pi-ai";
+import type { FauxResponseStep, Message } from "@earendil-works/pi-ai";
 import {
   fauxAssistantMessage,
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
+import type { ConversationId } from "@earendil-works/pi-durable";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { Agents } from "../agents/agents.ts";
 import { InvalidSetting } from "../errors.ts";
 import { SandboxError } from "../sandbox/sandbox.ts";
+import { Search } from "../search/search.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
 import type { LocalSandboxes } from "../testing/sandboxes.ts";
@@ -25,17 +28,28 @@ const setup = (
   options: Partial<typeof defaults> & {
     readonly shells?: number;
     readonly sandboxes?: LocalSandboxes;
+    readonly titleGeneration?: boolean;
+    readonly search?: Layer.Layer<Search, unknown, Agents>;
   } = {}
 ) => {
-  const { shells = 3, sandboxes, ...rest } = options;
+  const {
+    shells = 3,
+    sandboxes,
+    search = Search.none,
+    titleGeneration,
+    ...rest
+  } = options;
   const agents = fauxAgents(responses, {
     limits: { shells },
+    ...(titleGeneration === undefined ? {} : { titleGeneration }),
     ...(sandboxes === undefined ? {} : { sandboxes }),
   });
   return {
     ...agents,
     layer: Conversations.layer({ ...defaults, ...rest }).pipe(
-      Layer.provide(agents.layer)
+      // provideMerge: tests reach the same Search and Agents the layer serves.
+      Layer.provideMerge(search),
+      Layer.provideMerge(agents.layer)
     ),
   };
 };
@@ -82,6 +96,38 @@ describe(Conversations, () => {
 
     expect(listed).toHaveLength(1);
     expect(listed[0]?.sandbox).toBe("none");
+  });
+
+  it("indexes a conversation when its Run ends, even one with no Sandbox", async () => {
+    const { layer } = setup([answer("quokkas smile")], {
+      search: Search.temporary,
+    });
+
+    const { created, found } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const search = yield* Search;
+        // Let the startup sweep pass first, so only run-end indexing can find this one.
+        yield* search.catchUp;
+        const started = yield* conversations.create({
+          sandbox: "none",
+          prompt: "quokka facts",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        // Indexing is forked at run end, so poll for it.
+        yield* waitUntil(
+          search.query("quokka").pipe(Effect.map((hits) => hits.length > 0))
+        );
+        return { created: started, found: yield* search.query("quokka") };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(found[0]?.id).toBe(created.id);
+    expect(found[0]?.title).toBe("quokka facts");
   });
 
   it("pauses an idle Conversation, freeing its Sandbox, and a send resumes it with its files", async () => {
@@ -961,5 +1007,368 @@ describe("a failed build", () => {
     expect(result.rejected).toBeInstanceOf(InvalidSetting);
     expect(result.listed).toHaveLength(1);
     expect(sandboxes.created).toStrictEqual([{ kind: "shell", software: [] }]);
+  });
+});
+
+const metaOf = (agents: Agents["Service"], id: number) =>
+  agents.get(id as ConversationId).pipe(Effect.map((stored) => stored.meta));
+
+const emptyAnswer: FauxResponseStep = () =>
+  Promise.resolve(fauxAssistantMessage([]));
+
+describe("titles", () => {
+  it("generates a title once when a conversation's first run ends", async () => {
+    const { layer, faux } = setup([answer("reply"), answer("Greetings Chat")], {
+      titleGeneration: true,
+    });
+
+    const meta = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const agents = yield* Agents;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hello",
+        });
+        expect(created.title).toBe("say hello");
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.title === "Greetings Chat")
+          )
+        );
+        return yield* metaOf(agents, created.id);
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(meta.title).toBe("Greetings Chat");
+    expect(meta.titleSource).toBe("generated");
+    expect(meta.autoTitleAt).toBeTypeOf("number");
+    // One model call for the run, one for the title.
+    expect(faux.state.callCount).toBe(2);
+  });
+
+  it("does not generate again after a later run", async () => {
+    const { layer, faux } = setup(
+      [answer("reply"), answer("Greetings Chat"), answer("more")],
+      { titleGeneration: true }
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hello",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.title === "Greetings Chat")
+          )
+        );
+        yield* conversations.send(created.id, "another");
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        // The second run-end's attempt found the latch spent: no model call, the title stands.
+        yield* Effect.sleep("50 millis");
+        expect(faux.state.callCount).toBe(3);
+        expect((yield* conversations.list)[0]?.title).toBe("Greetings Chat");
+      }).pipe(Effect.provide(layer))
+    );
+  });
+
+  it("keeps the prompt title when generation fails, and does not retry", async () => {
+    const { layer, faux } = setup(
+      [
+        answer("reply"),
+        fauxAssistantMessage([fauxText("Whatever")], {
+          stopReason: "error",
+          errorMessage: "boom",
+        }),
+        answer("more"),
+      ],
+      { titleGeneration: true }
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const agents = yield* Agents;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hello",
+        });
+        // Recorded before the model call: a failed attempt is still the one attempt.
+        yield* waitUntil(
+          metaOf(agents, created.id).pipe(
+            Effect.map((meta) => meta.autoTitleAt !== undefined)
+          )
+        );
+        yield* conversations.send(created.id, "another");
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        yield* Effect.sleep("50 millis");
+        const meta = yield* metaOf(agents, created.id);
+        expect(meta.title).toBe("say hello");
+        expect(meta.titleSource).toBeUndefined();
+        expect(faux.state.callCount).toBe(3);
+      }).pipe(Effect.provide(layer))
+    );
+  });
+
+  it("never overwrites a rename that lands while a title generates", async () => {
+    const gate = Deferred.makeUnsafe<boolean>();
+    let asked = 0;
+    const gated: FauxResponseStep = () => {
+      asked += 1;
+      return Effect.runPromise(Deferred.await(gate)).then(() =>
+        answer("Stomped")
+      );
+    };
+    const { layer } = setup([answer("hi"), gated], { titleGeneration: true });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const agents = yield* Agents;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hello",
+        });
+        yield* waitUntil(Effect.sync(() => asked === 1));
+        yield* conversations.rename(created.id, "Mine");
+        yield* Deferred.succeed(gate, true);
+        yield* Effect.sleep("150 millis");
+        const meta = yield* metaOf(agents, created.id);
+        expect(meta.title).toBe("Mine");
+        expect(meta.titleSource).toBe("manual");
+      }).pipe(Effect.provide(layer))
+    );
+  });
+
+  it("skips generation for a conversation renamed before its first run ended", async () => {
+    const gate = Deferred.makeUnsafe<boolean>();
+    const gatedRun: FauxResponseStep = () =>
+      Effect.runPromise(Deferred.await(gate)).then(() => answer("hi"));
+    const { layer, faux } = setup([gatedRun], { titleGeneration: true });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const agents = yield* Agents;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hello",
+        });
+        yield* conversations.rename(created.id, "Mine");
+        yield* Deferred.succeed(gate, true);
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        yield* Effect.sleep("50 millis");
+        const meta = yield* metaOf(agents, created.id);
+        expect(meta.title).toBe("Mine");
+        expect(meta.titleSource).toBe("manual");
+        expect(meta.autoTitleAt).toBeUndefined();
+        // The title call never happened: only the run's turn reached the model.
+        expect(faux.state.callCount).toBe(1);
+      }).pipe(Effect.provide(layer))
+    );
+  });
+
+  it("names the conversation from a later exchange when the first carries no text", async () => {
+    const { layer, faux } = setup(
+      [emptyAnswer, answer("a real reply"), answer("Real Title")],
+      { titleGeneration: true }
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const agents = yield* Agents;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        yield* Effect.sleep("50 millis");
+        // The textless first run spent neither the latch nor a title call.
+        const before = yield* metaOf(agents, created.id);
+        expect(before.autoTitleAt).toBeUndefined();
+        expect(faux.state.callCount).toBe(1);
+        yield* conversations.send(created.id, "a real question");
+        yield* waitUntil(
+          metaOf(agents, created.id).pipe(
+            Effect.map((meta) => meta.title === "Real Title")
+          )
+        );
+        const meta = yield* metaOf(agents, created.id);
+        expect(meta.titleSource).toBe("generated");
+        expect(faux.state.callCount).toBe(3);
+      }).pipe(Effect.provide(layer))
+    );
+  });
+
+  it("regenerates on demand, over a manual title, paused or archived", async () => {
+    const { layer } = setup(
+      [
+        answer("reply"),
+        answer("Auto Title"),
+        answer("Regenerated"),
+        answer("Paused Title"),
+        answer("Archived Title"),
+      ],
+      { titleGeneration: true }
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const agents = yield* Agents;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hello",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.title === "Auto Title")
+          )
+        );
+        yield* conversations.rename(created.id, "Mine");
+        const regenerated = yield* conversations.generateTitle(created.id);
+        expect(regenerated.title).toBe("Regenerated");
+        yield* conversations.pause(created.id);
+        const paused = yield* conversations.generateTitle(created.id);
+        expect([paused.title, paused.status]).toStrictEqual([
+          "Paused Title",
+          "paused",
+        ]);
+        yield* conversations.archive(created.id);
+        const archived = yield* conversations.generateTitle(created.id);
+        expect([archived.title, archived.status]).toStrictEqual([
+          "Archived Title",
+          "archived",
+        ]);
+        const meta = yield* metaOf(agents, created.id);
+        expect(meta.titleSource).toBe("generated");
+      }).pipe(Effect.provide(layer))
+    );
+  });
+
+  it("titles a regeneration from the first and the latest exchange", async () => {
+    const captured: Message[][] = [];
+    const recording: FauxResponseStep = (request) => {
+      captured.push([...request.messages]);
+      return answer("Regen Title");
+    };
+    const { layer, faux } = setup(
+      [answer("first answer"), recording, answer("second answer")],
+      { titleGeneration: true }
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "first prompt",
+        });
+        yield* waitUntil(Effect.sync(() => captured.length === 1));
+        yield* conversations.send(created.id, "second prompt");
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        faux.appendResponses([recording]);
+        yield* conversations.generateTitle(created.id);
+      }).pipe(Effect.provide(layer))
+    );
+
+    const first = String(captured[0]?.find((m) => m.role === "user")?.content);
+    expect(captured).toHaveLength(2);
+    for (const part of ["first prompt", "first answer"]) {
+      expect(first).toContain(part);
+    }
+    const latest = String(captured[1]?.find((m) => m.role === "user")?.content);
+    for (const part of [
+      "first prompt",
+      "first answer",
+      "second prompt",
+      "second answer",
+    ]) {
+      expect(latest).toContain(part);
+    }
+  });
+
+  it("never generates when titleGeneration is off", async () => {
+    const { layer, faux } = setup([answer("reply")]);
+
+    const { meta, failed } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const agents = yield* Agents;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hello",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        yield* Effect.sleep("50 millis");
+        return {
+          meta: yield* metaOf(agents, created.id),
+          failed: yield* Effect.flip(conversations.generateTitle(created.id)),
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(meta.title).toBe("say hello");
+    expect(meta.autoTitleAt).toBeUndefined();
+    expect(failed).toMatchObject({
+      _tag: "TitleGenerationFailed",
+      reason: "no_model",
+    });
+    expect(faux.state.callCount).toBe(1);
+  });
+
+  it("fails a regeneration for a conversation with no answered exchange", async () => {
+    const gate = Deferred.makeUnsafe<boolean>();
+    const gatedRun: FauxResponseStep = () =>
+      Effect.runPromise(Deferred.await(gate)).then(() => answer("late"));
+    const { layer } = setup([gatedRun], { titleGeneration: true });
+
+    const failed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hello",
+        });
+        const flipped = yield* Effect.flip(
+          conversations.generateTitle(created.id)
+        );
+        yield* Deferred.succeed(gate, true);
+        return flipped;
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(failed).toMatchObject({
+      _tag: "TitleGenerationFailed",
+      reason: "no_exchange",
+    });
   });
 });

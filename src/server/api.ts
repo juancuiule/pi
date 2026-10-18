@@ -25,6 +25,7 @@ import {
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
+  TitleGenerationFailed,
   TraceUnavailable,
   WorkspaceFileNotFound,
 } from "../errors.ts";
@@ -62,6 +63,7 @@ export {
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
+  TitleGenerationFailed,
   TraceUnavailable,
   WorkspaceFileNotFound,
 } from "../errors.ts";
@@ -411,6 +413,21 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     success: HttpApiSchema.NoContent,
     error: NotFound,
   }),
+  // The person's rename: marks the title manual; automation never touches it again.
+  HttpApiEndpoint.post("rename", "/conversations/:id/rename", {
+    params: ById,
+    payload: Schema.Struct({
+      title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    }),
+    success: ConversationSummary,
+    error: NotFound,
+  }),
+  // Regenerate the title with the conversation's model; an explicit click beats "manual".
+  HttpApiEndpoint.post("generateTitle", "/conversations/:id/generate-title", {
+    params: ById,
+    success: ConversationSummary,
+    error: [NotFound, TitleGenerationFailed.pipe(HttpApiSchema.status(409))],
+  }),
   HttpApiEndpoint.post("approvals", "/conversations/:id/approvals", {
     params: ById,
     payload: Schema.Struct({
@@ -704,6 +721,42 @@ const FileGroup = HttpApiGroup.make("files").add(
   })
 );
 
+/** One span of a search snippet; `match` flags the part that hit the query. */
+export const SnippetSegment = Schema.Struct({
+  text: Schema.String,
+  match: Schema.Boolean,
+});
+export type SnippetSegment = typeof SnippetSegment.Type;
+
+/** One match inside a Conversation: its role, a highlighted snippet, and when it was written. */
+export const SearchMatch = Schema.Struct({
+  /** The matched entry; absent when the Conversation's title matched. */
+  entry: Schema.optionalKey(Schema.Number),
+  role: Schema.Literals(["title", "user", "assistant"]),
+  snippet: Schema.Array(SnippetSegment),
+  createdAt: Schema.Number,
+});
+export type SearchMatch = typeof SearchMatch.Type;
+
+/** A Conversation and its best matches, best first. */
+export const SearchResult = Schema.Struct({
+  id: Schema.Number,
+  title: Schema.String,
+  archived: Schema.Boolean,
+  createdAt: Schema.Number,
+  matches: Schema.Array(SearchMatch),
+});
+export type SearchResult = typeof SearchResult.Type;
+
+const SearchGroup = HttpApiGroup.make("search").add(
+  // Full-text over Conversation titles, prompts and assistant answers, grouped by Conversation, best
+  // first; archived Conversations are included, flagged. An empty q lists the most recent.
+  HttpApiEndpoint.get("query", "/search", {
+    query: { q: Schema.String.check(Schema.isMaxLength(500)) },
+    success: Schema.Array(SearchResult),
+  })
+);
+
 const InfoGroup = HttpApiGroup.make("info").add(
   HttpApiEndpoint.get("get", "/info", {
     success: Schema.Struct({
@@ -712,6 +765,8 @@ const InfoGroup = HttpApiGroup.make("info").add(
       apiUrl: Schema.String,
       /** Whether the server traces to Langfuse — only then can messages be scored. */
       tracing: Schema.Boolean,
+      /** Generated titles are on: a real model is configured. */
+      titleGeneration: Schema.Boolean,
     }),
   }),
   HttpApiEndpoint.get("capabilities", "/capabilities", {
@@ -730,5 +785,6 @@ export const Api = HttpApi.make("effect-pi")
   .add(TrustedDomainGroup)
   .add(SkillGroup)
   .add(FileGroup)
+  .add(SearchGroup)
   .add(InfoGroup)
   .prefix("/api");

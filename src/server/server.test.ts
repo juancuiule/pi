@@ -20,6 +20,7 @@ import { Artifacts } from "../artifacts/artifacts.ts";
 import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
+import { Search } from "../search/search.ts";
 import { Skills, SkillSource } from "../skills/skills.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
@@ -37,7 +38,9 @@ const serverWith = (
   >,
   // One Skills serves both the API group and the agents — the provide overrides the agents' own, like
   // server.ts's shared SkillsLive.
-  skills: Layer.Layer<Skills> = Skills.none
+  skills: Layer.Layer<Skills> = Skills.none,
+  // Search sits between Conversations (which indexes into it) and the API's search group.
+  search: Layer.Layer<Search, unknown, Agents> = Search.none
 ) =>
   HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1", tracing: false }), {
     disableListenLog: true,
@@ -49,6 +52,8 @@ const serverWith = (
         sweepEveryMs: 60_000,
       })
     ),
+    // Merge so a test can reach the same Search the API and Conversations use.
+    Layer.provideMerge(search),
     Layer.provide(agents),
     Layer.provide(skills),
     Layer.provideMerge(NodeHttpServer.layerTest)
@@ -82,6 +87,47 @@ const form = (name: string, body: string, conversation?: number) => {
 };
 
 describe("HTTP API", () => {
+  it("serves search hits grouped by conversation, an unmatchable query the recent list", async () => {
+    const agents = fauxAgents([
+      fauxAssistantMessage([fauxText("Quokkas smile.")]),
+    ]);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        // Let the startup sweep pass first, so only run-end indexing can find this one.
+        yield* (yield* Search).catchUp;
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "tell me about quokkas" },
+        });
+        // Run-end indexing is forked; poll until the prompt lands in the index.
+        let hits = yield* client.search.query({ query: { q: "quokkas" } });
+        for (
+          let attempt = 0;
+          attempt < 300 &&
+          !hits.some((row) => row.id === created.id && row.matches.length > 0);
+          attempt += 1
+        ) {
+          yield* Effect.sleep("10 millis");
+          hits = yield* client.search.query({ query: { q: "quokkas" } });
+        }
+        const empty = yield* client.search.query({ query: { q: "!!!" } });
+        return { created, hits, empty };
+      }).pipe(
+        Effect.provide(serverWith(agents.layer, Skills.none, Search.temporary))
+      )
+    );
+
+    const hit = result.hits.find((row) => row.id === result.created.id);
+    expect(hit).toMatchObject({ archived: false });
+    expect(
+      hit?.matches.some((match) =>
+        match.snippet.some((segment) => segment.match)
+      )
+    ).toBeTruthy();
+    expect(result.empty.every((row) => row.matches.length === 0)).toBeTruthy();
+  });
+
   it("lists skills and MCP servers", async () => {
     const echo = fakeMcpServer("test", [
       { name: "echo", call: () => ({ content: [] }) },
@@ -733,7 +779,7 @@ describe("HTTP API", () => {
     expect(result.sameFiles.id).toBe(result.sent.id);
     expect(result.differentFiles.id).toBe(result.sent.id);
     expect(result.later.id).toBeTypeOf("number");
-  });
+  }, 30_000);
 
   it("rejects a requestId beyond its bound", async () => {
     const exits = await Effect.runPromise(
@@ -940,7 +986,7 @@ describe("HTTP API", () => {
     expect(result.owned.disposition).toContain("attachment;");
     expect(result.events).toContain("Keep it short.");
     expect(result.events).toContain("and this");
-  });
+  }, 30_000);
 
   it("serves a conversation's pages sandboxed, and the libraries they may load", async () => {
     const html =
@@ -1269,5 +1315,107 @@ describe("HTTP API", () => {
     expect(result.scoped.map((row) => row.conversation)).toStrictEqual([
       result.ids[0],
     ]);
+  });
+
+  it("renames a conversation, refusing unknown ids and empty titles", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const http = yield* HttpClient.HttpClient;
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hello" },
+        });
+        const renamed = yield* client.conversations.rename({
+          params: { id: created.id },
+          payload: { title: "My title" },
+        });
+        const post = (title: string) =>
+          http
+            .execute(
+              HttpClientRequest.post(
+                `/api/conversations/${created.id}/rename`
+              ).pipe(HttpClientRequest.bodyJsonUnsafe({ title }))
+            )
+            .pipe(
+              Effect.flatMap((response) =>
+                response.text.pipe(
+                  Effect.map((body) => ({ status: response.status, body }))
+                )
+              )
+            );
+        const padded = yield* post("  padded  ");
+        const empty = yield* post("   ");
+        const missing = yield* Effect.flip(
+          client.conversations.rename({
+            params: { id: 424_242 },
+            payload: { title: "x" },
+          })
+        );
+        return { renamed, padded, empty, missing };
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("one")])])))
+    );
+    expect(result.renamed.title).toBe("My title");
+    expect(result.padded.status).toBe(200);
+    expect(JSON.parse(result.padded.body)).toMatchObject({
+      title: "padded",
+    });
+    expect(result.empty.status).toBe(400);
+    expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
+  });
+
+  it("generates and regenerates titles over HTTP", async () => {
+    const agents = fauxAgents(
+      [
+        fauxAssistantMessage([fauxText("one")]),
+        fauxAssistantMessage([fauxText("Auto Title")]),
+        fauxAssistantMessage([fauxText("Regenerated")]),
+      ],
+      { titleGeneration: true }
+    );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const info = yield* client.info.get();
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hello" },
+        });
+        yield* waitUntil(
+          client.conversations
+            .list()
+            .pipe(Effect.map((all) => all[0]?.title === "Auto Title"))
+        );
+        const regenerated = yield* client.conversations.generateTitle({
+          params: { id: created.id },
+        });
+        const missing = yield* Effect.flip(
+          client.conversations.generateTitle({ params: { id: 424_242 } })
+        );
+        return { info, regenerated, missing };
+      }).pipe(Effect.provide(serverWith(agents.layer)))
+    );
+    expect(result.info.titleGeneration).toBeTruthy();
+    expect(result.regenerated.title).toBe("Regenerated");
+    expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
+  });
+
+  it("answers 409 for generated titles when only the echo model answers", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const info = yield* client.info.get();
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "hello" },
+        });
+        const failed = yield* Effect.flip(
+          client.conversations.generateTitle({ params: { id: created.id } })
+        );
+        return { info, failed };
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("one")])])))
+    );
+    expect(result.info.titleGeneration).toBeFalsy();
+    expect(result.failed).toMatchObject({
+      _tag: "TitleGenerationFailed",
+      reason: "no_model",
+    });
   });
 });

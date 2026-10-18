@@ -53,6 +53,11 @@ export const fauxAgents = (
     readonly trustedDomains?: readonly string[];
     /** The web_search backend, usually `WebSearch.fake`; without one there is no `web` extension at all. */
     readonly webSearch?: Layer.Layer<WebSearch>;
+    /**
+     * Generated titles; off by default so a run-end title call never steals a queued response — title
+     * tests opt in and queue one.
+     */
+    readonly titleGeneration?: boolean;
   } = {}
 ) => {
   const models = createModels();
@@ -89,6 +94,7 @@ export const fauxAgents = (
     layer: Agents.layer({
       models,
       model: options.model ?? { provider: "faux", modelId: "faux-1" },
+      titleGeneration: options.titleGeneration ?? false,
       ...(options.storage === undefined ? {} : { storage: options.storage }),
       ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
       ...(options.mcpConnectTimeoutMs === undefined

@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { Agents } from "./agents/agents.ts";
 import type { ConversationEvent } from "./conversation-events.ts";
+import { Search } from "./search/search.ts";
 import { Conversations } from "./server/conversations.ts";
 import { fauxAgents } from "./testing/faux.ts";
 
@@ -111,7 +112,7 @@ describe("feedback scores", () => {
             },
           }
         : {}),
-    }).pipe(Layer.provideMerge(agents.layer));
+    }).pipe(Layer.provideMerge(Search.none), Layer.provideMerge(agents.layer));
   };
 
   it("posts a score onto the run's trace, and upserts the same entry's next score", async () => {

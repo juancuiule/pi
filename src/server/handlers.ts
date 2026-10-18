@@ -35,6 +35,7 @@ import {
   SkillNotFound,
   WorkspaceFileNotFound,
 } from "../errors.ts";
+import { Search } from "../search/search.ts";
 import { Skills } from "../skills/skills.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
@@ -157,6 +158,16 @@ const ConversationsHandlers = HttpApiBuilder.group(
       .handle("unarchive", ({ params }) =>
         conversations
           .unarchive(params.id)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("rename", ({ params, payload }) =>
+        conversations
+          .rename(params.id, payload.title)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("generateTitle", ({ params }) =>
+        conversations
+          .generateTitle(params.id)
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
       .handle("agent", ({ params }) =>
@@ -672,6 +683,7 @@ const infoHandlers = (options: {
       const {
         capabilities,
         model: { provider, modelId },
+        titleGeneration,
       } = yield* Agents;
       const { capacity } = yield* Conversations;
       const model = `${provider}/${modelId}`;
@@ -681,12 +693,27 @@ const infoHandlers = (options: {
             model,
             apiUrl: options.apiUrl,
             tracing: options.tracing,
+            titleGeneration,
           })
         )
         .handle("capabilities", () => capabilities)
         .handle("capacity", () => capacity);
     })
   );
+
+const SearchHandlers = HttpApiBuilder.group(Api, "search", (handlers) =>
+  Effect.gen(function* () {
+    const search = yield* Search;
+    return handlers.handle("query", ({ query }) =>
+      search.query(query.q).pipe(
+        Effect.catchTags({
+          AgentError: Effect.die,
+          SearchError: Effect.die,
+        })
+      )
+    );
+  })
+);
 
 /**
  * The HTTP API; `apiUrl` is the server's own address, reported by `/api/info`, `tracing` whether the
@@ -705,6 +732,7 @@ export const apiLayer = (options: {
         TrustedDomainsHandlers,
         SkillsHandlers,
         FilesHandlers,
+        SearchHandlers,
         infoHandlers(options)
       )
     ),

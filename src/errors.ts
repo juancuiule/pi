@@ -137,3 +137,21 @@ export class InvalidSkill extends Schema.TaggedError<InvalidSkill>()(
   "InvalidSkill",
   { message: Schema.String }
 ) {}
+
+/**
+ * A title could not be generated: no real model (echo), the conversation's model is gone, no answered
+ * exchange yet, or the model's answer was unusable.
+ */
+export class TitleGenerationFailed extends Schema.TaggedError<TitleGenerationFailed>()(
+  "TitleGenerationFailed",
+  {
+    id: Schema.Number,
+    reason: Schema.Literals([
+      "no_model",
+      "model_unavailable",
+      "no_exchange",
+      "model_error",
+    ]),
+    message: Schema.optionalKey(Schema.String),
+  }
+) {}

@@ -1,6 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type {
   ApprovalChoice,
   ConversationSummary,
@@ -33,6 +38,18 @@ export const useArtifacts = () =>
     queryFn: () => runApi((c) => c.artifacts.list({ query: {} })),
     // A run can write a page between polls of the conversation list.
     refetchInterval: 2000,
+  });
+
+/** Full-text over Conversation titles and messages, for the ⌘K palette; fetched while it is open. */
+export const useSearch = (q: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ["search", q],
+    queryFn: () => runApi((c) => c.search.query({ query: { q } })),
+    enabled,
+    // A search answer is per-keystroke; a rejected one (over the 500-char cap) is not worth retrying.
+    retry: false,
+    // The previous list stays while the next keystroke's query loads.
+    placeholderData: keepPreviousData,
   });
 
 export const useInfo = () =>
@@ -166,6 +183,37 @@ export const useConfigure = (id: number | undefined) => {
       queryClient.setQueryData(["agent", id], settings);
       return queryClient.invalidateQueries({ queryKey: LIST });
     },
+  });
+};
+
+const updateSummary =
+  (queryClient: ReturnType<typeof useQueryClient>) =>
+  (updated: ConversationSummary) => {
+    queryClient.setQueryData<readonly ConversationSummary[]>(LIST, (all) =>
+      all?.map((each) => (each.id === updated.id ? updated : each))
+    );
+    return queryClient.invalidateQueries({ queryKey: LIST });
+  };
+
+/** The person's rename: automation never touches the title again. */
+export const useRenameConversation = (id: number) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ title }: { title: string }) =>
+      runApi((c) =>
+        c.conversations.rename({ params: { id }, payload: { title } })
+      ),
+    onSuccess: updateSummary(queryClient),
+  });
+};
+
+/** Ask the model for a fresh title; fails when no real model is configured. */
+export const useGenerateTitle = (id: number) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      runApi((c) => c.conversations.generateTitle({ params: { id } })),
+    onSuccess: updateSummary(queryClient),
   });
 };
 

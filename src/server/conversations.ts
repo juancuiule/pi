@@ -47,12 +47,14 @@ import type {
   EntryNotFound,
   InvalidUpgrade,
   SkillNotFound,
+  TitleGenerationFailed,
 } from "../errors.ts";
 import type { LangfuseOptions } from "../langfuse.ts";
 import { postScore } from "../langfuse.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
+import { Search } from "../search/search.ts";
 import { Workspaces } from "../workspaces/workspaces.ts";
 
 export type ConversationStatus = "running" | "idle" | "paused" | "archived";
@@ -199,6 +201,18 @@ export class Conversations extends Context.Service<
     unarchive(
       id: number
     ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Rename a Conversation's title; marks it manual. */
+    rename(
+      id: number,
+      title: string
+    ): Effect.Effect<ConversationSummary, AgentError | ConversationNotFound>;
+    /** Generate a title with the conversation's model; works paused or archived. */
+    generateTitle(
+      id: number
+    ): Effect.Effect<
+      ConversationSummary,
+      AgentError | ConversationNotFound | TitleGenerationFailed
+    >;
     /** What a Conversation runs with now: its settings, model and prompt sections. */
     agent(
       id: number
@@ -289,6 +303,7 @@ export class Conversations extends Context.Service<
         const attachments = yield* Attachments;
         const capacity = yield* Capacity;
         const workspaces = yield* Workspaces;
+        const search = yield* Search;
         const live = new Map<number, Live>();
         // A Seat mid-open, before `register` lands it in `live`: its Conversation is recorded already, so it
         // reads as paused. Look-ups wait on the gate instead of opening a second Seat or writing its Workspace;
@@ -344,7 +359,20 @@ export class Conversations extends Context.Service<
                 entry.running = value;
                 if (value) {
                   entry.checkpointed = false;
-                } else if (was && !entry.pausing && !entry.checkpointed) {
+                } else if (was) {
+                  // A Run's entries are committed when it ends, Sandbox or none — this edge is
+                  // the only signal that fires for every run, paused ones included.
+                  yield* search.indexConversation(entry.seat.id).pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning(
+                        `Search indexing of conversation ${entry.seat.id} failed`,
+                        cause
+                      )
+                    ),
+                    Effect.forkIn(layerScope)
+                  );
+                }
+                if (was && !value && !entry.pausing && !entry.checkpointed) {
                   const { sandbox, storage } = entry.seat;
                   if (sandbox !== undefined && storage !== undefined) {
                     entry.checkpointed = true;
@@ -362,6 +390,19 @@ export class Conversations extends Context.Service<
                       Effect.forkIn(layerScope)
                     );
                   }
+                }
+                if (was && !value) {
+                  // One answered Run earns one automatic title; the meta latch inside decides.
+                  // Unlike the checkpoint it needs no Sandbox, and a Pause is no reason to skip it.
+                  yield* agents.autoTitle(entry.seat.id).pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning(
+                        `Title generation of conversation ${entry.seat.id} failed`,
+                        cause
+                      )
+                    ),
+                    Effect.forkIn(layerScope)
+                  );
                 }
               })
             ),
@@ -723,6 +764,16 @@ export class Conversations extends Context.Service<
             yield* close(id);
           }
           yield* agents.archive(asId(id), yield* Clock.currentTimeMillis);
+          // A stopped seat may have entries its last run-end missed; index them while archived.
+          yield* search.indexConversation(asId(id)).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Search indexing of conversation ${id} failed`,
+                cause
+              )
+            ),
+            Effect.forkIn(layerScope)
+          );
         });
 
         const decide = Effect.fn("Conversations.decide")(function* (
@@ -837,6 +888,26 @@ export class Conversations extends Context.Service<
           history: (id, range) => agents.history(asId(id), range),
           feedback,
           report,
+          rename: Effect.fn("Conversations.rename")(function* (id, title) {
+            const entry = live.get(id);
+            const stored = yield* agents.renameTitle(asId(id), title);
+            return summaryOf(
+              stored,
+              entry,
+              entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+            );
+          }),
+          generateTitle: Effect.fn("Conversations.generateTitle")(
+            function* (id) {
+              const entry = live.get(id);
+              const stored = yield* agents.generateTitle(asId(id));
+              return summaryOf(
+                stored,
+                entry,
+                entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+              );
+            }
+          ),
           agent: (id) => agents.agent(asId(id)),
           configure: (id, change) => agents.configure(asId(id), change),
           reset: (id) => agents.reset(asId(id)),

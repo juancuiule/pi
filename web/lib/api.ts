@@ -70,6 +70,16 @@ const skillError = (error: object): string => {
   return `No skill named ${name}. Available: ${available}.`;
 };
 
+/** A message for a TitleGenerationFailed failure. */
+const titleError = (error: object): string => {
+  if ("reason" in error && error.reason === "no_model") {
+    return "No model is configured to write titles.";
+  }
+  return "message" in error && error.message !== undefined
+    ? String(error.message)
+    : "Couldn't generate a title.";
+};
+
 /** Messages for the failures that read the same whatever the error carries. */
 const plainError: Record<string, string> = {
   ConversationNotFound: "This conversation no longer exists.",
@@ -93,6 +103,9 @@ export const apiError = (error: unknown): string => {
       }
       case "InvalidSkill": {
         return "message" in error ? String(error.message) : "Invalid skill.";
+      }
+      case "TitleGenerationFailed": {
+        return titleError(error);
       }
       case "InvalidUpgrade":
       case "InvalidSetting":
