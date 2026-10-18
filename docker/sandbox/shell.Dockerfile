@@ -7,5 +7,9 @@ RUN apt-get update \
     ca-certificates curl git jq python3 ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
+# How a sandboxed process leaves the agent a message; the host drains the spool it writes (src/sandbox/notify.ts).
+COPY pi-notify /usr/local/bin/pi-notify
+RUN chmod +x /usr/local/bin/pi-notify
+
 WORKDIR /workspace
 CMD ["sleep", "infinity"]
