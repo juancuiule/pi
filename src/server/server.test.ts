@@ -87,7 +87,7 @@ const form = (name: string, body: string, conversation?: number) => {
 };
 
 describe("HTTP API", () => {
-  it.fails("serves search hits grouped by conversation, an unmatchable query the recent list", async () => {
+  it("serves search hits grouped by conversation, an unmatchable query the recent list", async () => {
     const agents = fauxAgents([
       fauxAssistantMessage([fauxText("Quokkas smile.")]),
     ]);
