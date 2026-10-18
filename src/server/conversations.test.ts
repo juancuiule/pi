@@ -972,6 +972,9 @@ describe("a failed build", () => {
 const metaOf = (agents: Agents["Service"], id: number) =>
   agents.get(id as ConversationId).pipe(Effect.map((stored) => stored.meta));
 
+const emptyAnswer: FauxResponseStep = () =>
+  Promise.resolve(fauxAssistantMessage([]));
+
 describe("titles", () => {
   it("generates a title once when a conversation's first run ends", async () => {
     const { layer, faux } = setup([answer("reply"), answer("Greetings Chat")], {
@@ -1135,6 +1138,43 @@ describe("titles", () => {
         expect(meta.autoTitleAt).toBeUndefined();
         // The title call never happened: only the run's turn reached the model.
         expect(faux.state.callCount).toBe(1);
+      }).pipe(Effect.provide(layer))
+    );
+  });
+
+  it("names the conversation from a later exchange when the first carries no text", async () => {
+    const { layer, faux } = setup(
+      [emptyAnswer, answer("a real reply"), answer("Real Title")],
+      { titleGeneration: true }
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const agents = yield* Agents;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        yield* Effect.sleep("50 millis");
+        // The textless first run spent neither the latch nor a title call.
+        const before = yield* metaOf(agents, created.id);
+        expect(before.autoTitleAt).toBeUndefined();
+        expect(faux.state.callCount).toBe(1);
+        yield* conversations.send(created.id, "a real question");
+        yield* waitUntil(
+          metaOf(agents, created.id).pipe(
+            Effect.map((meta) => meta.title === "Real Title")
+          )
+        );
+        const meta = yield* metaOf(agents, created.id);
+        expect(meta.titleSource).toBe("generated");
+        expect(faux.state.callCount).toBe(3);
       }).pipe(Effect.provide(layer))
     );
   });

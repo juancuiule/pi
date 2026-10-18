@@ -18,9 +18,17 @@ export const cleanTitle = (raw: string): string | undefined => {
   return title === "" ? undefined : title;
 };
 
+/** `text` cut at `cap` characters, never inside a code point. */
+export const capText = (text: string, cap: number): string =>
+  [...text].slice(0, cap).join("");
+
 /** Past the cap, the last character is an ellipsis — `titleOf`'s rule. */
-export const capTitle = (text: string): string =>
-  text.length <= TITLE_CAP ? text : `${text.slice(0, TITLE_CAP - 1)}…`;
+export const capTitle = (text: string): string => {
+  const chars = [...text];
+  return chars.length <= TITLE_CAP
+    ? text
+    : `${chars.slice(0, TITLE_CAP - 1).join("")}…`;
+};
 
 /** The title in an assistant answer: its text blocks joined, cleaned and capped. */
 export const titleText = (message: AssistantMessage): string | undefined => {
@@ -51,7 +59,7 @@ export const titleMessages = (input: {
     ] as const
   )
     .flatMap(([label, text]) =>
-      text === undefined ? [] : [`${label}:\n${text.slice(0, SOURCE_CAP)}`]
+      text === undefined ? [] : [`${label}:\n${capText(text, SOURCE_CAP)}`]
     )
     .join("\n\n");
   return [

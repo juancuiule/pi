@@ -142,7 +142,7 @@ import type {
   SettingsRecord,
   SettingsState,
 } from "./settings.ts";
-import { SOURCE_CAP, titleMessages, titleText } from "./title.ts";
+import { capText, SOURCE_CAP, titleMessages, titleText } from "./title.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -648,7 +648,7 @@ export class Agents extends Context.Service<
     readonly mcpConnectTimeoutMs?: number | undefined;
     /** Keep attachment text in traces; only its size by default. */
     readonly traceAttachmentText?: boolean | undefined;
-    /** Generated titles, on by default; `false` when only an echo model answers. */
+    /** Generated titles, off unless passed `true` — production sets it when a real model is configured. */
     readonly titleGeneration?: boolean | undefined;
   }) =>
     Layer.effect(
@@ -870,7 +870,7 @@ export class Agents extends Context.Service<
           () => SandboxInfo | undefined
         >();
 
-        // Read directly only for what the harness does not expose: a conversation's unanswered inputs.
+        // Read directly only for what the harness does not expose: a conversation's unanswered inputs and recorded exchanges.
         const durableStorage = options.storage ?? new MemoryStorage();
         // The harness is opened when the layer is built and closed when it is torn down.
         const harness = yield* Effect.acquireRelease(
@@ -1014,11 +1014,13 @@ export class Agents extends Context.Service<
               : (content ?? [])
                   .flatMap((c) => (c.type === "text" ? [c.text] : []))
                   .join("");
-          return text === "" ? undefined : text.slice(0, SOURCE_CAP);
+          return text === "" ? undefined : capText(text, SOURCE_CAP);
         };
 
-        // The first or latest answered exchange, in paged scans; `done` also covers `write`
-        // submissions (settings records), so `input` is filtered.
+        // The first or latest answered exchange with text to name a title from, in paged
+        // scans; `done` also covers `write` submissions (settings records), so `input` is
+        // filtered, and a record whose sides are both textless (an image-only message, an
+        // empty answer) is passed over.
         const exchange = async (
           id: ConversationId,
           order: "ascending" | "descending",
@@ -1037,23 +1039,29 @@ export class Agents extends Context.Service<
             cursor,
             context
           );
-          const record = page.items.find(
-            (item) => item.status === "done" && item.type === "input"
+          const found = await Promise.all(
+            page.items
+              .filter((item) => item.status === "done" && item.type === "input")
+              .map(async (record) => {
+                const [user, answer] = await Promise.all([
+                  exchangeText(id, record.entry),
+                  exchangeText(id, record.answer),
+                ]);
+                return user === undefined && answer === undefined
+                  ? undefined
+                  : {
+                      entry: record.entry,
+                      ...(user === undefined ? {} : { user }),
+                      ...(answer === undefined ? {} : { answer }),
+                    };
+              })
           );
-          if (record === undefined) {
-            return page.next === undefined
+          return (
+            found.find((each) => each !== undefined) ??
+            (page.next === undefined
               ? undefined
-              : exchange(id, order, page.next);
-          }
-          const [user, answer] = await Promise.all([
-            exchangeText(id, record.entry),
-            exchangeText(id, record.answer),
-          ]);
-          return {
-            entry: record.entry,
-            ...(user === undefined ? {} : { user }),
-            ...(answer === undefined ? {} : { answer }),
-          };
+              : exchange(id, order, page.next))
+          );
         };
 
         // A one-shot completion outside the transcript, traced as a generation in the
@@ -2546,18 +2554,31 @@ export class Agents extends Context.Service<
           return yield* get(id);
         });
 
-        // One automatic attempt after a run-end: the exchange check runs before the claim so a run
-        // with no answer never spends the latch, and `autoTitleAt` is committed before the model
-        // call so the attempt is never retried. A rename or regenerate that lands meanwhile is not
-        // stomped: the apply commits only while the source still reads "prompt".
+        // One automatic attempt after a run-end: the latch and provenance are read first so a
+        // spent or superseded title needs no scan or commit at all, the exchange check runs
+        // before the claim so a run with no usable text never spends the latch, and
+        // `autoTitleAt` is committed before the model call so the attempt is never retried.
+        // A rename or regenerate that lands meanwhile is not stomped: the apply commits only
+        // while the source still reads "prompt".
         const autoTitle = Effect.fn("Agents.autoTitle")(function* (
           id: ConversationId
         ) {
-          if (options.titleGeneration === false) {
+          if (options.titleGeneration !== true) {
             return;
           }
           yield* handleOf(id);
+          const current = yield* attempt(() =>
+            harness.snapshot(MetaDoc, id, context)
+          );
+          if (
+            current?.meta === undefined ||
+            (current.meta.titleSource ?? "prompt") !== "prompt" ||
+            current.meta.autoTitleAt !== undefined
+          ) {
+            return;
+          }
           const first = yield* attempt(() => exchange(id, "ascending"));
+          // No exchange carries text yet: the attempt stays unspent for a run-end that does.
           if (first === undefined) {
             return;
           }
@@ -2594,7 +2615,7 @@ export class Agents extends Context.Service<
           });
           const message = yield* completeTitle(id, model, messages);
           const title =
-            message.stopReason === "error" ? undefined : titleText(message);
+            message.stopReason === "stop" ? titleText(message) : undefined;
           if (title === undefined) {
             yield* Effect.logWarning(
               `Conversation ${id}: the model gave no usable title`
@@ -2620,13 +2641,13 @@ export class Agents extends Context.Service<
         const generateTitle = Effect.fn("Agents.generateTitle")(function* (
           id: ConversationId
         ) {
-          if (options.titleGeneration === false) {
+          yield* handleOf(id);
+          if (options.titleGeneration !== true) {
             return yield* new TitleGenerationFailed({
               id: Number(id),
               reason: "no_model",
             });
           }
-          yield* handleOf(id);
           const [first, latest] = yield* attempt(() =>
             Promise.all([exchange(id, "ascending"), exchange(id, "descending")])
           );
@@ -2655,7 +2676,7 @@ export class Agents extends Context.Service<
           });
           const message = yield* completeTitle(id, model, messages);
           const title =
-            message.stopReason === "error" ? undefined : titleText(message);
+            message.stopReason === "stop" ? titleText(message) : undefined;
           if (title === undefined) {
             return yield* new TitleGenerationFailed({
               id: Number(id),
@@ -2679,7 +2700,7 @@ export class Agents extends Context.Service<
 
         return Agents.of({
           model: options.model,
-          titleGeneration: options.titleGeneration !== false,
+          titleGeneration: options.titleGeneration === true,
           capabilities,
           agent: agentOf,
           configure: configureSettings,
