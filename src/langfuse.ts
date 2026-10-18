@@ -1,6 +1,6 @@
 // Sends the agents' traces to Langfuse over OTLP when both Langfuse keys are configured (see .env.schema;
 // `pnpm langfuse:up` writes them to .env for the local Langfuse).
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { OtlpSerialization, OtlpTracer } from "effect/observability";
 
@@ -52,6 +52,48 @@ export const langfuseExport = (options: LangfuseOptions) => ({
     "x-langfuse-ingestion-version": "4",
   },
 });
+
+/** One score Langfuse upserts under `id`: a thumbs up/down (`feedback`) or a report on a traced message. */
+export interface LangfuseScore {
+  readonly id: string;
+  readonly traceId: string;
+  readonly name: "feedback" | "report";
+  readonly value: number;
+  readonly dataType: "NUMERIC";
+  readonly comment?: string | undefined;
+}
+
+/**
+ * POST one score; Langfuse upserts on the client-supplied `id`, so scoring the same entry again replaces it.
+ * A failure — unreachable, or a non-2xx — is a defect: the caller sees a 500.
+ */
+export const postScore = (
+  options: LangfuseOptions,
+  score: LangfuseScore
+): Effect.Effect<void> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const response = await fetch(
+        `${options.baseUrl.replace(/\/+$/u, "")}/api/public/scores`,
+        {
+          method: "POST",
+          signal,
+          headers: {
+            authorization: `Basic ${Buffer.from(`${options.publicKey}:${options.secretKey}`).toString("base64")}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(score),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(
+          `Langfuse answered ${response.status} ${response.statusText} for a score`
+        );
+      }
+    },
+    catch: (cause) =>
+      cause instanceof Error ? cause : new Error(String(cause)),
+  }).pipe(Effect.orDie);
 
 /** A tracer exporting to Langfuse, or nothing without options (see `langfuseOptions`). */
 export const langfuseLayer = (options: LangfuseOptions | undefined) => {

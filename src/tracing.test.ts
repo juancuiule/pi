@@ -2,10 +2,12 @@ import {
   fauxAssistantMessage,
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Effect, Tracer } from "effect";
+import { Effect, Stream, Tracer } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { ask, callTool, fauxAgents } from "./testing/faux.ts";
+import { Agents } from "./agents/agents.ts";
+import type { ConversationEvent } from "./conversation-events.ts";
+import { ask, callTool, fauxAgents, openSeat } from "./testing/faux.ts";
 import {
   redactArtifactArguments,
   redactAttachments,
@@ -35,6 +37,23 @@ const tree = (spans: readonly Tracer.NativeSpan[]) =>
   spans
     .filter((span) => !span.name.startsWith("Agents."))
     .map((span) => `${span.name} < ${parentName(span) ?? "-"}`);
+
+const firstOf = <E, R>(stream: Stream.Stream<ConversationEvent, E, R>) =>
+  stream
+    .pipe(Stream.take(1), Stream.runCollect)
+    .pipe(Effect.map((chunk) => [...chunk][0]));
+
+const waitUntil = (check: Effect.Effect<boolean, unknown>, timeoutMs = 5000) =>
+  Effect.gen(function* () {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (yield* check) {
+        return;
+      }
+      yield* Effect.sleep(50);
+    }
+    throw new Error("waitUntil timed out");
+  });
 
 /** The Langfuse session of one run: a fresh Agents layer asking one prompt. */
 const sessionOfRun = async () => {
@@ -106,6 +125,85 @@ describe("agent tracing", () => {
       model: "faux-1",
       toolOutput: '[{"type":"text","text":"42"}]',
     });
+  });
+
+  it("puts a send-driven run's spans on one trace, recorded for feedback", async () => {
+    const { spans, tracer } = recordingTracer();
+    const { layer } = fauxAgents([
+      callTool("calculate", { op: "multiply", a: 6, b: 7 }),
+      fauxAssistantMessage([fauxText("42")]),
+    ]);
+    const traced = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const seat = yield* openSeat();
+          yield* seat.send("What is 6 times 7?");
+          yield* waitUntil(
+            seat.running.pipe(Effect.map((running) => !running))
+          );
+          const snapshot = yield* agents
+            .events(seat.id)
+            .pipe(Effect.flatMap(firstOf));
+          const entry =
+            snapshot?.type === "snapshot"
+              ? snapshot.entries.find(
+                  (each) => each.model?.[0]?.role === "assistant"
+                )
+              : undefined;
+          if (entry === undefined) {
+            return yield* Effect.die(new Error("no assistant entry"));
+          }
+          return yield* agents.entryTrace(seat.id, Number(entry.id));
+        })
+      ).pipe(
+        Effect.provide(layer),
+        Effect.provideService(Tracer.Tracer, tracer)
+      )
+    );
+
+    const run = spans.filter(
+      (span) => span.name === "generation" || span.name.startsWith("tool ")
+    );
+    expect(run).toHaveLength(3);
+    expect(new Set(run.map((span) => span.traceId)).size).toBe(1);
+    expect(traced).toBe(run[0]?.traceId);
+    // The send's own span ends at admission; it must never parent the run — feedback scores the run's trace.
+    const sent = spans.find((span) => span.name === "Seat.send");
+    expect(sent).toBeDefined();
+    expect(sent?.traceId).not.toBe(run[0]?.traceId);
+  });
+
+  it("starts a fresh trace for the next run of the same conversation", async () => {
+    const { spans, tracer } = recordingTracer();
+    const { layer } = fauxAgents([
+      callTool("calculate", { op: "multiply", a: 6, b: 7 }),
+      fauxAssistantMessage([fauxText("42")]),
+      fauxAssistantMessage([fauxText("43")]),
+    ]);
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat();
+          yield* seat.send("What is 6 times 7?");
+          yield* waitUntil(
+            seat.running.pipe(Effect.map((running) => !running))
+          );
+          yield* seat.send("And again?");
+          yield* waitUntil(
+            seat.running.pipe(Effect.map((running) => !running))
+          );
+        })
+      ).pipe(
+        Effect.provide(layer),
+        Effect.provideService(Tracer.Tracer, tracer)
+      )
+    );
+
+    const runs = spans.filter((span) => span.name === "generation");
+    expect(runs).toHaveLength(3);
+    expect(runs[0]?.traceId).toBe(runs[1]?.traceId);
+    expect(runs[0]?.traceId).not.toBe(runs[2]?.traceId);
   });
 
   it("keeps separate runs in separate sessions, though conversation ids restart", async () => {

@@ -33,6 +33,25 @@ export class SkillNotFound extends Schema.TaggedError<SkillNotFound>()(
   { name: Schema.String, available: Schema.Array(Schema.String) }
 ) {}
 
+/** No such transcript entry in the conversation it was asked for — or it is not an assistant message. */
+export class EntryNotFound extends Schema.TaggedError<EntryNotFound>()(
+  "EntryNotFound",
+  { id: Schema.Number, entry: Schema.Number }
+) {}
+
+/**
+ * An entry's run has no trace to score: the server does not trace (`disabled`), or the entry's task left none
+ * (`untraced` — an aborted partial, or a conversation whose run predates tracing).
+ */
+export class TraceUnavailable extends Schema.TaggedError<TraceUnavailable>()(
+  "TraceUnavailable",
+  {
+    id: Schema.Number,
+    entry: Schema.optionalKey(Schema.Number),
+    reason: Schema.Literals(["disabled", "untraced"]),
+  }
+) {}
+
 /**
  * An Upgrade must raise the Level (none, then shell, then desktop), add Software, or both. `reason` says why the
  * Level cannot have the Software asked for.

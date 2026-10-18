@@ -42,7 +42,7 @@ const serverWith = (
   // Search sits between Conversations (which indexes into it) and the API's search group.
   search: Layer.Layer<Search, unknown, Agents> = Search.none
 ) =>
-  HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1" }), {
+  HttpRouter.serve(apiLayer({ apiUrl: "http://127.0.0.1", tracing: false }), {
     disableListenLog: true,
     disableLogger: true,
   }).pipe(
@@ -179,6 +179,19 @@ describe("HTTP API", () => {
         tools: [{ name: "echo", description: "" }],
       },
     ]);
+  });
+
+  it("rejects a whitespace-only report comment before the wire", async () => {
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        return yield* client.conversations.report({
+          params: { id: 1 },
+          payload: { entry: 1, comment: "   " },
+        });
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("ok")])])))
+    );
+    expect(Exit.isFailure(exit)).toBeTruthy();
   });
 
   it("lists every extension, and what one conversation runs with", async () => {

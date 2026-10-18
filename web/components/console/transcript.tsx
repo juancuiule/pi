@@ -34,6 +34,7 @@ import { splitAttachments } from "@/lib/attachments";
 import { boundaryNote } from "@/lib/boundary-note";
 import type { BoundaryNote } from "@/lib/boundary-note";
 import type { ConversationState, PendingInput } from "@/lib/conversation-state";
+import { useInfo } from "@/lib/queries";
 import { settingsNote } from "@/lib/settings-note";
 import {
   parseSkillMessage,
@@ -46,6 +47,7 @@ import { unansweredNote } from "@/lib/unanswered-note";
 
 import { ArtifactCard } from "./artifact-card";
 import { SentChip } from "./attachment-chip";
+import { FeedbackActions } from "./feedback-actions";
 import { Markdown } from "./markdown";
 import { ToolCall } from "./tool-call";
 
@@ -278,6 +280,7 @@ const Entry = ({
   /** For the attachments' download links; unset while a create is in flight. */
   conversation?: number;
 }) => {
+  const { data: info } = useInfo();
   // A head marker carries a user-role message (the summary or handoff); it is a boundary, not a sent message.
   const boundary = boundaryNote(entry);
   if (boundary !== undefined) {
@@ -371,12 +374,18 @@ const Entry = ({
       );
     }
     case "assistant": {
+      // Feedback is scored on the run's Langfuse trace, so the controls appear only when the server traces.
       return (
-        <AssistantBlocks
-          message={message}
-          state={state}
-          showThinking={showThinking}
-        />
+        <div className="group/feedback">
+          <AssistantBlocks
+            message={message}
+            state={state}
+            showThinking={showThinking}
+          />
+          {conversation === undefined || info?.tracing !== true ? null : (
+            <FeedbackActions conversation={conversation} entry={entry.id} />
+          )}
+        </div>
       );
     }
     default: {

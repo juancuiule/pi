@@ -1,3 +1,4 @@
+import type { Context as ChordContext } from "@earendil-works/chord";
 // An Effect service over a pi-durable harness: how to run a Conversation. `create` records a new one, and `open`
 // gives a Conversation a Seat (see GLOSSARY.md), with a Sandbox over its Workspace when its Level needs one. Which
 // Conversations have Seats, and when that changes, is the server's concern (src/server/conversations.ts).
@@ -20,6 +21,7 @@ import type {
   Harness as HarnessType,
   Storage,
   SubmissionRecord,
+  TaskId,
   ToolRegistration,
   Tx,
   UserInput,
@@ -89,10 +91,12 @@ import {
   ApprovalNotFound,
   ConversationArchived,
   ConversationNotFound,
+  EntryNotFound,
   InvalidSetting,
   InvalidUpgrade,
   SandboxUnavailable,
   TitleGenerationFailed,
+  TraceUnavailable,
 } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
@@ -123,6 +127,7 @@ import { workspaceExtension } from "../tools/workspace.ts";
 import {
   generationAttributes,
   makeAgentTracing,
+  TraceDoc,
   traceJson,
 } from "../tracing.ts";
 import { WebSearch, webSearchExtension } from "../web-search/web-search.ts";
@@ -636,6 +641,17 @@ export class Agents extends Context.Service<
       options?: { before?: number | undefined; limit?: number | undefined }
     ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
     /**
+     * The OTEL trace id of the run that wrote an assistant entry — where its feedback is scored in Langfuse.
+     * `EntryNotFound` for a missing or non-assistant entry; `TraceUnavailable` when its run left no trace.
+     */
+    entryTrace(
+      id: ConversationId,
+      entry: number
+    ): Effect.Effect<
+      string,
+      AgentError | ConversationNotFound | EntryNotFound | TraceUnavailable
+    >;
+    /**
      * The conversation's transcript entries oldest first from `from` (an exclusive lower entry-id bound,
      * so callers pass a cursor verbatim), every kind, including what head markers hide — `history` serves
      * the console's bounded view, this serves the search indexer. Emitted lazily, one commit per page.
@@ -671,9 +687,20 @@ export class Agents extends Context.Service<
         const workspaces = yield* Workspaces;
         const capacity = yield* Capacity;
         const registry = createRegistry();
+        // Each run's generation records its trace id into TraceDoc, so a message's feedback finds the run's
+        // trace. Built before the harness like `skillEdits`, it is filled in once `harness` exists below.
+        const traceWrites: {
+          record?: (
+            conversationId: ConversationId,
+            taskId: TaskId,
+            traceId: string,
+            commitContext: ChordContext
+          ) => Promise<void>;
+        } = {};
         // Spans for model requests and tool calls use the tracer this layer is built with.
         const tracing = makeAgentTracing(yield* Effect.context<never>(), {
           attachmentText: options.traceAttachmentText === true,
+          traceWrites,
         });
         registry.install(tracing.extension);
         const attachments = yield* Attachments;
@@ -912,6 +939,13 @@ export class Agents extends Context.Service<
           ),
           (opened) => Effect.promise(() => opened.close(context))
         );
+
+        // Idempotent: the generation task's every request attempts the same key.
+        traceWrites.record = (conversationId, taskId, traceId, commitContext) =>
+          harness.commit(async (tx) => {
+            const doc = await tx.doc(TraceDoc, conversationId);
+            doc.traces[String(taskId)] ??= traceId;
+          }, commitContext);
 
         // No Seat survives a restart, so a run interrupted by a crash would resume against a Sandbox that no
         // longer exists: every conversation with live work is aborted before the service answers. The first
@@ -1865,10 +1899,13 @@ export class Agents extends Context.Service<
             const expanded = yield* expand(prompt, id);
             yield* annotate(expanded);
             // Admitted without waiting: a busy conversation queues it, steering the run when it waits on a person
-            // and as a follow-up while it works, and the answer arrives as events.
-            const submission = yield* tracing.traced(
-              id,
-              admit(expanded, attachmentIds, "steerWhenWaiting", requestId)
+            // and as a follow-up while it works, and the answer arrives as events. No `tracing.traced`: the send
+            // span ends at admission, before the run's task hooks — its spans adopt their own run root instead.
+            const submission = yield* admit(
+              expanded,
+              attachmentIds,
+              "steerWhenWaiting",
+              requestId
             );
             return yield* attempt(() => submission.status(context));
           });
@@ -2220,6 +2257,44 @@ export class Agents extends Context.Service<
               };
             }, context)
           );
+        });
+
+        // The trace an assistant entry's run was recorded under: where its Langfuse scores go. A committed
+        // partial (an aborted run) has no `byTaskId`, and a run whose hook could not write has no row.
+        const entryTrace = Effect.fn("Agents.entryTrace")(function* (
+          id: ConversationId,
+          entryId: number
+        ) {
+          yield* handleOf(id);
+          const found = yield* attempt(() =>
+            durableStorage.entry(id, entryId as EntryId, context)
+          );
+          if (
+            found === undefined ||
+            found.entry.model?.[0]?.role !== "assistant"
+          ) {
+            return yield* new EntryNotFound({ id: Number(id), entry: entryId });
+          }
+          const taskId = found.entry.byTaskId;
+          if (taskId === undefined) {
+            return yield* new TraceUnavailable({
+              id: Number(id),
+              entry: entryId,
+              reason: "untraced",
+            });
+          }
+          const doc = yield* attempt(() =>
+            harness.snapshot(TraceDoc, id, context)
+          );
+          const traceId = doc?.traces[String(taskId)];
+          if (traceId === undefined) {
+            return yield* new TraceUnavailable({
+              id: Number(id),
+              entry: entryId,
+              reason: "untraced",
+            });
+          }
+          return traceId;
         });
 
         /** Transcript pages for the indexer; each page is one commit. */
@@ -2770,6 +2845,7 @@ export class Agents extends Context.Service<
           unarchive,
           events,
           history,
+          entryTrace,
           entries,
           renameTitle,
           autoTitle,

@@ -2,23 +2,42 @@
 // it, with the attributes Langfuse reads (https://langfuse.com/integrations/native/opentelemetry). pi-durable runs
 // generations and tools in its own scheduler, outside any Effect fiber, so its hooks open and close the spans, and the
 // parent comes from the conversation: an `ask` registers its span for its conversation.
+import type { Context as ChordContext } from "@earendil-works/chord";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
+  defineDoc,
   defineExtension,
   GenerationTask,
   hook,
+  LiveDoc,
   ToolTask,
 } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
   Extension,
+  HookApi,
   TaskId,
 } from "@earendil-works/pi-durable";
-import { Clock, Effect, Exit } from "effect";
-import type { Context, Tracer } from "effect";
+import { Clock, Effect, Exit, Tracer } from "effect";
+import type { Context } from "effect";
 
 /** Base64 payloads longer than this are replaced by their size, so screenshots do not bloat the traces. */
 const MAX_INLINE_DATA = 256;
+
+/**
+ * Each run's OTEL trace id under the generation task that owned the run (`String(taskId)` → `traceId`), so a
+ * message's feedback can be scored onto the trace that produced it.
+ */
+export const TraceDoc = defineDoc<{
+  readonly traces: Record<string, string>;
+}>({
+  kind: "app.trace",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "current",
+  initial: () => ({ traces: {} }),
+});
 
 /** JSON for span attributes, with images and other large base64 data left out. */
 export const traceJson = (value: unknown): string =>
@@ -159,6 +178,18 @@ export const makeAgentTracing = (
   options: {
     /** Keep the text of attachments in traces; left out (only its size) by default. */
     readonly attachmentText?: boolean;
+    /**
+     * How a generation task's trace is committed to TraceDoc: filled in by the caller once the harness exists,
+     * since this tracing is built before it. Errors thrown here are caught by the hook that awaits it.
+     */
+    readonly traceWrites?: {
+      record?: (
+        conversationId: ConversationId,
+        taskId: TaskId,
+        traceId: string,
+        context: ChordContext
+      ) => Promise<void>;
+    };
   } = {}
 ): AgentTracing => {
   const forTrace = (messages: readonly Message[]) =>
@@ -182,6 +213,23 @@ export const makeAgentTracing = (
       : content;
   const run = Effect.runSyncWith(services);
   const parents = new Map<ConversationId, Tracer.AnySpan>();
+  // A send's Run has no asking span: the first span of each Run adopts the root role instead, kept as its ids
+  // (the root ends before the Run's later spans start, so they hold an ExternalSpan to it, not the span).
+  const runs = new Map<
+    ConversationId,
+    { key: string; traceId: string; spanId: string }
+  >();
+  // The Run a conversation is in, named by its first input — stable across handOver and mid-Run pushes.
+  // Under `ask` the asking span parents everything anyway, so `parents` skips the read entirely.
+  const runKeyOf = async (api: HookApi, context: ChordContext) => {
+    if (parents.get(api.conversationId) !== undefined) {
+      return;
+    }
+    const live = await api.snapshot(LiveDoc, api.conversationId, context);
+    return live?.run === undefined ? undefined : String(live.run.inputs[0]);
+  };
+  // Generation tasks whose trace was already committed to TraceDoc, so only their first request writes.
+  const recorded = new Set<TaskId>();
   // Langfuse session per conversation. Conversation ids restart with every process (MemoryStorage), so a
   // per-process prefix keeps runs apart.
   const runId = crypto.randomUUID().slice(0, 8);
@@ -210,11 +258,27 @@ export const makeAgentTracing = (
     taskId: TaskId,
     conversationId: ConversationId,
     name: string,
-    attributes: Record<string, unknown>
+    attributes: Record<string, unknown>,
+    runKey: string | undefined
   ) => {
     // A request retried after recovery opens again; the abandoned attempt ends here.
     end(taskId, {}, false);
-    const parent = parents.get(conversationId);
+    let parent = parents.get(conversationId);
+    // No asking span (a send-driven Run): the Run's first span becomes its trace's root; its other spans
+    // adopt that root through `runKey`, which names the Run by its first input — stable across handOver
+    // and mid-Run pushes. A different `runKey` is a new Run, and its first span replaces the root.
+    let adoptKey: string | undefined;
+    if (parent === undefined && runKey !== undefined) {
+      const root = runs.get(conversationId);
+      if (root !== undefined && root.key === runKey) {
+        parent = Tracer.externalSpan({
+          traceId: root.traceId,
+          spanId: root.spanId,
+        });
+      } else {
+        adoptKey = runKey;
+      }
+    }
     const span = run(
       Effect.makeSpan(name, {
         attributes: {
@@ -225,21 +289,54 @@ export const makeAgentTracing = (
         ...(parent === undefined ? {} : { parent }),
       })
     );
+    if (adoptKey !== undefined) {
+      runs.set(conversationId, {
+        key: adoptKey,
+        traceId: span.traceId,
+        spanId: span.spanId,
+      });
+    }
     open.set(taskId, span);
+    return span;
   };
 
   const extension = defineExtension({
     name: "tracing",
     hooks: [
       hook(GenerationTask, {
-        beforeRequest: (
+        beforeRequest: async (
           request: { readonly messages: readonly Message[] },
-          api
+          api,
+          context
         ) => {
-          start(api.taskId, api.conversationId, "generation", {
-            "langfuse.observation.type": "generation",
-            "langfuse.observation.input": traceJson(forTrace(request.messages)),
-          });
+          const span = start(
+            api.taskId,
+            api.conversationId,
+            "generation",
+            {
+              "langfuse.observation.type": "generation",
+              "langfuse.observation.input": traceJson(
+                forTrace(request.messages)
+              ),
+            },
+            await runKeyOf(api, context)
+          );
+          // Once per generation task — the task that produced a message's run — record its trace so feedback
+          // finds it. A failed write must not break the request (hooks.each reports and swallows it anyway).
+          if (!recorded.has(api.taskId)) {
+            recorded.add(api.taskId);
+            try {
+              await options.traceWrites?.record?.(
+                api.conversationId,
+                api.taskId,
+                span.traceId,
+                context
+              );
+            } catch {
+              // A retry's next request writes again; the request still runs either way.
+              recorded.delete(api.taskId);
+            }
+          }
         },
         afterResponse: (message, api) => {
           end(
@@ -250,14 +347,20 @@ export const makeAgentTracing = (
         },
       }),
       hook(ToolTask, {
-        beforeTool: (call, api) => {
-          start(api.taskId, api.conversationId, `tool ${call.name}`, {
-            "langfuse.observation.type": "tool",
-            "gen_ai.tool.name": call.name,
-            "langfuse.observation.input": traceJson(
-              forTraceArgs(call.name, call.arguments)
-            ),
-          });
+        beforeTool: async (call, api, context) => {
+          start(
+            api.taskId,
+            api.conversationId,
+            `tool ${call.name}`,
+            {
+              "langfuse.observation.type": "tool",
+              "gen_ai.tool.name": call.name,
+              "langfuse.observation.input": traceJson(
+                forTraceArgs(call.name, call.arguments)
+              ),
+            },
+            await runKeyOf(api, context)
+          );
         },
         afterTool: (call, result, api) => {
           // A tool that throws has no content; its message is in the diagnostics.

@@ -87,6 +87,8 @@ const plainError: Record<string, string> = {
     "This conversation is archived. Unarchive it to continue.",
   WorkspaceFileNotFound: "The file isn't in the workspace (anymore).",
   SandboxUnavailable: "The conversation's sandbox isn't running.",
+  EntryNotFound: "That message can't be rated.",
+  TraceUnavailable: "Scoring isn't available for that message.",
 };
 
 /** A message for a failure from the API, for toasts and inline errors. */

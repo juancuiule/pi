@@ -171,7 +171,10 @@ const SearchLive = Search.layer({ database: config.paths.searchDb }).pipe(
   Layer.provide(AgentsLive)
 );
 
-const ConversationsLive = Conversations.layer(config.server).pipe(
+const ConversationsLive = Conversations.layer({
+  ...config.server,
+  langfuse: config.langfuse,
+}).pipe(
   Layer.provide(AgentsLive),
   Layer.provide(CapacityLive),
   Layer.provide(SearchLive)
@@ -198,7 +201,10 @@ const UploadLimits = Layer.succeedContext(
 const ServerLive = HttpRouter.serve(
   // Where the console reaches this server directly, skipping Next's rewrite (the shell's socket needs it).
   Layer.mergeAll(
-    apiLayer({ apiUrl: `http://127.0.0.1:${config.server.port}` }),
+    apiLayer({
+      apiUrl: `http://127.0.0.1:${config.server.port}`,
+      tracing: config.langfuse !== undefined,
+    }),
     shellRoute
   )
 ).pipe(
