@@ -2,16 +2,11 @@
 
 import type { ConversationSummary } from "effect-pi/api";
 import {
-  BookOpen,
-  Gauge,
-  LayoutTemplate,
   LoaderCircle,
-  MessageSquare,
   Monitor,
   Moon,
   Plus,
   Search,
-  Settings,
   ShieldAlert,
   Sun,
 } from "lucide-react";
@@ -32,6 +27,7 @@ import {
 } from "@/components/ui/tooltip";
 import { parseConversationId } from "@/lib/conversation-id";
 import { relativeTime } from "@/lib/format";
+import { PAGES } from "@/lib/navigation";
 import { useConversations, useInfo } from "@/lib/queries";
 import { useOpenSearch } from "@/lib/search-context";
 import { useConversationStore } from "@/lib/store";
@@ -46,14 +42,6 @@ const THEMES = [
   { value: "system", label: "System", icon: Monitor },
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
-] as const;
-
-const PAGES = [
-  { href: "/", label: "Conversations", icon: MessageSquare },
-  { href: "/skills", label: "Skills", icon: BookOpen },
-  { href: "/artifacts", label: "Artifacts", icon: LayoutTemplate },
-  { href: "/capacity", label: "Capacity", icon: Gauge },
-  { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
 /** The spinner a row gets while its Seat is busy: Resuming ahead of Running; neither when an approval waits. */

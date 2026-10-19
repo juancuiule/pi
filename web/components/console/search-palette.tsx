@@ -1,15 +1,18 @@
 "use client";
 
-// The console's ⌘K palette: full-text over Conversations through GET /api/search. Each result is one selectable
-// row — its title, an Archived badge, and a line per match; Enter or a click opens it at `/?c=<id>`.
-import type { SearchResult, SnippetSegment } from "effect-pi/api";
+// The console's ⌘K palette: "Go to" page commands from lib/navigation above full-text over Conversations
+// through GET /api/search. Enter or a click on a page row routes to its href; a conversation row opens it
+// at `/?c=<id>`.
+import type { SnippetSegment } from "effect-pi/api";
 import { Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import type { KeyboardEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { paletteSections } from "@/lib/navigation";
+import type { PaletteItem, PaletteSection } from "@/lib/navigation";
 import { useSearch } from "@/lib/queries";
 import { isSearchShortcut, useDebouncedValue } from "@/lib/search";
 import { moveSelection } from "@/lib/skill-autocomplete";
@@ -46,12 +49,16 @@ export const SearchPalette = ({
   const input = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
-  // While closed the debounced value settles on "", so a reopen never re-fires the old query.
+  // While closed the debounced value settles on "", so a reopen never re-fires the old query. An empty
+  // input bypasses the debounce for the same reason: it always means the recents query, never a stale one.
   const debounced = useDebouncedValue(open ? query : "", 150);
-  const { data, isError } = useSearch(debounced, open);
+  const { data, isError } = useSearch(query === "" ? "" : debounced, open);
   const results = data ?? [];
-  const active =
-    results.length === 0 ? -1 : Math.min(selected, results.length - 1);
+  const sections = paletteSections(query, results);
+  const items = sections.flatMap(
+    (section): readonly PaletteItem[] => section.items
+  );
+  const active = items.length === 0 ? -1 : Math.min(selected, items.length - 1);
 
   // ⌘K / Ctrl+K toggles the palette, even while another field has focus.
   useEffect(() => {
@@ -75,8 +82,17 @@ export const SearchPalette = ({
     }
   }
 
-  const choose = (result: SearchResult) => {
-    router.push(`/?c=${result.id}`);
+  const choose = (item: PaletteItem) => {
+    if (item.type === "nav") {
+      const { command } = item;
+      if ("select" in command) {
+        command.select();
+      } else {
+        router.push(command.href);
+      }
+    } else {
+      router.push(`/?c=${item.result.id}`);
+    }
     onOpenChange(false);
     setQuery("");
     setSelected(0);
@@ -85,12 +101,12 @@ export const SearchPalette = ({
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      if (results.length > 0) {
+      if (items.length > 0) {
         setSelected(
           moveSelection(
             active,
             event.key === "ArrowDown" ? 1 : -1,
-            results.length
+            items.length
           )
         );
       }
@@ -98,57 +114,89 @@ export const SearchPalette = ({
     }
     if (event.key === "Enter" && active >= 0) {
       event.preventDefault();
-      choose(results[active]);
+      choose(items[active]);
     }
   };
 
-  let list: ReactNode;
-  if (isError) {
-    list = (
-      <p className="text-muted-foreground px-2 py-6 text-center text-sm">
-        Search failed — try again
-      </p>
-    );
-  } else if (data === undefined) {
-    list = (
-      <p className="text-muted-foreground px-2 py-6 text-center text-sm">
-        Searching…
-      </p>
-    );
-  } else if (results.length === 0) {
-    list = (
-      <p className="text-muted-foreground px-2 py-6 text-center text-sm">
-        No conversations found
-      </p>
-    );
-  } else {
-    list = results.map((result, index) => (
+  const rows = (section: PaletteSection) => {
+    if (section.id === "pages") {
+      return section.items.map((item) => {
+        const Icon = item.command.icon;
+        return (
+          // Focus stays in the input; the row is picked with the arrows and Enter or a click.
+          // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- an option in the combobox's listbox, not a standalone control
+          <div
+            key={item.key}
+            id={optionId(item.index)}
+            role="option" // oxlint-disable-line jsx-a11y/prefer-tag-over-role -- the listbox's rows, not select options
+            aria-selected={item.index === active}
+            tabIndex={-1}
+            onClick={() => choose(item)}
+            onMouseEnter={() => setSelected(item.index)}
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5",
+              item.index === active && "bg-accent text-accent-foreground"
+            )}
+          >
+            <Icon
+              aria-hidden
+              className="text-muted-foreground size-4 shrink-0"
+            />
+            <span className="min-w-0 flex-1 truncate text-sm">
+              {item.command.label}
+            </span>
+          </div>
+        );
+      });
+    }
+    if (isError) {
+      return (
+        <p className="text-muted-foreground px-2 py-6 text-center text-sm">
+          Search failed — try again
+        </p>
+      );
+    }
+    if (data === undefined) {
+      return (
+        <p className="text-muted-foreground px-2 py-6 text-center text-sm">
+          Searching…
+        </p>
+      );
+    }
+    if (section.items.length === 0) {
+      return (
+        <p className="text-muted-foreground px-2 py-6 text-center text-sm">
+          No conversations found
+        </p>
+      );
+    }
+    return section.items.map((item) => (
       // Focus stays in the input; the row is picked with the arrows and Enter or a click.
       // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- an option in the combobox's listbox, not a standalone control
       <div
-        key={result.id}
-        id={optionId(index)}
+        key={item.key}
+        id={optionId(item.index)}
         role="option" // oxlint-disable-line jsx-a11y/prefer-tag-over-role -- the listbox's rows, not select options
-        aria-selected={index === active}
+        aria-selected={item.index === active}
         tabIndex={-1}
-        onClick={() => choose(result)}
-        onMouseEnter={() => setSelected(index)}
+        onClick={() => choose(item)}
+        onMouseEnter={() => setSelected(item.index)}
         className={cn(
           "flex cursor-pointer flex-col gap-0.5 rounded-md px-2 py-1.5",
-          index === active && "bg-accent text-accent-foreground"
+          item.index === active && "bg-accent text-accent-foreground"
         )}
       >
         <span className="flex items-center gap-1.5">
           <span className="min-w-0 flex-1 truncate text-sm">
-            {result.title}
+            {item.result.title}
           </span>
-          {result.archived ? (
+          {item.result.archived ? (
             <Badge variant="outline" className="shrink-0">
               Archived
             </Badge>
           ) : null}
         </span>
-        {result.matches.map((match, matchIndex) => (
+        {item.result.matches.map((match, matchIndex) => (
           // oxlint-disable-next-line react/no-array-index-key -- a result's matches have no id
           <span
             key={matchIndex}
@@ -163,12 +211,12 @@ export const SearchPalette = ({
         ))}
       </div>
     ));
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent initialFocus={input}>
-        <DialogTitle className="sr-only">Search conversations</DialogTitle>
+        <DialogTitle className="sr-only">Search or jump to</DialogTitle>
         <div className="border-border flex items-center gap-2 border-b px-3">
           <Search
             aria-hidden
@@ -177,14 +225,14 @@ export const SearchPalette = ({
           <input
             ref={input}
             role="combobox"
-            aria-label="Search conversations"
+            aria-label="Search or jump to"
             aria-expanded="true"
             aria-controls={LISTBOX_ID}
             aria-activedescendant={active >= 0 ? optionId(active) : undefined}
             autoComplete="off"
             spellCheck={false}
             maxLength={500}
-            placeholder="Search conversations…"
+            placeholder="Search or jump to…"
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -200,10 +248,27 @@ export const SearchPalette = ({
         <div
           id={LISTBOX_ID}
           role="listbox" // oxlint-disable-line jsx-a11y/prefer-tag-over-role -- the combobox's popup, not a select
-          aria-label="Conversations"
+          aria-label="Search results"
           className="max-h-[50vh] overflow-y-auto p-1.5"
         >
-          {list}
+          {sections.map((section) => {
+            const headerId = `${LISTBOX_ID}-${section.id}`;
+            return (
+              <div
+                key={section.id}
+                role="group" // oxlint-disable-line jsx-a11y/prefer-tag-over-role -- a labelled section of the listbox, not a fieldset
+                aria-labelledby={headerId}
+              >
+                <div
+                  id={headerId}
+                  className="text-muted-foreground px-2 pt-2 pb-1 text-xs"
+                >
+                  {section.label}
+                </div>
+                {rows(section)}
+              </div>
+            );
+          })}
         </div>
       </DialogContent>
     </Dialog>
