@@ -412,6 +412,11 @@ const FILE_TEXT_MAX = 256 * 1024;
 const FILE_LIST_MAX = 500;
 /** The paths one tree listing serves at most; a bigger Workspace answers its first part with `truncated`. */
 const FILE_TREE_MAX = 4000;
+/** Directory names the tree lists as markers but never descends: bulk no one browses. */
+const TREE_SKIP_DESCEND: ReadonlySet<string> = new Set([
+  ".git",
+  "node_modules",
+]);
 
 /** Directories first, then names — the Files tab's order. */
 const byKindThenName = (
@@ -575,32 +580,33 @@ const FilesHandlers = HttpApiBuilder.group(
           const root = yield* rootOf(env);
           const paths: string[] = [];
           let hit = false;
-          // Depth-first, directories first at each level — the order the console's tree renders.
-          // Symlinked directories are not descended: a link could cycle or point outside.
-          const walk: (
-            dir: string
-          ) => Effect.Effect<void, WorkspaceFileNotFound> = Effect.fnUntraced(
-            function* (dir: string) {
-              const entries = yield* fileCall(
-                dir === "" ? "/" : dir,
-                env.listDir(dir === "" ? root : `${root}/${dir}`, context)
-              );
-              for (const entry of entries.toSorted(byKindThenName)) {
-                if (paths.length >= FILE_TREE_MAX) {
-                  hit = true;
-                  return;
+          // Breadth-first: a listing that hits the cap is cut inside the deepest entries, not the
+          // first-sorted subtree, so shallow paths always appear. Symlinked directories are not
+          // descended (`listDir` reports them `symlink`, never `directory`): a link could cycle or
+          // point outside.
+          const queue = [""];
+          for (let i = 0; i < queue.length && !hit; i += 1) {
+            const dir = queue[i];
+            const entries = yield* fileCall(
+              dir === "" ? "/" : dir,
+              env.listDir(dir === "" ? root : `${root}/${dir}`, context)
+            );
+            for (const entry of entries.toSorted(byKindThenName)) {
+              if (paths.length >= FILE_TREE_MAX) {
+                hit = true;
+                break;
+              }
+              const rel = dir === "" ? entry.name : `${dir}/${entry.name}`;
+              if (entry.kind === "directory") {
+                paths.push(`${rel}/`);
+                if (!TREE_SKIP_DESCEND.has(entry.name)) {
+                  queue.push(rel);
                 }
-                const rel = dir === "" ? entry.name : `${dir}/${entry.name}`;
-                if (entry.kind === "directory") {
-                  paths.push(`${rel}/`);
-                  yield* walk(rel);
-                } else {
-                  paths.push(rel);
-                }
+              } else {
+                paths.push(rel);
               }
             }
-          );
-          yield* walk("");
+          }
           return { paths, truncated: hit };
         }).pipe(Effect.catchTag("AgentError", Effect.die))
       );

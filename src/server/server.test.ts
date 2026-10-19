@@ -1227,8 +1227,8 @@ describe("HTTP API", () => {
     ]);
     expect(result.tree).toStrictEqual({
       truncated: false,
-      // Depth-first, directories first, a trailing "/" on directories.
-      paths: ["sub/", "sub/notes.txt", "blob.bin", "REPORT.md"],
+      // Breadth-first: each level's entries before the next's, directories first, a trailing "/" on directories.
+      paths: ["sub/", "blob.bin", "REPORT.md", "sub/notes.txt"],
     });
     expect([result.report, result.deep, result.binary]).toStrictEqual([
       {
@@ -1311,7 +1311,9 @@ describe("HTTP API", () => {
     );
     expect(
       tree.paths.some(
-        (p) => p.startsWith(".git/") || p.startsWith("node_modules/")
+        (p) =>
+          (p !== ".git/" && p.startsWith(".git/")) ||
+          (p !== "node_modules/" && p.startsWith("node_modules/"))
       )
     ).toBeFalsy();
   }, 30_000);
