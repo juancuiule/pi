@@ -75,15 +75,15 @@ export const NewConversation = ({
   const { data: capabilities } = useCapabilities();
   // Switches flipped in "Customize", kept across Level changes.
   const [overrides, setOverrides] = useState<Overrides>(NO_OVERRIDES);
-  const settings =
-    capabilities === undefined
-      ? undefined
-      : newConversationSettings(capabilities, sandbox, overrides);
-  const customized =
-    settings === undefined ? undefined : settingsPayload(overrides, settings);
   const [picked, setPicked] = useState<SoftwareId[]>([]);
   const catalog = capabilities?.software ?? [];
   const software = softwareToAdd(catalog, sandbox, [], picked);
+  const settings =
+    capabilities === undefined
+      ? undefined
+      : newConversationSettings(capabilities, sandbox, software, overrides);
+  const customized =
+    settings === undefined ? undefined : settingsPayload(overrides, settings);
 
   // Set while the create runs: the view ahead already shows the message.
   const [creating, setCreating] = useState<PendingInput>();

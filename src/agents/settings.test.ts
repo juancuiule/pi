@@ -43,6 +43,7 @@ const catalog = [
 
 const chat: SettingsState = {
   level: "none",
+  software: [],
   approvals: "ask",
   extensions: ["calculator", "skills", "tracing"],
   disabledTools: [],
@@ -60,6 +61,7 @@ describe(applyChange, () => {
       })
     ).toStrictEqual({
       level: "none",
+      software: [],
       approvals: "auto",
       extensions: ["skills", "tracing"],
       disabledTools: ["skill"],

@@ -67,7 +67,7 @@ const tarList = (packed: Uint8Array) => {
 };
 
 describe("s3-copied workspace storage", () => {
-  it("saves /workspace minus .attachments and .skills, and restores it into a fresh Sandbox", async () => {
+  it("saves /workspace minus .attachments, .skills and the browser's caches, and restores it into a fresh Sandbox", async () => {
     const { root, store, layer } = setup();
 
     const outcome = await Effect.runPromise(
@@ -87,6 +87,18 @@ describe("s3-copied workspace storage", () => {
             );
             mkdirSync(path.join(dir, ".skills", "s1"), { recursive: true });
             writeFileSync(path.join(dir, ".skills", "s1", "SKILL.md"), "---\n");
+            for (const file of [
+              "Default/Cookies",
+              "Default/Cache/data_0",
+              "Default/Code Cache/js/index",
+              "ShaderCache/data_1",
+              "SingletonLock",
+            ]) {
+              mkdirSync(path.dirname(path.join(dir, ".browser", file)), {
+                recursive: true,
+              });
+              writeFileSync(path.join(dir, ".browser", file), "x");
+            }
             return storage;
           })
         );
@@ -123,7 +135,11 @@ describe("s3-copied workspace storage", () => {
       outcome.members.includes("./sub/file.ts"),
       outcome.members.some((name) => name.includes(".attachments")),
       outcome.members.some((name) => name.includes(".skills")),
-    ]).toStrictEqual([true, true, false, false]);
+      outcome.members.includes("./.browser/Default/Cookies"),
+      outcome.members.filter(
+        (name) => name.includes("Cache/") || name.includes("Singleton")
+      ),
+    ]).toStrictEqual([true, true, false, false, true, []]);
     expect(outcome.seen).toStrictEqual(["kept", false, false]);
     // Both Seats' closes saved and evicted.
     expect(outcome.evicted).toBeTruthy();

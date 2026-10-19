@@ -59,11 +59,20 @@ const Row = ({
   </div>
 );
 
-const levelHint = (levels: boolean, locked: boolean): string | undefined => {
-  if (locked) {
+const availabilityHint = (extension: {
+  readonly available: boolean;
+  readonly locked: boolean;
+  readonly software?: string | undefined;
+}): string | undefined => {
+  if (extension.locked) {
     return "Always on";
   }
-  return levels ? undefined : "Needs a bigger machine; upgrade first";
+  if (extension.available) {
+    return undefined;
+  }
+  return extension.software === undefined
+    ? "Needs a bigger machine; upgrade first"
+    : `Needs the ${extension.software} software; add it first`;
 };
 
 export const SettingsPanel = ({
@@ -94,7 +103,7 @@ export const SettingsPanel = ({
                 <div className="min-w-0 flex-1">
                   <Row
                     label={extension.name}
-                    hint={levelHint(extension.available, extension.locked)}
+                    hint={availabilityHint(extension)}
                     checked={extension.enabled}
                     disabled={
                       disabled ||

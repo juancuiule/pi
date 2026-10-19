@@ -217,6 +217,7 @@ describe("HTTP API", () => {
         "calculator",
         "coding-tools",
         "desktop",
+        "browser",
         "workspace",
         "artifacts",
         "tracing",
@@ -225,10 +226,17 @@ describe("HTTP API", () => {
       ["none", "shell", "desktop"],
       ["shell", "desktop"],
       ["desktop"],
+      ["shell", "desktop"],
       ["none", "shell", "desktop"],
       ["none", "shell", "desktop"],
       ["none", "shell", "desktop"],
     ]);
+    // The browser also needs its Software; no other extension does.
+    expect(
+      extensions.flatMap((each) =>
+        each.software === undefined ? [] : [[each.name, each.software]]
+      )
+    ).toStrictEqual([["browser", "agent-browser"]]);
     // Which tools wait for a decision under `ask`.
     expect(
       byName
@@ -263,7 +271,7 @@ describe("HTTP API", () => {
         "skill_save",
         "skill_delete",
       ],
-      ["coding-tools", "desktop"],
+      ["coding-tools", "desktop", "browser"],
       ["workspace", "attachments", "artifacts", "skills"],
     ]);
   });
@@ -662,7 +670,12 @@ describe("HTTP API", () => {
           ["python-data", "shell"],
           ["imagemagick", "shell"],
           ["ffmpeg", "shell"],
-          ...(process.arch === "x64" ? [["chrome", "desktop"]] : []),
+          ...(process.arch === "x64"
+            ? [
+                ["chrome", "desktop"],
+                ["agent-browser", "shell"],
+              ]
+            : []),
         ]);
         const created = yield* client.conversations.create({
           payload: { sandbox: "shell", software: ["node"], prompt: "hello" },

@@ -11,6 +11,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxText,
+  fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Effect, Fiber, Layer, Schedule, Stream } from "effect";
@@ -80,6 +81,16 @@ const run = (env: ExecutionEnv, command: string) =>
       BACKGROUND_CONTEXT
     );
     return { ok: result.ok, text };
+  });
+
+/** A model turn that calls one tool, with its own call id so a test can call the same tool twice. */
+const step = (
+  name: string,
+  args: Parameters<typeof fauxToolCall>[1],
+  id: string
+) =>
+  fauxAssistantMessage([fauxToolCall(name, args, { id })], {
+    stopReason: "toolUse",
   });
 
 const dockerAgents = (
@@ -279,6 +290,112 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       expect(saved.subarray(1, 4).toString()).toBe("PNG");
       rmSync(root, { recursive: true, force: true });
     });
+
+    // Chrome for Testing, which agent-browser installs, has no Linux arm64 build.
+    it.skipIf(process.arch !== "x64")(
+      "drives a page by refs with the browser tools, sharing the browser with bash",
+      async () => {
+        const page =
+          '<html><head><title>Form</title></head><body><label>Email <input id="email"></label>' +
+          "<button onclick=\"document.title = 'Sent ' + document.getElementById('email').value\">Send</button></body></html>";
+        const layer = dockerAgents([
+          step("write", { path: "/workspace/page.html", content: page }, "c1"),
+          step("browser_open", { url: "file:///workspace/page.html" }, "c2"),
+          step("browser_snapshot", {}, "c3"),
+          // The ref the snapshot gave the field; text that looks like a CLI flag must reach the page as typed.
+          (request) => {
+            const snapshot = (
+              request.messages.findLast((m) => m.role === "toolResult")
+                ?.content ?? []
+            )
+              .flatMap((c) => (c.type === "text" ? [c.text] : []))
+              .join("");
+            const ref = /textbox "Email" \[ref=(?<ref>e\d+)\]/u.exec(snapshot)
+              ?.groups?.ref;
+            return step(
+              "browser_fill",
+              { target: ref ?? "missing", text: "--headed" },
+              "c4"
+            );
+          },
+          step("browser_click", { target: "button" }, "c5"),
+          step(
+            "bash",
+            {
+              command:
+                "agent-browser --json get title && test -d /workspace/.browser && echo profile-kept",
+            },
+            "c6"
+          ),
+          echoToolResult,
+        ]);
+
+        const answer = await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const agents = yield* Agents;
+              const id = yield* agents.create({
+                prompt: "",
+                title: "",
+                level: "shell",
+                software: ["agent-browser"],
+                createdAt: Date.now(),
+              });
+              const seat = yield* agents.open(id);
+              return yield* seat.ask("Send the form.");
+            })
+          ).pipe(Effect.provide(layer))
+        );
+
+        expect(answer).toContain('"title":"Sent --headed"');
+        expect(answer).toContain("profile-kept");
+      },
+      900_000
+    );
+
+    it.skipIf(process.arch !== "x64")(
+      "opens the browser as a window on a desktop, so the person can watch",
+      async () => {
+        const layer = dockerAgents([
+          step(
+            "write",
+            {
+              path: "/workspace/watch.html",
+              content: "<title>Watched page</title><h1>Hi</h1>",
+            },
+            "c1"
+          ),
+          step("browser_open", { url: "file:///workspace/watch.html" }, "c2"),
+          step(
+            "bash",
+            { command: "xdotool search --onlyvisible --name 'Watched page'" },
+            "c3"
+          ),
+          echoToolResult,
+        ]);
+
+        const answer = await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const agents = yield* Agents;
+              const id = yield* agents.create({
+                prompt: "",
+                title: "",
+                level: "desktop",
+                software: ["agent-browser"],
+                createdAt: Date.now(),
+              });
+              const seat = yield* agents.open(id);
+              return yield* seat.ask("Open the page.");
+            })
+          ).pipe(Effect.provide(layer))
+        );
+
+        // A window id: the page is on the display, not in a headless browser.
+        expect(answer).toMatch(/^\d+/u);
+      },
+      900_000
+    );
 
     it("moves the mouse where the model clicks", async () => {
       const layer = dockerAgents([
