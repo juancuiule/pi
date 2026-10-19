@@ -168,6 +168,7 @@ describe("conversation settings", () => {
       "artifacts",
       "questions",
       "skills",
+      "repeat-guard",
       "tracing",
     ]);
   });

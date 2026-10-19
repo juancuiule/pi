@@ -53,8 +53,9 @@ describe("repeat guard", () => {
       ).pipe(Effect.provide(layer))
     );
 
-    // The run ended by itself, well short of the 20 scripted calls.
-    expect(results.length).toBeLessThan(20);
+    // The run ended by itself: A executed 3 times, was blocked twice, then ran once more to end
+    // it; B executed 3 times and was blocked twice — 11 results of the 20 scripted calls.
+    expect(results).toHaveLength(11);
     // Repeats past the tolerated streak failed back to the model instead of running again.
     const refused = results.filter((result) => result.isError === true);
     expect(refused.length).toBeGreaterThanOrEqual(2);
@@ -77,6 +78,36 @@ describe("repeat guard", () => {
           const agents = yield* Agents;
           const seat = yield* openSeat();
           const reply = yield* seat.ask("add up");
+          const entries = [
+            ...(yield* Stream.runCollect(yield* agents.entries(seat.id))),
+          ];
+          return { answer: reply, results: toolResults(entries) };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(answer).toBe("done");
+    expect(results).toHaveLength(8);
+    expect(results.every((result) => result.isError !== true)).toBeTruthy();
+  });
+
+  it("counts identical arguments only while the result stays identical", async () => {
+    // The same command emitting a different count each time is progress, not a loop.
+    const { layer } = fauxAgents([
+      ...Array.from({ length: 8 }, () =>
+        callTool("bash", {
+          command: "n=$(cat n 2>/dev/null || echo 0); echo $((n + 1)) | tee n",
+        })
+      ),
+      fauxAssistantMessage([fauxText("done")]),
+    ]);
+
+    const { answer, results } = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const seat = yield* openSeat({ sandbox: "shell" });
+          const reply = yield* seat.ask("count up");
           const entries = [
             ...(yield* Stream.runCollect(yield* agents.entries(seat.id))),
           ];
