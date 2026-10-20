@@ -5,11 +5,16 @@ import type { FileTreeBatchOperation } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { useQuery } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import { runApi } from "@/lib/api";
 import { useOpenFile } from "@/lib/file-context";
+import {
+  entryWirePath,
+  mergeTreePaths,
+  needsChildren as listingNeedsChildren,
+} from "@/lib/workspace-files";
 
 /**
  * The tree reads the console's palette through its --trees-theme-* layer. The built-in values that stay
@@ -35,10 +40,23 @@ const TREE_STYLE = {
  * The workspace tree (@pierre/trees, the diffs sibling already used for edits): the whole workspace at once,
  * directories expandable in place, built-in search. Selecting a file opens it in the file pane beside the chat.
  */
-const Tree = ({ paths }: { paths: readonly string[] }) => {
+const Tree = ({
+  paths,
+  onLoadDirectory,
+  needsChildren,
+}: {
+  paths: readonly string[];
+  onLoadDirectory: (dir: string) => void;
+  needsChildren: (dir: string) => boolean;
+}) => {
   const openFile = useOpenFile();
   // Options apply once, when the model is created; the callbacks read the newest data through refs.
-  const live = useRef({ dirs: new Set<string>(), openFile });
+  const live = useRef({
+    dirs: new Set<string>(),
+    openFile,
+    onLoadDirectory,
+    needsChildren,
+  });
   const seen = useRef(new Set<string>());
   useEffect(() => {
     live.current = {
@@ -48,6 +66,8 @@ const Tree = ({ paths }: { paths: readonly string[] }) => {
           .map((path) => path.slice(0, -1))
       ),
       openFile,
+      onLoadDirectory,
+      needsChildren,
     };
   });
   const prepared = useMemo(
@@ -64,11 +84,17 @@ const Tree = ({ paths }: { paths: readonly string[] }) => {
     onSelectionChange: (selected) => {
       const added = selected.find((path) => !seen.current.has(path));
       seen.current = new Set(selected);
-      if (
-        added !== undefined &&
-        !live.current.dirs.has(added.replace(/\/+$/u, ""))
-      ) {
+      if (added === undefined) {
+        return;
+      }
+      const dir = added.replace(/\/+$/u, "");
+      if (!live.current.dirs.has(dir)) {
         live.current.openFile?.({ path: added });
+        return;
+      }
+      // A directory whose children the listing withheld has nothing to expand; selecting it fetches them.
+      if (live.current.needsChildren(dir)) {
+        live.current.onLoadDirectory(dir);
       }
     },
   });
@@ -93,6 +119,24 @@ const Tree = ({ paths }: { paths: readonly string[] }) => {
       model.batch(operations);
     }
   }, [model, paths]);
+  // Expansion has no callback: rescan the visible rows on every model change and fetch the children
+  // of each expanded directory the listing withheld. Fetches dedupe in FilesBrowser, so the
+  // fetch → merge → batch → notify pass settles.
+  useEffect(
+    () =>
+      model.subscribe(() => {
+        for (const row of model.getVisibleRows(0, model.getVisibleCount())) {
+          if (row.kind !== "directory" || !row.isExpanded) {
+            continue;
+          }
+          const dir = row.path.replace(/\/+$/u, "");
+          if (live.current.needsChildren(dir)) {
+            live.current.onLoadDirectory(dir);
+          }
+        }
+      }),
+    [model]
+  );
   return (
     <FileTree
       model={model}
@@ -115,6 +159,53 @@ export const FilesBrowser = ({ id, live }: { id: number; live: boolean }) => {
     enabled: live,
     refetchInterval: 2000,
   });
+  // Children the tree listing withheld (truncated or skipped dirs), fetched per directory on expand.
+  const [extra, setExtra] = useState<
+    Readonly<Record<string, readonly string[]>>
+  >({});
+  // Directories already asked for, in flight or listed; a failure drops the dir so a later
+  // trigger retries it.
+  const requested = useRef(new Set<string>());
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const loadDirectory = useCallback(
+    (dir: string) => {
+      if (requested.current.has(dir)) {
+        return;
+      }
+      requested.current.add(dir);
+      void (async () => {
+        try {
+          const { entries } = await runApi((c) =>
+            c.files.list({ params: { id }, query: { path: dir } })
+          );
+          if (mounted.current) {
+            setExtra((prev) => ({
+              ...prev,
+              [dir]: entries.map(entryWirePath),
+            }));
+          }
+        } catch {
+          requested.current.delete(dir);
+        }
+      })();
+    },
+    [id]
+  );
+  const truncated = data?.truncated ?? false;
+  const dirNeedsChildren = useCallback(
+    (dir: string) => listingNeedsChildren(dir, truncated),
+    [truncated]
+  );
+  const paths = useMemo(
+    () => mergeTreePaths(data?.paths ?? [], extra),
+    [data, extra]
+  );
 
   if (!live) {
     return (
@@ -149,11 +240,16 @@ export const FilesBrowser = ({ id, live }: { id: number; live: boolean }) => {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1">
-        <Tree paths={data.paths} />
+        <Tree
+          paths={paths}
+          onLoadDirectory={loadDirectory}
+          needsChildren={dirNeedsChildren}
+        />
       </div>
       {data.truncated ? (
         <p className="text-muted-foreground shrink-0 border-t px-3 py-1.5 text-xs">
-          Only the first 4000 paths are shown.
+          Only the first 4000 paths are listed. Expanding a folder loads its
+          contents.
         </p>
       ) : null}
     </div>
