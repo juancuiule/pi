@@ -46,7 +46,9 @@ const CapacityPage = () => {
       }
       await act.mutateAsync({ id, action: "pause" });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      toast.error(error instanceof Error ? error.message : String(error), {
+        duration: Infinity,
+      });
     }
   };
 
@@ -129,7 +131,10 @@ const CapacityPage = () => {
                           disabled={cancelWait.isPending}
                           onClick={() =>
                             cancelWait.mutate(id, {
-                              onError: (error) => toast.error(error.message),
+                              onError: (error) =>
+                                toast.error(error.message, {
+                                  duration: Infinity,
+                                }),
                             })
                           }
                         >

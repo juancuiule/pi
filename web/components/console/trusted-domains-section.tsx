@@ -3,7 +3,7 @@
 // The domains an artifact page may load images from. A page's CSP only ever fetches images off-origin, and only
 // from these hosts; everything else (scripts, styles, fonts, network calls) stays blocked.
 import { Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { apiError } from "@/lib/api";
@@ -19,6 +19,8 @@ export const TrustedDomainsSection = () => {
   const remove = useRemoveDomain();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string>();
+  const [invalid, setInvalid] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
   return (
     <section
       aria-labelledby="trusted-domains-heading"
@@ -42,35 +44,55 @@ export const TrustedDomainsSection = () => {
           event.preventDefault();
           const domain = value.trim();
           if (domain === "") {
+            setInvalid(true);
+            setError("Enter a domain to trust.");
+            input.current?.focus();
             return;
           }
           setError(undefined);
           add.mutate(domain, {
             onSuccess: () => setValue(""),
-            onError: (mutationError) => setError(apiError(mutationError)),
+            onError: (mutationError) => {
+              setInvalid(true);
+              setError(apiError(mutationError));
+              input.current?.focus();
+            },
           });
         }}
       >
         <input
+          ref={input}
           type="text"
           value={value}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => {
+            setValue(event.target.value);
+            if (invalid) {
+              setInvalid(false);
+              setError(undefined);
+            }
+          }}
           placeholder="cdn.example.com or *.example.com"
           aria-label="Domain to trust"
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? "trusted-domain-error" : undefined}
           className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring h-7 min-w-0 flex-1 rounded-md border px-2 font-mono text-base outline-none focus-visible:ring-3 md:text-xs"
         />
         <Button
           type="submit"
           variant="outline"
           size="sm"
-          disabled={add.isPending || value.trim() === ""}
+          disabled={add.isPending}
         >
           <Plus aria-hidden className="size-3.5" />
           Add
         </Button>
       </form>
       {error === undefined ? null : (
-        <p className="text-destructive text-xs" role="alert">
+        <p
+          id="trusted-domain-error"
+          className="text-destructive text-xs"
+          role="alert"
+        >
           {error}
         </p>
       )}

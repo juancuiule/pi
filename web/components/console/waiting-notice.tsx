@@ -39,7 +39,8 @@ export const WaitingNotice = ({
         disabled={cancel.isPending}
         onClick={() =>
           cancel.mutate(conversation.id, {
-            onError: (error) => toast.error(error.message),
+            onError: (error) =>
+              toast.error(error.message, { duration: Infinity }),
           })
         }
       >

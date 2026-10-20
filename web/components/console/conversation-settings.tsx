@@ -36,7 +36,7 @@ export const ConversationSettings = ({
   const save = (change: SettingsChange, onSuccess?: () => void) =>
     configure.mutate(change, {
       onSuccess,
-      onError: (error) => toast.error(error.message),
+      onError: (error) => toast.error(error.message, { duration: Infinity }),
     });
 
   return (
@@ -86,7 +86,8 @@ export const ConversationSettings = ({
                       disabled={reset.isPending}
                       onClick={() =>
                         reset.mutate(undefined, {
-                          onError: (error) => toast.error(error.message),
+                          onError: (error) =>
+                            toast.error(error.message, { duration: Infinity }),
                         })
                       }
                     >

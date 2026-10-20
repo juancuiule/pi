@@ -138,7 +138,7 @@ export const NewConversation = ({
             current.trim() === "" ? text : `${text}\n\n${current}`
           );
           files.restore(drafts);
-          toast.error(error.message);
+          toast.error(error.message, { duration: Infinity });
         },
       }
     );
