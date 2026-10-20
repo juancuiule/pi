@@ -21,7 +21,7 @@ export const ToolList = ({ tools }: { tools: readonly ToolInfo[] }) => (
           {tool.name}
           {tool.approval ? (
             <span className="text-warning inline-flex items-center gap-0.5 font-sans">
-              <ShieldAlert aria-hidden className="size-3" />
+              <ShieldAlert aria-hidden className="size-3" strokeWidth={1.5} />
               needs approval
             </span>
           ) : null}
