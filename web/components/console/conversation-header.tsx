@@ -88,7 +88,7 @@ const ConversationTitle = ({
       { title },
       {
         onSuccess: () => setEditing(false),
-        onError: (error) => toast.error(error.message),
+        onError: (error) => toast.error(error.message, { duration: Infinity }),
       }
     );
   };
@@ -143,7 +143,8 @@ const ConversationTitle = ({
               disabled={noModel || generateTitle.isPending}
               onClick={() =>
                 generateTitle.mutate(undefined, {
-                  onError: (error) => toast.error(error.message),
+                  onError: (error) =>
+                    toast.error(error.message, { duration: Infinity }),
                 })
               }
             >
@@ -191,7 +192,7 @@ export const ConversationHeader = ({
   const run = (action: ConversationAction) => {
     act.mutate(
       { id: conversation.id, action },
-      { onError: (error) => toast.error(error.message) }
+      { onError: (error) => toast.error(error.message, { duration: Infinity }) }
     );
   };
 

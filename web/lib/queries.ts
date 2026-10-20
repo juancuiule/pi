@@ -297,7 +297,7 @@ export const useFeedback = (id: number) =>
   useMutation({
     mutationFn: (payload: { entry: number; value: 0 | 1; comment?: string }) =>
       runApi((c) => c.conversations.feedback({ params: { id }, payload })),
-    onError: (error) => toast.error(error.message),
+    onError: (error) => toast.error(error.message, { duration: Infinity }),
   });
 
 /** Report an assistant entry, scored on its run's trace; `comment` is required. */
@@ -305,7 +305,7 @@ export const useReport = (id: number) =>
   useMutation({
     mutationFn: (payload: { entry: number; comment: string }) =>
       runApi((c) => c.conversations.report({ params: { id }, payload })),
-    onError: (error) => toast.error(error.message),
+    onError: (error) => toast.error(error.message, { duration: Infinity }),
   });
 
 /** Each Capacity resource's limit, holders and waiters; polled for the agent's waiting Upgrade. */

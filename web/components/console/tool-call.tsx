@@ -159,7 +159,7 @@ const ApprovalActions = ({ approvalKey }: { approvalKey: string }) => {
   const decide = (decision: ApprovalChoice) => {
     approvalMutation?.mutate(
       { key: approvalKey, decision },
-      { onError: (error) => toast.error(error.message) }
+      { onError: (error) => toast.error(error.message, { duration: Infinity }) }
     );
   };
   return (

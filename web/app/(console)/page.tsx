@@ -80,7 +80,10 @@ const ArchivedNotice = ({ id, onNew }: { id: number; onNew: () => void }) => {
         onClick={() =>
           act.mutate(
             { id, action: "unarchive" },
-            { onError: (error) => toast.error(error.message) }
+            {
+              onError: (error) =>
+                toast.error(error.message, { duration: Infinity }),
+            }
           )
         }
       >

@@ -3,7 +3,7 @@
 // A skill folder's text files, edited in place: SKILL.md (frontmatter included) first, then each bundled file.
 // Saving writes the whole folder — org skills under SKILLS_ORG_DIR, shadowing a builtin of the same name.
 import { Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import {
   AlertDialog,
@@ -75,7 +75,13 @@ export const SkillEditor = ({
   // The folder's text files once the person has touched them; until then, the loaded or seeded copy.
   const [edited, setEdited] = useState<Record<string, string> | undefined>();
   const [newFile, setNewFile] = useState("");
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<{
+    field?: "name" | "file";
+    message: string;
+  }>();
+  const errorId = useId();
+  const nameInput = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const creating = name === undefined;
   const files =
     edited ?? (creating ? { [SKILL_MD]: SKELETON } : (data?.files ?? {}));
@@ -93,15 +99,27 @@ export const SkillEditor = ({
       Object.fromEntries(Object.entries(files).filter(([key]) => key !== file))
     );
   const destructive = destructiveAction(origin, name);
+  const invalid = (field: "name" | "file") =>
+    error?.field === field || undefined;
+  const describedBy = (field: "name" | "file") =>
+    error?.field === field ? errorId : undefined;
   return (
     <div className="flex flex-col gap-3">
       {creating ? (
         <input
+          ref={nameInput}
           type="text"
           value={skillName}
-          onChange={(event) => setSkillName(event.target.value)}
+          onChange={(event) => {
+            setSkillName(event.target.value);
+            if (error?.field === "name") {
+              setError(undefined);
+            }
+          }}
           placeholder="skill-name"
           aria-label="Skill name"
+          aria-invalid={invalid("name")}
+          aria-describedby={describedBy("name")}
           className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring h-7 w-56 rounded-md border px-2 font-mono text-base outline-none focus-visible:ring-3 md:text-xs"
         />
       ) : (
@@ -151,55 +169,75 @@ export const SkillEditor = ({
           event.preventDefault();
           const file = newFile.trim();
           if (file === "") {
+            setError({ field: "file", message: "Enter a file path to add." });
+          } else if (file in files) {
+            setError({
+              field: "file",
+              message: `A file named ${file} already exists.`,
+            });
+          } else {
+            setError(undefined);
+            setEdited({ ...files, [file]: "" });
+            setNewFile("");
             return;
           }
-          if (file in files) {
-            setError(`A file named ${file} already exists.`);
-            return;
-          }
-          setError(undefined);
-          setEdited({ ...files, [file]: "" });
-          setNewFile("");
+          fileInput.current?.focus();
         }}
       >
         <input
+          ref={fileInput}
           type="text"
           value={newFile}
-          onChange={(event) => setNewFile(event.target.value)}
+          onChange={(event) => {
+            setNewFile(event.target.value);
+            if (error?.field === "file") {
+              setError(undefined);
+            }
+          }}
           placeholder="references/guide.md"
           aria-label="New file path"
+          aria-invalid={invalid("file")}
+          aria-describedby={describedBy("file")}
           disabled={busy}
           className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring h-7 min-w-0 flex-1 rounded-md border px-2 font-mono text-base outline-none focus-visible:ring-3 md:text-xs"
         />
-        <Button
-          type="submit"
-          variant="outline"
-          size="sm"
-          disabled={busy || newFile.trim() === ""}
-        >
+        <Button type="submit" variant="outline" size="sm" disabled={busy}>
           <Plus aria-hidden className="size-3.5" />
           Add file
         </Button>
       </form>
       {error === undefined ? null : (
-        <p className="text-destructive text-xs" role="alert">
-          {error}
+        <p id={errorId} className="text-destructive text-xs" role="alert">
+          {error.message}
         </p>
       )}
       <div className="flex items-center gap-2">
         <Button
           variant="outline"
           size="sm"
-          disabled={
-            busy || binary.length > 0 || (creating && skillName.trim() === "")
-          }
+          disabled={busy}
           onClick={() => {
+            if (binary.length > 0) {
+              setError({
+                message: `Cannot save — ${binary.join(", ")} would be dropped.`,
+              });
+              return;
+            }
+            if (creating && skillName.trim() === "") {
+              setError({
+                field: "name",
+                message: "Enter a skill name before saving.",
+              });
+              nameInput.current?.focus();
+              return;
+            }
             setError(undefined);
             save.mutate(
               { name: name ?? skillName.trim(), files },
               {
                 onSuccess: onDone,
-                onError: (mutationError) => setError(apiError(mutationError)),
+                onError: (mutationError) =>
+                  setError({ message: apiError(mutationError) }),
               }
             );
           }}
@@ -234,7 +272,7 @@ export const SkillEditor = ({
                     remove.mutate(name ?? "", {
                       onSuccess: onDone,
                       onError: (mutationError) =>
-                        setError(apiError(mutationError)),
+                        setError({ message: apiError(mutationError) }),
                     });
                   }}
                 >

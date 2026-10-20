@@ -75,7 +75,7 @@ export const ConversationActions = ({
       { id: conversation.id, action },
       {
         onSuccess: () => onDone?.(),
-        onError: (error) => toast.error(error.message),
+        onError: (error) => toast.error(error.message, { duration: Infinity }),
       }
     );
   };
@@ -147,7 +147,10 @@ export const ConversationActions = ({
                 onClick={() =>
                   upgrade.mutate(
                     { id: conversation.id, level },
-                    { onError: (error) => toast.error(error.message) }
+                    {
+                      onError: (error) =>
+                        toast.error(error.message, { duration: Infinity }),
+                    }
                   )
                 }
               >
