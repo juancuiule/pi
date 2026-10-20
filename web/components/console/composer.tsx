@@ -257,7 +257,10 @@ export const Composer = ({
                 />
                 /skill:{option.name}
               </span>
-              <span className="text-muted-foreground line-clamp-2 text-xs">
+              <span
+                className="text-muted-foreground line-clamp-2 text-xs leading-normal"
+                title={option.description}
+              >
                 {option.description}
               </span>
             </button>

@@ -91,7 +91,7 @@ const QuestionField = ({
       onChange={(event) =>
         onChange(setOther(draft, question, event.target.value))
       }
-      className="border-input focus-visible:border-ring focus-visible:ring-ring/50 bg-background mt-1 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus-visible:ring-3"
+      className="border-input focus-visible:border-ring focus-visible:ring-ring/50 bg-background mt-1 w-full rounded-md border px-2.5 py-1.5 text-base outline-none focus-visible:ring-3 md:text-sm"
     />
   ) : null;
 

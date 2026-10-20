@@ -72,7 +72,10 @@ const ArtifactsPage = () => {
               >
                 <ArtifactThumb artifact={artifact} />
                 <span className="flex min-w-0 items-baseline gap-2 px-1">
-                  <span className="min-w-0 flex-1 truncate text-sm">
+                  <span
+                    className="min-w-0 flex-1 truncate text-sm"
+                    title={artifact.title}
+                  >
                     {artifact.title}
                   </span>
                   <span className="text-muted-foreground shrink-0 text-xs">

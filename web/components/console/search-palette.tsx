@@ -239,7 +239,7 @@ export const SearchPalette = ({
               setSelected(0);
             }}
             onKeyDown={onKeyDown}
-            className="placeholder:text-muted-foreground h-11 min-w-0 flex-1 bg-transparent text-sm outline-none"
+            className="placeholder:text-muted-foreground h-11 min-w-0 flex-1 bg-transparent text-base outline-none md:text-sm"
           />
           <kbd className="bg-muted text-tiny text-muted-foreground rounded border px-1 py-0.5 font-sans">
             esc

@@ -105,6 +105,7 @@ export const ArtifactCard = ({
             "text-foreground block truncate text-sm font-medium",
             failed && "text-destructive"
           )}
+          title={title}
         >
           {title}
         </span>

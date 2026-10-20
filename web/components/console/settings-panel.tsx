@@ -51,7 +51,7 @@ const Row = ({
         {label}
       </span>
       {hint === undefined || hint === "" ? null : (
-        <span className="text-muted-foreground line-clamp-2 text-xs">
+        <span className="text-muted-foreground text-xs leading-normal">
           {hint}
         </span>
       )}

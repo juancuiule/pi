@@ -57,7 +57,7 @@ export const TrustedDomainsSection = () => {
           onChange={(event) => setValue(event.target.value)}
           placeholder="cdn.example.com or *.example.com"
           aria-label="Domain to trust"
-          className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-7 min-w-0 flex-1 rounded-md border px-2 font-mono text-xs outline-none focus-visible:ring-3"
+          className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-7 min-w-0 flex-1 rounded-md border px-2 font-mono text-base outline-none focus-visible:ring-3 md:text-xs"
         />
         <Button
           type="submit"
@@ -83,7 +83,10 @@ export const TrustedDomainsSection = () => {
       <ul className="flex flex-col gap-0.5">
         {domains?.map((domain) => (
           <li key={domain} className="flex items-center gap-1.5">
-            <span className="min-w-0 flex-1 truncate font-mono text-xs">
+            <span
+              className="min-w-0 flex-1 truncate font-mono text-xs"
+              title={domain}
+            >
               {domain}
             </span>
             <Button

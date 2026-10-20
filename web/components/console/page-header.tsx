@@ -27,7 +27,7 @@ export const PageHeader = ({
       >
         <Menu />
       </Button>
-      <h1 className="text-sm font-medium">{title}</h1>
+      <h1 className="font-heading text-base font-semibold">{title}</h1>
       {children}
     </header>
   );

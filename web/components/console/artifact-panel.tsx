@@ -196,6 +196,7 @@ export const ArtifactPanel = ({
     }
   }
   const shown = picked ?? latest;
+  const pageTitle = data?.title ?? "Page";
   const [tab, setTab] = useState<"page" | "code">("page");
   const versions = data?.versions ?? [];
 
@@ -215,7 +216,7 @@ export const ArtifactPanel = ({
       body = (
         <ArtifactFrame
           src={artifactRenderUrl(conversation, artifact.id, shown)}
-          title={data?.title ?? "Page"}
+          title={pageTitle}
         />
       );
     }
@@ -231,15 +232,18 @@ export const ArtifactPanel = ({
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
         <LayoutTemplate className="text-muted-foreground size-4 shrink-0" />
-        <span className="text-ui min-w-0 flex-1 truncate font-medium">
-          {data?.title ?? "Page"}
+        <span
+          className="text-ui min-w-0 flex-1 truncate font-medium"
+          title={pageTitle}
+        >
+          {pageTitle}
         </span>
         {versions.length === 0 || shown === undefined ? null : (
           <select
             aria-label="Version"
             value={shown}
             onChange={(event) => setPicked(Number(event.target.value))}
-            className="text-muted-foreground bg-background h-7 shrink-0 rounded-md border px-1.5 text-xs"
+            className="text-muted-foreground bg-background h-7 shrink-0 rounded-md border px-1.5 text-base md:text-xs"
           >
             {versions.toReversed().map((version) => (
               <option key={version.version} value={version.version}>
