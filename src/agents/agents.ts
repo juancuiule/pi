@@ -72,6 +72,7 @@ import {
 } from "../attachments/attachments.ts";
 import type { LoadedAttachment } from "../attachments/attachments.ts";
 import { escapeAttachmentTags, formatBlocks } from "../attachments/format.ts";
+import type { Attention } from "../attention.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, ClaimCancelled } from "../capacity.ts";
 import type {
@@ -135,6 +136,7 @@ import { WebSearch, webSearchExtension } from "../web-search/web-search.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
 import type { StorageRef } from "../workspaces/workspaces.ts";
 import { queueIfBusy, redecideQueuedMode } from "./admission.ts";
+import { attentionOf } from "./attention.ts";
 import {
   applyChange,
   changesBetween,
@@ -664,6 +666,13 @@ export class Agents extends Context.Service<
       Stream.Stream<EntryRecord, AgentError>,
       AgentError | ConversationNotFound
     >;
+    /**
+     * Why the conversation's most recent settled input needs the person, if it ended badly.
+     * Derived, seatless; a newer settled input supersedes, so there is no flag to clear.
+     */
+    attention(
+      id: ConversationId
+    ): Effect.Effect<Attention | undefined, AgentError | ConversationNotFound>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -2348,6 +2357,13 @@ export class Agents extends Context.Service<
           );
         });
 
+        const attention = Effect.fn("Agents.attention")(function* (
+          id: ConversationId
+        ) {
+          yield* handleOf(id);
+          return yield* attempt(() => attentionOf(durableStorage, id, context));
+        });
+
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
         ) {
@@ -2856,6 +2872,7 @@ export class Agents extends Context.Service<
           history,
           entryTrace,
           entries,
+          attention,
           renameTitle,
           autoTitle,
           generateTitle,

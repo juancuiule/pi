@@ -13,8 +13,9 @@ const DOT_CLASS: Record<DotStatus, string> = {
 
 /**
  * The conversation's state as a colored circle, before its title in the sidebar: green while the Seat is up
- * (running or idle), yellow while it waits for a decision or answers, red when the server lost it, gray when
- * paused or archived. `title` gives a native tooltip; the label repeats in sr-only text for screen readers.
+ * (running or idle), yellow while it waits for a decision or answers, red when the server lost it or its
+ * last run ended badly, gray when paused or archived. `title` gives a native tooltip; the label repeats
+ * in sr-only text for screen readers.
  */
 export const StatusDot = ({
   conversation,
@@ -22,7 +23,10 @@ export const StatusDot = ({
   resuming = false,
   className,
 }: {
-  conversation: Pick<ConversationSummary, "status" | "pendingApprovals">;
+  conversation: Pick<
+    ConversationSummary,
+    "status" | "pendingApprovals" | "attention"
+  >;
   /** The server's stream reported the conversation gone — the red reserved state. */
   ended?: boolean;
   /** A resume is in flight while the summary still reads paused. */
