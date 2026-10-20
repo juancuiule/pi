@@ -28,7 +28,7 @@ const Snippet = ({ segments }: { segments: readonly SnippetSegment[] }) =>
       // oxlint-disable-next-line react/no-array-index-key -- snippet segments have no identity beyond their order
       <mark
         key={index}
-        className="bg-warning/30 rounded-sm px-0.5 text-inherit"
+        className="bg-search-match/30 rounded-sm px-0.5 text-inherit"
       >
         {segment.text}
       </mark>

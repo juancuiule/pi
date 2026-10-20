@@ -103,7 +103,7 @@ export const DraftChip = ({
         type="button"
         aria-label={`Remove ${draft.name}`}
         onClick={onRemove}
-        className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 relative ml-auto shrink-0 rounded-md p-1 outline-none after:absolute after:-inset-1.5 focus-visible:ring-2"
+        className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring relative ml-auto shrink-0 rounded-md p-1 outline-none after:absolute after:-inset-1.5 focus-visible:ring-2"
       >
         <X aria-hidden className="size-3.5" />
       </button>
@@ -142,7 +142,7 @@ export const SentChip = ({
         title={`View ${attachment.name}`}
         className={cn(
           chipClass,
-          "hover:bg-muted focus-visible:ring-ring/50 pr-2.5 text-left outline-none focus-visible:ring-2"
+          "hover:bg-muted focus-visible:ring-ring pr-2.5 text-left outline-none focus-visible:ring-2"
         )}
       >
         {attachment.kind === "image" ? (

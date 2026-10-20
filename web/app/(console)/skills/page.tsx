@@ -75,7 +75,7 @@ const SkillsPage = () => {
               <li key={skill.name}>
                 <Collapsible.Root>
                   <h2 className="text-sm font-medium">
-                    <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
+                    <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
                       <ChevronRight
                         aria-hidden
                         className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90"

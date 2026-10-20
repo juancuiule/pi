@@ -6,7 +6,7 @@ import type { AttentionReason, ConversationSummary } from "effect-pi/api";
 /** The state a status dot reads: the strongest signal wins — lost beats waiting, waiting beats live. */
 export type DotStatus = "error" | "waiting" | "live" | "paused";
 
-const ATTENTION_LABEL: Record<AttentionReason, string> = {
+export const ATTENTION_LABEL: Record<AttentionReason, string> = {
   faulted: "Run failed",
   model_error: "Model error",
   no_model: "No model configured",

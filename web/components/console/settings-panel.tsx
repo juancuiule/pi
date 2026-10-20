@@ -107,7 +107,7 @@ export const SettingsPanel = ({
                 {extension.tools.length === 0 ? null : (
                   <Collapsible.Trigger
                     aria-label={`${extension.name} tools`}
-                    className="hover:bg-muted focus-visible:ring-ring/50 group text-muted-foreground flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs outline-none focus-visible:ring-2"
+                    className="hover:bg-muted focus-visible:ring-ring group text-muted-foreground flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs outline-none focus-visible:ring-2"
                   >
                     {extension.tools.filter((tool) => tool.enabled).length}/
                     {extension.tools.length} tools

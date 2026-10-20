@@ -68,7 +68,7 @@ const ArtifactsPage = () => {
                 aria-current={
                   open?.artifact.id === artifact.id ? "page" : undefined
                 }
-                className="focus-visible:ring-ring/50 group flex flex-col gap-1.5 rounded-md outline-none focus-visible:ring-2"
+                className="focus-visible:ring-ring group flex flex-col gap-1.5 rounded-md outline-none focus-visible:ring-2"
               >
                 <ArtifactThumb artifact={artifact} />
                 <span className="flex min-w-0 items-baseline gap-2 px-1">
@@ -87,7 +87,7 @@ const ArtifactsPage = () => {
               </Link>
               <Link
                 href={`/?c=${artifact.conversation}`}
-                className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 w-fit max-w-full truncate rounded-md px-1 text-xs outline-none focus-visible:ring-2"
+                className="text-muted-foreground hover:text-foreground focus-visible:ring-ring w-fit max-w-full truncate rounded-md px-1 text-xs outline-none focus-visible:ring-2"
                 title={conversationTitleOf(
                   conversations,
                   artifact.conversation

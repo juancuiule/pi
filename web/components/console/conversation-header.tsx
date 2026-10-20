@@ -120,14 +120,14 @@ const ConversationTitle = ({
                 commit();
               }
             }}
-            className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-6 w-full min-w-0 rounded-md border px-1.5 text-base font-medium outline-none focus-visible:ring-3 md:text-sm"
+            className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring h-6 w-full min-w-0 rounded-md border px-1.5 text-base font-medium outline-none focus-visible:ring-3 md:text-sm"
           />
         ) : (
           <button
             type="button"
             title={conversation.title}
             onClick={startEditing}
-            className="focus-visible:ring-ring/50 block w-full truncate rounded-sm text-left outline-none focus-visible:ring-2"
+            className="focus-visible:ring-ring block w-full truncate rounded-sm text-left outline-none focus-visible:ring-2"
           >
             {conversation.title}
           </button>

@@ -385,7 +385,7 @@ const UntrustedImage = ({
         type="button"
         onClick={() => setShown(true)}
         title={src}
-        className="bg-background text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 inline-flex items-center gap-1 rounded-md border px-1.5 align-baseline text-xs outline-none focus-visible:ring-2"
+        className="bg-background text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-1 rounded-md border px-1.5 align-baseline text-xs outline-none focus-visible:ring-2"
       >
         <ImageIcon aria-hidden className="size-3" />
         Show image
