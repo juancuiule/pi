@@ -102,7 +102,7 @@ export const SkillEditor = ({
           onChange={(event) => setSkillName(event.target.value)}
           placeholder="skill-name"
           aria-label="Skill name"
-          className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-7 w-56 rounded-md border px-2 font-mono text-xs outline-none focus-visible:ring-3"
+          className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-7 w-56 rounded-md border px-2 font-mono text-base outline-none focus-visible:ring-3 md:text-xs"
         />
       ) : (
         <p className="text-muted-foreground text-xs">
@@ -169,7 +169,7 @@ export const SkillEditor = ({
           placeholder="references/guide.md"
           aria-label="New file path"
           disabled={busy}
-          className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-7 min-w-0 flex-1 rounded-md border px-2 font-mono text-xs outline-none focus-visible:ring-3"
+          className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-7 min-w-0 flex-1 rounded-md border px-2 font-mono text-base outline-none focus-visible:ring-3 md:text-xs"
         />
         <Button
           type="submit"

@@ -27,7 +27,7 @@ export const ToolList = ({ tools }: { tools: readonly ToolInfo[] }) => (
           ) : null}
         </span>
         {tool.description === "" ? null : (
-          <span className="text-muted-foreground line-clamp-3 text-xs">
+          <span className="text-muted-foreground text-xs leading-normal">
             {tool.description}
           </span>
         )}
@@ -154,7 +154,7 @@ export const McpServersSection = ({
                     <li key={tool.name} className="flex flex-col gap-0.5">
                       <span className="font-mono text-xs">{tool.name}</span>
                       {tool.description === "" ? null : (
-                        <span className="text-muted-foreground line-clamp-3 text-xs">
+                        <span className="text-muted-foreground text-xs leading-normal">
                           {tool.description}
                         </span>
                       )}

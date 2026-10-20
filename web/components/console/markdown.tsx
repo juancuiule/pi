@@ -412,7 +412,7 @@ export const Markdown = ({
   untrusted?: boolean;
   components?: Components;
 }) => (
-  <div className={cn("text-prose", className)}>
+  <div className={cn("text-prose max-w-[65ch]", className)}>
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       // Without rehype-raw raw HTML shows as text; sanitize keeps <img>/<a> as elements for the overrides while killing scripts, media and handlers.
