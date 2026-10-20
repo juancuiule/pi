@@ -58,7 +58,12 @@ const ArtifactsPage = () => {
     <ScrollArea className="h-full">
       <div className="mx-auto flex w-full max-w-3xl flex-col px-4 py-6">
         {artifacts !== undefined && artifacts.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No artifacts yet.</p>
+          <div>
+            <p className="text-muted-foreground text-sm">No artifacts yet</p>
+            <p className="text-muted-foreground mt-0.5 text-xs">
+              Pages the agent writes appear here.
+            </p>
+          </div>
         ) : null}
         <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {artifacts?.map((artifact) => (

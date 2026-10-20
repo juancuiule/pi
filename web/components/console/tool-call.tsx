@@ -166,7 +166,7 @@ const ApprovalActions = ({ approvalKey }: { approvalKey: string }) => {
     <div className="flex flex-wrap gap-2">
       {(
         [
-          ["approve", "Run", "default"],
+          ["approve", "Run once", "default"],
           ["always", "Always allow", "outline"],
           ["deny", "Deny", "destructive"],
         ] as const

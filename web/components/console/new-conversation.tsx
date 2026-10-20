@@ -151,7 +151,7 @@ export const NewConversation = ({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Conversations"
+          aria-label="Menu"
           className="absolute top-3 left-3 md:hidden"
           onClick={openMenu}
         >
@@ -173,7 +173,7 @@ export const NewConversation = ({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Conversations"
+          aria-label="Menu"
           className="absolute top-3 left-3 md:hidden"
           onClick={openMenu}
         >
@@ -247,8 +247,8 @@ export const NewConversation = ({
               Ask before running commands
             </span>
             <span className="text-muted-foreground text-xs">
-              You approve each command, file change and desktop action, and the
-              agent asking for a bigger machine.
+              You approve each command, file change and desktop action. The
+              agent also asks before upgrading to a shell or desktop sandbox.
             </span>
           </span>
         </div>

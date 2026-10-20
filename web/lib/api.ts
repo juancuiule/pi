@@ -42,7 +42,7 @@ const uploadError = (error: object & { _tag: unknown }): string | undefined => {
       // An upload over the size limit is cut off while it streams, with no error body.
       return responseStatus(error) === 413
         ? "The file is too large to upload."
-        : "The request failed.";
+        : "The request failed. Try again.";
     }
     default: {
       return undefined;
@@ -136,6 +136,18 @@ export class ApiFailureError extends Error {
     this.failure = failure;
   }
 }
+
+/** Whether `error` is the generic request failure above, for call sites that can name it better. */
+export const isGenericRequestFailure = (error: unknown): boolean => {
+  const failure = error instanceof ApiFailureError ? error.failure : error;
+  return (
+    typeof failure === "object" &&
+    failure !== null &&
+    "_tag" in failure &&
+    failure._tag === "HttpClientError" &&
+    responseStatus(failure) !== 413
+  );
+};
 
 export interface CapacityShortage {
   readonly resource: "seat" | "shell" | "desktop";

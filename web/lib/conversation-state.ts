@@ -548,7 +548,7 @@ export const applyEvent = (
     case "task_failed": {
       return {
         ...state,
-        failures: [...state.failures, `${event.kind}: ${event.message}`],
+        failures: [...state.failures, event.message],
       };
     }
     default: {

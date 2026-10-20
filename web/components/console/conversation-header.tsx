@@ -222,7 +222,7 @@ export const ConversationHeader = ({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Conversations"
+          aria-label="Menu"
           className="md:hidden"
           onClick={openMenu}
         >

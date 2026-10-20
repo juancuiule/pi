@@ -66,9 +66,12 @@ const SkillsPage = () => {
             </Button>
           )}
           {data?.skills.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No skills installed.
-            </p>
+            <div>
+              <p className="text-muted-foreground text-sm">No skills yet</p>
+              <p className="text-muted-foreground mt-0.5 text-xs">
+                Create one, or the agent can save one from a conversation.
+              </p>
+            </div>
           ) : null}
           <ul className="flex flex-col gap-1">
             {data?.skills.map((skill) => (

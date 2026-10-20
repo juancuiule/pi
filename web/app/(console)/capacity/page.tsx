@@ -10,7 +10,12 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { CapacityShortage } from "@/lib/api";
 import { conversationTitleOf } from "@/lib/artifacts";
-import { holdersOf, shortageText, waitingShortage } from "@/lib/capacity";
+import {
+  holdersOf,
+  shortageText,
+  WAITING_FOR,
+  waitingShortage,
+} from "@/lib/capacity";
 import { useMakeRoom } from "@/lib/capacity-context";
 import {
   useCancelWait,
@@ -23,12 +28,6 @@ const SECTION_LABEL = {
   seat: "Seats",
   shell: "Shell sandboxes",
   desktop: "Desktop sandboxes",
-} as const;
-
-const WAIT_LABEL = {
-  seat: "a seat",
-  shell: "a shell sandbox",
-  desktop: "a desktop sandbox",
 } as const;
 
 const CapacityPage = () => {
@@ -113,7 +112,7 @@ const CapacityPage = () => {
                             {title}
                           </span>
                           <span className="text-muted-foreground text-xs">
-                            Waiting for {WAIT_LABEL[resource.resource]}
+                            Waiting for {WAITING_FOR[resource.resource]}
                           </span>
                         </span>
                         {waiting === undefined ? null : (

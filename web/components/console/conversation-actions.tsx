@@ -69,6 +69,7 @@ export const ConversationActions = ({
   const { status } = conversation;
   const hasSeat = status === "running" || status === "idle";
   const hasSandbox = conversation.sandbox !== "none";
+  const archiveLabel = hasSandbox ? "Archive and delete files" : "Archive";
 
   const run = (action: ConversationAction, onDone?: () => void) => {
     act.mutate(
@@ -214,7 +215,7 @@ export const ConversationActions = ({
               variant="destructive"
               onClick={() => run("archive", () => setConfirming(false))}
             >
-              {act.isPending ? "Archiving…" : "Archive"}
+              {act.isPending ? "Archiving…" : archiveLabel}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

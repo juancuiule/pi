@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { runApi } from "./api";
+import { isGenericRequestFailure, runApi } from "./api";
 import type { DraftAttachment } from "./attachments";
 
 const upload = (file: File, conversation: number | undefined) => {
@@ -12,6 +12,14 @@ const upload = (file: File, conversation: number | undefined) => {
     payload.append("conversation", String(conversation));
   }
   return runApi((c) => c.attachments.upload({ payload }));
+};
+
+/** A failed upload's status on its chip: the server's reason when it gave one, else how to retry. */
+const uploadFailure = (error: unknown): string => {
+  if (isGenericRequestFailure(error)) {
+    return "Couldn't upload the file. Remove it and try again.";
+  }
+  return error instanceof Error ? error.message : String(error);
 };
 
 /** Delete an unsent upload; the server refuses sent ones, and one that cannot be deleted now expires anyway. */
@@ -75,7 +83,7 @@ export const useDraftAttachments = (conversation?: number) => {
         key,
         name: file.name,
         state: "failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: uploadFailure(error),
       });
     }
   };
