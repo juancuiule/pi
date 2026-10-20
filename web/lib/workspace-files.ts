@@ -1,6 +1,7 @@
 // Workspace files in the console: the files inside a conversation's Sandbox, listed and read through
 // GET /api/conversations/:id/files* (src/server/handlers.ts). Text is shown highlighted, Markdown also
 // rendered, and binaries are only described — the file pane never executes a workspace file.
+import type { WorkspaceFileEntry } from "effect-pi/api";
 
 /** A workspace file opened in the file pane, by the path the agent used. */
 export interface OpenFile {
@@ -72,3 +73,58 @@ export const isMarkdown = (path: string): boolean => {
   const ext = extensionOf(path);
   return ext === "md" || ext === "markdown";
 };
+
+/**
+ * Directory names the tree listing shows but never descends. Mirrors TREE_SKIP_DESCEND in
+ * src/server/handlers.ts: the skip is by name at any depth, so a directory inside one of these
+ * subtrees is absent from the listing like its root.
+ */
+const MARKERS: ReadonlySet<string> = new Set([".git", "node_modules"]);
+
+/**
+ * Whether the tree listing can be missing a directory's children: the whole listing was
+ * truncated, or the directory sits inside a marker subtree the server never descends.
+ */
+export const needsChildren = (dir: string, truncated: boolean): boolean =>
+  truncated || dir.split("/").some((segment) => MARKERS.has(segment));
+
+/** A directory's lazily fetched children and whether the endpoint cut its listing short. */
+export interface TreeChildren {
+  readonly paths: readonly string[];
+  readonly truncated: boolean;
+}
+
+/** A directory listing entry as a tree wire path: directories carry the trailing "/". */
+export const entryWirePath = (entry: WorkspaceFileEntry): string =>
+  entry.kind === "directory" ? `${entry.path}/` : entry.path;
+
+/**
+ * The listing's wire paths plus fetched directory children, deduped. A directory's children join
+ * only while the directory itself is still listed, so a delete drops them again.
+ */
+export const mergeTreePaths = (
+  paths: readonly string[],
+  extra: Readonly<Record<string, TreeChildren>>
+): string[] => {
+  const listed = new Set(paths);
+  const merged = new Set(paths);
+  for (const [dir, { paths: children }] of Object.entries(extra)) {
+    if (!listed.has(`${dir}/`)) {
+      continue;
+    }
+    for (const child of children) {
+      merged.add(child);
+    }
+  }
+  return [...merged];
+};
+
+/** The directories whose fetched listing the endpoint cut short. */
+export const cappedDirs = (
+  extra: Readonly<Record<string, TreeChildren>>
+): ReadonlySet<string> =>
+  new Set(
+    Object.entries(extra)
+      .filter(([, { truncated }]) => truncated)
+      .map(([dir]) => dir)
+  );

@@ -720,7 +720,7 @@ const FileGroup = HttpApiGroup.make("files").add(
     }),
     error: [NotFound, NoWorkspaceFile, NoSandbox],
   }),
-  // The whole Workspace as one path list for the console's file tree: display order, directories with a
+  // The whole Workspace as one path list for the console's file tree: breadth-first, directories with a
   // trailing "/", 4000 paths at most.
   HttpApiEndpoint.get("tree", "/conversations/:id/files/tree", {
     params: ById,

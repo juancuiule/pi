@@ -1227,8 +1227,8 @@ describe("HTTP API", () => {
     ]);
     expect(result.tree).toStrictEqual({
       truncated: false,
-      // Depth-first, directories first, a trailing "/" on directories.
-      paths: ["sub/", "sub/notes.txt", "blob.bin", "REPORT.md"],
+      // Breadth-first: each level's entries before the next's, directories first, a trailing "/" on directories.
+      paths: ["sub/", "blob.bin", "REPORT.md", "sub/notes.txt"],
     });
     expect([result.report, result.deep, result.binary]).toStrictEqual([
       {
@@ -1267,6 +1267,56 @@ describe("HTTP API", () => {
       "SandboxUnavailable",
     ]);
   });
+
+  // Issue #65: a depth-first walk let one deep bulk subtree consume the whole 4000-path budget, so a
+  // clone's vendored dependencies hid the workspace's own code from the Files tab.
+  it("keeps shallow paths reachable when the tree exceeds the path cap", async () => {
+    const agents = fauxAgents([fauxAssistantMessage([fauxText("hi")])]);
+    const tree = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "shell", prompt: "hi" },
+        });
+        const [dir] = [...agents.sandboxes.stored];
+        if (dir === undefined) {
+          return yield* Effect.die(new Error("no workspace storage"));
+        }
+        const bulk = path.join(dir, "bulk", "deep", "nested");
+        mkdirSync(bulk, { recursive: true });
+        for (let i = 0; i < 4100; i += 1) {
+          writeFileSync(
+            path.join(bulk, `f${String(i).padStart(4, "0")}.txt`),
+            "x"
+          );
+        }
+        mkdirSync(path.join(dir, "src"));
+        writeFileSync(path.join(dir, "src", "app.ts"), "app\n");
+        writeFileSync(path.join(dir, "README.md"), "readme\n");
+        mkdirSync(path.join(dir, "node_modules", "pkg"), { recursive: true });
+        writeFileSync(path.join(dir, "node_modules", "pkg", "index.js"), "x");
+        mkdirSync(path.join(dir, ".git"));
+        writeFileSync(path.join(dir, ".git", "config"), "x");
+        return yield* client.files.tree({ params: { id: created.id } });
+      }).pipe(Effect.provide(serverWith(agents.layer)))
+    );
+    expect(tree.truncated).toBeTruthy();
+    // The workspace's own code stays listed: shallow paths are enumerated before deep bulk.
+    expect(tree.paths).toStrictEqual(
+      expect.arrayContaining(["src/", "src/app.ts", "README.md"])
+    );
+    // `.git` and `node_modules` show as markers but are never descended.
+    expect(tree.paths).toStrictEqual(
+      expect.arrayContaining([".git/", "node_modules/"])
+    );
+    expect(
+      tree.paths.some(
+        (p) =>
+          (p !== ".git/" && p.startsWith(".git/")) ||
+          (p !== "node_modules/" && p.startsWith("node_modules/"))
+      )
+    ).toBeFalsy();
+  }, 30_000);
 
   it("lists every conversation's artifacts without a scope, each carrying its conversation", async () => {
     const agents = fauxAgents([

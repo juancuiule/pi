@@ -15,7 +15,7 @@ import type {
   Result,
 } from "@earendil-works/pi-durable/env";
 import type { Schema } from "effect";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
 import { HttpServerResponse } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 
@@ -412,6 +412,15 @@ const FILE_TEXT_MAX = 256 * 1024;
 const FILE_LIST_MAX = 500;
 /** The paths one tree listing serves at most; a bigger Workspace answers its first part with `truncated`. */
 const FILE_TREE_MAX = 4000;
+/** Directory names the tree lists as markers but never descends: bulk no one browses. */
+const TREE_SKIP_DESCEND: ReadonlySet<string> = new Set([
+  ".git",
+  "node_modules",
+]);
+
+/** The Workspace-relative path of an entry inside `dir`; the root's own entries are bare names. */
+const relPath = (dir: string, name: string): string =>
+  dir === "" ? name : `${dir}/${name}`;
 
 /** Directories first, then names — the Files tab's order. */
 const byKindThenName = (
@@ -573,35 +582,51 @@ const FilesHandlers = HttpApiBuilder.group(
         Effect.gen(function* () {
           const env = yield* envOf(params.id);
           const root = yield* rootOf(env);
-          const paths: string[] = [];
-          let hit = false;
-          // Depth-first, directories first at each level — the order the console's tree renders.
-          // Symlinked directories are not descended: a link could cycle or point outside.
-          const walk: (
-            dir: string
-          ) => Effect.Effect<void, WorkspaceFileNotFound> = Effect.fnUntraced(
-            function* (dir: string) {
-              const entries = yield* fileCall(
+          // Breadth-first: a listing that hits the cap is cut inside the deepest entries, not the
+          // first-sorted subtree, so shallow paths always appear. Each page is one directory's
+          // entries and the state is the queue left to descend; symlinked directories are never
+          // descended (`listDir` reports them `symlink`, never `directory`): a link could cycle or
+          // point outside.
+          const listing = Stream.paginate(
+            [""] as readonly string[],
+            (queue) => {
+              const [dir, ...rest] = queue;
+              return fileCall(
                 dir === "" ? "/" : dir,
                 env.listDir(dir === "" ? root : `${root}/${dir}`, context)
+              ).pipe(
+                Effect.map((entries) => {
+                  const sorted = entries.toSorted(byKindThenName);
+                  const next = [
+                    ...rest,
+                    ...sorted.flatMap((entry) =>
+                      entry.kind === "directory" &&
+                      !TREE_SKIP_DESCEND.has(entry.name)
+                        ? [relPath(dir, entry.name)]
+                        : []
+                    ),
+                  ];
+                  return [
+                    sorted.map((entry) =>
+                      entry.kind === "directory"
+                        ? `${relPath(dir, entry.name)}/`
+                        : relPath(dir, entry.name)
+                    ),
+                    next.length === 0
+                      ? Option.none<readonly string[]>()
+                      : Option.some(next),
+                  ] as const;
+                })
               );
-              for (const entry of entries.toSorted(byKindThenName)) {
-                if (paths.length >= FILE_TREE_MAX) {
-                  hit = true;
-                  return;
-                }
-                const rel = dir === "" ? entry.name : `${dir}/${entry.name}`;
-                if (entry.kind === "directory") {
-                  paths.push(`${rel}/`);
-                  yield* walk(rel);
-                } else {
-                  paths.push(rel);
-                }
-              }
             }
           );
-          yield* walk("");
-          return { paths, truncated: hit };
+          const collected = yield* Stream.runCollect(
+            listing.pipe(Stream.take(FILE_TREE_MAX + 1))
+          );
+          return {
+            paths: collected.slice(0, FILE_TREE_MAX),
+            truncated: collected.length > FILE_TREE_MAX,
+          };
         }).pipe(Effect.catchTag("AgentError", Effect.die))
       );
   })
