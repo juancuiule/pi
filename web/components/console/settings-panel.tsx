@@ -114,6 +114,7 @@ export const SettingsPanel = ({
                     <ChevronRight
                       aria-hidden
                       className="size-3.5 transition-transform duration-150 group-data-panel-open:rotate-90"
+                      strokeWidth={1.5}
                     />
                   </Collapsible.Trigger>
                 )}
@@ -139,7 +140,11 @@ export const SettingsPanel = ({
                       />
                       {tool.approval ? (
                         <span className="text-warning ml-9 inline-flex items-center gap-0.5 text-xs">
-                          <ShieldAlert aria-hidden className="size-3" />
+                          <ShieldAlert
+                            aria-hidden
+                            className="size-3"
+                            strokeWidth={1.5}
+                          />
                           needs approval
                         </span>
                       ) : null}

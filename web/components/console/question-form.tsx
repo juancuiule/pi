@@ -13,6 +13,7 @@ import { useAnswers } from "@/lib/approval-context";
 import {
   answerIn,
   answersPayload,
+  isAnswered,
   isComplete,
   setOther,
   submittedAnswers,
@@ -35,9 +36,9 @@ const Mark = ({ multiple }: { multiple: boolean }) => (
     )}
   >
     {multiple ? (
-      <Check className="hidden size-3 group-data-checked:block" />
+      <Check className="size-3 transition duration-300 ease-out group-data-unchecked:scale-25 group-data-unchecked:opacity-0 group-data-unchecked:blur-xs" />
     ) : (
-      <span className="bg-primary-foreground hidden size-1.5 rounded-full group-data-checked:block" />
+      <span className="bg-primary-foreground size-1.5 rounded-full transition duration-300 ease-out group-data-unchecked:scale-25 group-data-unchecked:opacity-0 group-data-unchecked:blur-xs" />
     )}
   </span>
 );
@@ -62,13 +63,16 @@ const QuestionField = ({
   draft,
   onChange,
   disabled,
+  error,
 }: {
   question: Question;
   draft: Draft;
   onChange: (next: Draft) => void;
   disabled: boolean;
+  error: string | undefined;
 }) => {
   const legendId = useId();
+  const errorId = `${legendId}-error`;
   const otherInput = useRef<HTMLInputElement>(null);
   const answer = answerIn(draft, question.id);
   const otherPicked = answer.other !== undefined;
@@ -158,7 +162,11 @@ const QuestionField = ({
   );
 
   return (
-    <fieldset className="flex min-w-0 flex-col gap-2">
+    <fieldset
+      aria-invalid={error === undefined ? undefined : true}
+      aria-describedby={error === undefined ? undefined : errorId}
+      className="flex min-w-0 flex-col gap-2"
+    >
       <legend id={legendId} className="mb-2 flex flex-col gap-0.5">
         {question.header === undefined ? null : (
           <span className="text-muted-foreground text-xs font-medium">
@@ -173,8 +181,22 @@ const QuestionField = ({
         </span>
       </legend>
       {options}
+      {error === undefined ? null : (
+        <p id={errorId} role="alert" className="text-destructive text-xs">
+          {error}
+        </p>
+      )}
     </fieldset>
   );
+};
+
+const answerError = (question: Question): string => {
+  if (question.options.length === 0) {
+    return "Type your answer.";
+  }
+  return question.multiple
+    ? "Pick at least one option, or type your own answer."
+    : "Pick an option, or type your own answer.";
 };
 
 /** The form for an `ask_user` call that waits for answers. */
@@ -187,25 +209,38 @@ export const QuestionForm = ({
 }) => {
   const mutation = useAnswers();
   const [draft, setDraft] = useState<Draft>({});
+  const [attempted, setAttempted] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
   const busy = mutation?.isPending ?? false;
   const submit = (skip: boolean) => {
     mutation?.mutate(
       skip
         ? { key: answerKey }
         : { key: answerKey, answers: answersPayload(questions, draft) },
-      { onError: (error) => toast.error(error.message) }
+      { onError: (error) => toast.error(error.message, { duration: Infinity }) }
     );
   };
   const sending = busy && mutation?.variables?.key === answerKey;
   const skipping = sending && mutation?.variables?.answers === undefined;
   return (
     <form
+      ref={form}
       className="flex flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
-        if (isComplete(questions, draft)) {
-          submit(false);
+        if (!isComplete(questions, draft)) {
+          setAttempted(true);
+          const missing = questions.findIndex(
+            (question) => !isAnswered(answerIn(draft, question.id))
+          );
+          const field = form.current?.querySelectorAll("fieldset")[missing];
+          (
+            field?.querySelector<HTMLElement>("input") ??
+            field?.querySelector<HTMLElement>("button")
+          )?.focus();
+          return;
         }
+        submit(false);
       }}
     >
       {questions.map((question) => (
@@ -215,14 +250,15 @@ export const QuestionForm = ({
           draft={draft}
           onChange={setDraft}
           disabled={busy}
+          error={
+            attempted && !isAnswered(answerIn(draft, question.id))
+              ? answerError(question)
+              : undefined
+          }
         />
       ))}
       <div className="flex flex-wrap gap-2">
-        <Button
-          type="submit"
-          size="sm"
-          disabled={busy || !isComplete(questions, draft)}
-        >
+        <Button type="submit" size="sm" disabled={busy}>
           {sending && !skipping ? (
             <LoaderCircle
               aria-hidden

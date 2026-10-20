@@ -85,7 +85,7 @@ export const ArtifactCard = ({
         openArtifact?.({ id: ref.id, version: ref.version })
       }
       className={cn(
-        "flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors",
+        "flex w-full items-center gap-3 rounded-2xl border px-3 py-2 text-left transition-colors",
         failed
           ? "border-destructive/40 bg-destructive/5 text-destructive"
           : "enabled:hover:bg-muted/50 disabled:cursor-default"

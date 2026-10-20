@@ -88,7 +88,7 @@ const ConversationTitle = ({
       { title },
       {
         onSuccess: () => setEditing(false),
-        onError: (error) => toast.error(error.message),
+        onError: (error) => toast.error(error.message, { duration: Infinity }),
       }
     );
   };
@@ -127,7 +127,7 @@ const ConversationTitle = ({
             type="button"
             title={conversation.title}
             onClick={startEditing}
-            className="focus-visible:ring-ring block w-full truncate rounded-sm text-left outline-none focus-visible:ring-2"
+            className="hover:bg-muted focus-visible:ring-ring -mx-1.5 -my-0.5 block w-full truncate rounded-md px-1.5 py-0.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2"
           >
             {conversation.title}
           </button>
@@ -143,7 +143,8 @@ const ConversationTitle = ({
               disabled={noModel || generateTitle.isPending}
               onClick={() =>
                 generateTitle.mutate(undefined, {
-                  onError: (error) => toast.error(error.message),
+                  onError: (error) =>
+                    toast.error(error.message, { duration: Infinity }),
                 })
               }
             >
@@ -191,7 +192,7 @@ export const ConversationHeader = ({
   const run = (action: ConversationAction) => {
     act.mutate(
       { id: conversation.id, action },
-      { onError: (error) => toast.error(error.message) }
+      { onError: (error) => toast.error(error.message, { duration: Infinity }) }
     );
   };
 
@@ -248,6 +249,7 @@ export const ConversationHeader = ({
                 <LoaderCircle
                   aria-hidden
                   className="size-3 motion-safe:animate-spin"
+                  strokeWidth={1.5}
                 />
                 Working
               </span>
@@ -261,6 +263,7 @@ export const ConversationHeader = ({
                 <LoaderCircle
                   aria-hidden
                   className="size-3 motion-safe:animate-spin"
+                  strokeWidth={1.5}
                 />
                 Resuming
               </span>
@@ -281,7 +284,7 @@ export const ConversationHeader = ({
             ) : null}
             {conversation.pendingApprovals > 0 ? (
               <span className="text-warning inline-flex items-center gap-1">
-                <ShieldAlert className="size-3" aria-hidden />
+                <ShieldAlert className="size-3" aria-hidden strokeWidth={1.5} />
                 Waiting for approval
               </span>
             ) : null}

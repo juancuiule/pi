@@ -122,7 +122,9 @@ export const CapacityGuardProvider = ({
       }
     } catch (error) {
       setWaitingFor(undefined);
-      toast.error(error instanceof Error ? error.message : String(error));
+      toast.error(error instanceof Error ? error.message : String(error), {
+        duration: Infinity,
+      });
     }
   };
 

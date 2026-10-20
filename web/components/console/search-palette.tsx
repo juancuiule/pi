@@ -217,7 +217,7 @@ export const SearchPalette = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent initialFocus={input}>
         <DialogTitle className="sr-only">Search or jump to</DialogTitle>
-        <div className="border-border flex items-center gap-2 border-b px-3">
+        <div className="border-border focus-within:ring-ring flex items-center gap-2 border-b px-3 focus-within:ring-3">
           <Search
             aria-hidden
             className="text-muted-foreground size-4 shrink-0"
