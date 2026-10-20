@@ -282,6 +282,16 @@ export const useDecideApproval = (id: number) => {
   });
 };
 
+/** Close a port the agent exposed on the Conversation's Sandbox; the next poll drops the chip. */
+export const useClosePort = (id: number) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ port }: { port: number }) =>
+      runApi((c) => c.conversations.closePort({ params: { id, port } })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: LIST }),
+  });
+};
+
 /** Answer an `ask_user` call; without `answers` its questions are skipped. */
 export const useAnswerQuestions = (id: number) => {
   const queryClient = useQueryClient();

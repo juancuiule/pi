@@ -212,6 +212,11 @@ const ConversationsHandlers = HttpApiBuilder.group(
           .answer(params.id, payload.key, payload.answers)
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
+      .handle("closePort", ({ params }) =>
+        conversations
+          .closePort(params.id, params.port)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
       .handle("feedback", ({ params, payload }) =>
         conversations
           .feedback(params.id, payload)

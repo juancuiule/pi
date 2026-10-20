@@ -52,7 +52,11 @@ import type {
 } from "../errors.ts";
 import type { LangfuseOptions } from "../langfuse.ts";
 import { postScore } from "../langfuse.ts";
-import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
+import type {
+  ExposedPort,
+  SandboxChoice,
+  SandboxError,
+} from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
 import { Search } from "../search/search.ts";
@@ -66,6 +70,8 @@ export interface ConversationSummary {
   readonly software: readonly SoftwareId[];
   readonly sandboxId?: string;
   readonly vncUrl?: string;
+  /** The ports the Sandbox currently publishes; only while the Conversation has a Seat. */
+  readonly ports?: ExposedPort[];
   readonly title: string;
   readonly status: ConversationStatus;
   /** True while a Pause waits for the current Run to end. */
@@ -129,6 +135,9 @@ const summaryOf = (
     software: stored.software,
     ...(sandbox === undefined ? {} : { sandboxId: sandbox.id }),
     ...(sandbox?.vncUrl === undefined ? {} : { vncUrl: sandbox.vncUrl }),
+    ...((sandbox?.ports?.length ?? 0) === 0
+      ? {}
+      : { ports: sandbox?.ports ?? [] }),
     title: stored.meta.title,
     status,
     pausing: live?.pausing ?? false,
@@ -291,6 +300,14 @@ export class Conversations extends Context.Service<
       void,
       AgentError | ConversationNotFound | ApprovalNotFound
     >;
+    /**
+     * Stop publishing `port` of the Conversation's Sandbox, as the person asks from the header. A no-op
+     * when the port is not open or the Conversation has no Seat: either way nothing stays published.
+     */
+    closePort(
+      id: number,
+      port: number
+    ): Effect.Effect<void, AgentError | ConversationNotFound>;
     /** Each resource's limit and holders, for choosing a Seat to free. */
     readonly capacity: Effect.Effect<readonly Usage[]>;
   }
@@ -822,6 +839,18 @@ export class Conversations extends Context.Service<
           yield* entry.seat.answer(key, answers);
         });
 
+        const closePort = Effect.fn("Conversations.closePort")(function* (
+          id: number,
+          port: number
+        ) {
+          const entry = live.get(id);
+          if (entry === undefined) {
+            yield* agents.get(asId(id));
+            return;
+          }
+          yield* entry.seat.closePort(port);
+        });
+
         // A score goes on the trace of the run that wrote the entry; the score id is deterministic, so
         // scoring the same entry again upserts it.
         const score = Effect.fnUntraced(function* (
@@ -942,6 +971,7 @@ export class Conversations extends Context.Service<
           reset: (id) => agents.reset(asId(id)),
           decide,
           answer,
+          closePort,
           capacity: capacity.usage,
         });
       })

@@ -7,7 +7,15 @@ describe(approvalOf, () => {
     const cases = [
       [
         { approval: "pending", approvalKey: "1:c1" },
-        { state: "pending", key: "1:c1" },
+        { state: "pending", key: "1:c1", alwaysAllowed: true },
+      ],
+      [
+        {
+          approval: "pending",
+          approvalKey: "1:c2",
+          alwaysAllow: false,
+        },
+        { state: "pending", key: "1:c2", alwaysAllowed: false },
       ],
       [{ approval: "approved" }, { state: "approved" }],
       [{ approval: "denied" }, { state: "denied" }],

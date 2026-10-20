@@ -20,6 +20,8 @@ export type PendingApproval = {
   readonly requestedAt: number;
   /** An `ask_user` call: it waits for answers whatever the policy, and `always` or `auto` never decide it. */
   readonly question?: true;
+  /** A call only the person resolves: it waits whatever the policy, and `always` or `auto` never decide it. */
+  readonly personOnly?: true;
 };
 
 /** A person's answer to one `ask_user` question: the options picked, and what they typed as "Other". */
@@ -74,6 +76,10 @@ export const waitingOnPerson = (
 ): boolean =>
   Object.keys(state.pending).some((key) => state.decisions[key] === undefined);
 
+/** A waiting call a bulk decision may resolve: not an `ask_user` and not a person-only call. */
+export const bulkApprovable = (entry: PendingApproval): boolean =>
+  entry.question !== true && entry.personOnly !== true;
+
 const DENIED = "The user denied this tool call.";
 export const STOPPED = "Stopped by the user before approval.";
 
@@ -84,10 +90,11 @@ const STOPPED_ABORT_TIMEOUT_MS = 10_000;
 const withoutKey = <V>(record: Record<string, V>, key: string) =>
   Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
 
-// The tools `withApproval` returned, so the console can show which ones wait for a decision under `ask`.
+// The tools `withApproval` and `withPersonApproval` returned, so the console can show which ones wait for
+// a decision.
 const gatedTools = new WeakSet<ToolRegistration>();
 
-/** True for a tool `withApproval` returned. */
+/** True for a tool `withApproval` or `withPersonApproval` returned. */
 export const isGated = (tool: ToolRegistration): boolean =>
   gatedTools.has(tool);
 
@@ -106,7 +113,8 @@ export interface PersonReply {
 export const waitForPerson = async (
   api: ToolExecutionApi,
   key: string,
-  context: Context
+  context: Context,
+  details?: Record<string, unknown>
 ): Promise<PersonReply> => {
   const signal = context.abortSignal;
   // Declared before the try so the finally can always detach the listener and stop the watch.
@@ -136,7 +144,10 @@ export const waitForPerson = async (
     return { decision, answers: value?.answers?.[key] };
   };
   try {
-    await api.details({ approval: "pending", approvalKey: key }, context);
+    await api.details(
+      { approval: "pending", approvalKey: key, ...details },
+      context
+    );
     const opened = await api.watchDoc(ApprovalDoc, api.conversationId, context);
     // Fail closed: without a watch there is no way a decision can arrive, so the tool must not run.
     if (opened === undefined) {
@@ -195,6 +206,37 @@ export const waitForPerson = async (
   }
 };
 
+/** What both wrappers do once the person has decided: a deny fails the call, an approve runs the tool. */
+const afterDecision = async (
+  tool: ToolRegistration,
+  args: Parameters<ToolRegistration["execute"]>[0],
+  api: ToolExecutionApi,
+  context: Context,
+  decision: PersonReply["decision"],
+  requestedAt: number | undefined
+) => {
+  if (decision === "deny") {
+    await api.details({ approval: "denied" }, context);
+    throw new Error(DENIED);
+  }
+  // The wait above ran inside this execute, so pi's durationMs counts it; the console subtracts
+  // approvalWaitMs to show the tool's execution time only. Stamp it before executing, or it would
+  // include the run itself.
+  const approvalWaitMs = Date.now() - (requestedAt ?? Date.now());
+  await api.details({ approval: "approved" }, context);
+  const result = await tool.execute(args, api, context);
+  const details =
+    result.details !== null &&
+    typeof result.details === "object" &&
+    !Array.isArray(result.details)
+      ? result.details
+      : {};
+  return {
+    ...result,
+    details: { ...details, approvalWaitMs },
+  };
+};
+
 /**
  * Wrap a gated tool: under `policy: "ask"` its execute waits for a decision committed to its
  * conversation's ApprovalDoc before running.
@@ -225,26 +267,41 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => {
         return tool.execute(args, api, context);
       }
       const { decision } = await waitForPerson(api, key, context);
-      if (decision === "deny") {
-        await api.details({ approval: "denied" }, context);
-        throw new Error(DENIED);
-      }
-      // The wait above ran inside this execute, so pi's durationMs counts it; the console subtracts
-      // approvalWaitMs to show the tool's execution time only. Stamp it before executing, or it would
-      // include the run itself.
-      const approvalWaitMs = Date.now() - (requestedAt ?? Date.now());
-      await api.details({ approval: "approved" }, context);
-      const result = await tool.execute(args, api, context);
-      const details =
-        result.details !== null &&
-        typeof result.details === "object" &&
-        !Array.isArray(result.details)
-          ? result.details
-          : {};
-      return {
-        ...result,
-        details: { ...details, approvalWaitMs },
-      };
+      return afterDecision(tool, args, api, context, decision, requestedAt);
+    },
+  };
+  gatedTools.add(wrapped);
+  return wrapped;
+};
+
+/**
+ * Wrap a tool that always waits for the person's decision, whatever the approval policy — the strict
+ * gate for calls like expose_port that must never run unseen. The pending entry is `personOnly`, so
+ * `always` and a policy flip to `auto` leave it waiting.
+ */
+export const withPersonApproval = (
+  tool: ToolRegistration
+): ToolRegistration => {
+  const wrapped: ToolRegistration = {
+    ...tool,
+    execute: async (args, api, context) => {
+      const key = approvalKey(api.conversationId, api.callId);
+      // Stamped before the commit so approvalWaitMs covers the whole wait.
+      const requestedAt = Date.now();
+      await api.commit(async (tx) => {
+        const doc = await tx.doc(ApprovalDoc, api.conversationId);
+        doc.pending[key] = {
+          conversationId: String(api.conversationId),
+          callId: api.callId,
+          tool: tool.name,
+          requestedAt,
+          personOnly: true,
+        };
+      }, context);
+      const { decision } = await waitForPerson(api, key, context, {
+        alwaysAllow: false,
+      });
+      return afterDecision(tool, args, api, context, decision, requestedAt);
     },
   };
   gatedTools.add(wrapped);

@@ -6,6 +6,7 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Context, Effect, Exit, Layer, Ref, Semaphore } from "effect";
 import type { Scope } from "effect";
 
+import { listen } from "../sandbox/ports.ts";
 import { Sandboxes, SandboxError } from "../sandbox/sandbox.ts";
 import type {
   SandboxChoice,
@@ -123,6 +124,14 @@ export class Workspaces extends Context.Service<
       sandbox: SandboxInfo,
       size: { readonly columns: number; readonly rows: number }
     ): Effect.Effect<ShellSession, SandboxError, Scope.Scope>;
+    /**
+     * Publish `port` of a Sandbox's loopback on a random host loopback port; the URL stays up until the
+     * scope closes. Raw TCP: HTTP, WebSocket upgrades and everything else pass through unparsed.
+     */
+    expose(
+      sandbox: SandboxInfo,
+      port: number
+    ): Effect.Effect<{ readonly url: string }, SandboxError, Scope.Scope>;
   }
 >()("effect-pi/Workspaces") {
   static readonly layer = Layer.effect(
@@ -231,6 +240,12 @@ export class Workspaces extends Context.Service<
         env: sandboxes.env,
         shell: (info, size) =>
           Effect.flatMap(sandboxes.shell(info, size), shellSession),
+        expose: (info, port) =>
+          listen((p) => sandboxes.connect(info, p), port).pipe(
+            Effect.map(({ hostPort }) => ({
+              url: `http://127.0.0.1:${hostPort}/`,
+            }))
+          ),
       });
     })
   );

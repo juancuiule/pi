@@ -1,10 +1,11 @@
 // Sandboxes as local Docker containers. Each container gets the pi-env daemon, and the harness reaches it through
 // `docker exec -i`, so pi's file and shell tools run inside the container. Interactive shells are execs too, but
 // over the Engine API on the Docker socket: the CLI attaches fine, yet only the API can resize the exec's PTY.
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
 import type { Socket } from "node:net";
+import { Duplex } from "node:stream";
 import { promisify } from "node:util";
 
 import {
@@ -26,6 +27,28 @@ import { dockerfile, normalize, SOFTWARE } from "./software.ts";
 import type { SoftwareId } from "./software.ts";
 
 const execFileAsync = promisify(execFile);
+
+// Docker cannot publish ports on a running container, so a connection rides `docker exec -i`: this
+// forwarder joins 127.0.0.1:<port> inside the container to its stdio, both directions, half-close intact.
+const FORWARDER_PY = `import os, socket, sys, threading
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])))
+def pump():
+    while True:
+        b = os.read(0, 65536)
+        if not b:
+            break
+        s.sendall(b)
+    try:
+        s.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+threading.Thread(target=pump, daemon=True).start()
+while True:
+    b = s.recv(65536)
+    if not b:
+        break
+    os.write(1, b)
+`;
 
 export const DAEMON_PATH = "/usr/local/bin/pi-env";
 export const WORKSPACE = "/workspace";
@@ -461,6 +484,40 @@ export const layer = (
         return { output, write, resize } satisfies SandboxShell;
       });
 
-      return Sandboxes.of({ create, remove, env, shell });
+      const connect = Effect.fn("DockerSandboxes.connect")(function* (
+        sandbox: SandboxInfo,
+        port: number
+      ) {
+        return yield* Effect.sync(() => {
+          const child = spawn(
+            "docker",
+            [
+              "exec",
+              "-i",
+              sandbox.id,
+              "python3",
+              "-u",
+              "-c",
+              FORWARDER_PY,
+              String(port),
+            ],
+            { stdio: ["pipe", "pipe", "pipe"] }
+          );
+          // stderr is drained, not surfaced: a verbose failure must not block the pipe.
+          child.stderr.resume();
+          const channel = Duplex.from({
+            writable: child.stdin,
+            readable: child.stdout,
+          });
+          // An exec to a dead container fails by the forwarder exiting and the channel ending, which reads
+          // the same as a refused in-sandbox port.
+          channel.on("close", () => child.kill("SIGKILL"));
+          channel.on("error", () => child.kill("SIGKILL"));
+          child.on("error", () => channel.destroy());
+          return channel;
+        });
+      });
+
+      return Sandboxes.of({ create, remove, env, shell, connect });
     })
   );

@@ -46,6 +46,7 @@ import {
 import { useOpenMenu } from "./console-shell";
 import { ConversationActions } from "./conversation-actions";
 import { ConversationSettings } from "./conversation-settings";
+import { ExposedPorts } from "./exposed-ports";
 import { ResumingNotice } from "./resuming-notice";
 import { SandboxBadge } from "./sandbox-badge";
 import { WaitingNotice } from "./waiting-notice";
@@ -239,6 +240,10 @@ export const ConversationHeader = ({
                 {conversation.sandboxId}
               </span>
             )}
+            <ExposedPorts
+              id={conversation.id}
+              ports={conversation.ports ?? []}
+            />
             <span className="tabular-nums">{formatTokens(tokens)} tokens</span>
             {cost === 0 ? null : (
               <span className="tabular-nums">{formatCost(cost)}</span>
