@@ -100,6 +100,7 @@ import {
 } from "../errors.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
+import { repeatGuardExtension } from "../repeat-guard.ts";
 import type {
   SandboxChoice,
   SandboxInfo,
@@ -702,6 +703,10 @@ export class Agents extends Context.Service<
           attachmentText: options.traceAttachmentText === true,
           traceWrites,
         });
+        // The repeat guard's `beforeTool` must run before tracing's, which opens a span only
+        // its `afterTool` closes; a block coming after it would leak the span.
+        const repeatGuard = repeatGuardExtension();
+        registry.install(repeatGuard);
         registry.install(tracing.extension);
         const attachments = yield* Attachments;
         const artifacts = yield* Artifacts;
@@ -837,6 +842,7 @@ export class Agents extends Context.Service<
           ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
           ...mcp.extensions,
+          repeatGuard,
           tracing.extension,
         ];
         const everyLevel = new Set<Extension>([
@@ -847,10 +853,12 @@ export class Agents extends Context.Service<
           ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
           ...mcp.extensions,
+          repeatGuard,
           tracing.extension,
         ]);
         const isLocked = (extension: Extension) =>
           extension === tracing.extension ||
+          extension === repeatGuard ||
           extension === attachmentsExt ||
           extension === artifactsExt;
         const levelsOf = (extension: Extension) =>
@@ -887,6 +895,7 @@ export class Agents extends Context.Service<
             ...(webExt === undefined ? [] : [webExt]),
             skillsExt,
             ...mcp.extensions,
+            repeatGuard,
             tracing.extension,
           ].map((extension) => extension.name);
         // The agent change that selects a settings state's extensions and leaves out its disabled tools.
