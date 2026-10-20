@@ -124,7 +124,7 @@ const SkillMention = ({ skill }: { skill: string }) => (
     title="Suggested to the model"
     className="bg-background text-muted-foreground inline-flex items-center gap-1 rounded-md px-1.5 align-baseline font-mono text-xs"
   >
-    <BookOpen aria-hidden className="size-3" />
+    <BookOpen aria-hidden className="size-3" strokeWidth={1.5} />
     {skill}
   </span>
 );
@@ -292,7 +292,7 @@ const Entry = ({
   if (note !== undefined) {
     return (
       <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
-        <SlidersHorizontal aria-hidden className="size-3.5" />
+        <SlidersHorizontal aria-hidden className="size-3.5" strokeWidth={1.5} />
         {note}
       </p>
     );
@@ -563,9 +563,10 @@ const Earlier = ({
             <LoaderCircle
               aria-hidden
               className="size-3.5 motion-safe:animate-spin"
+              strokeWidth={1.5}
             />
           ) : (
-            <History aria-hidden className="size-3.5" />
+            <History aria-hidden className="size-3.5" strokeWidth={1.5} />
           )}
           {loading ? "Loading earlier entries…" : "Show earlier entries"}
         </button>
@@ -707,7 +708,7 @@ export const Transcript = ({
           type="button"
           aria-label="Jump to latest"
           onClick={jump}
-          className="bg-background hover:bg-muted focus-visible:ring-ring absolute bottom-4 left-1/2 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border shadow-md transition-colors duration-150 outline-none focus-visible:ring-2"
+          className="bg-background hover:bg-muted focus-visible:ring-ring animate-in fade-in-0 slide-in-from-bottom-2 absolute bottom-4 left-1/2 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border shadow-md transition-colors duration-150 outline-none focus-visible:ring-2"
         >
           <ArrowDown className="size-4" />
         </button>

@@ -197,6 +197,7 @@ export const Sidebar = () => {
                         <ShieldAlert
                           aria-hidden
                           className="text-warning size-3.5 shrink-0"
+                          strokeWidth={1.5}
                         />
                         <span className="sr-only">Needs approval</span>
                       </>
@@ -206,13 +207,14 @@ export const Sidebar = () => {
                         <LoaderCircle
                           aria-hidden
                           className="text-muted-foreground size-3.5 shrink-0 motion-safe:animate-spin"
+                          strokeWidth={1.5}
                         />
                         <span className="sr-only">{activity}</span>
                       </>
                     )}
                   </span>
                   <span className="text-muted-foreground flex items-center gap-1 text-xs">
-                    <Icon className="size-3" />
+                    <Icon className="size-3" strokeWidth={1.5} />
                     {label}
                     {" · "}
                     {relativeTime(conversation.createdAt, now)}

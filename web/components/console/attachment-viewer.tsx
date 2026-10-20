@@ -173,7 +173,7 @@ const PagesView = ({
             </h3>
             {scanned ? (
               <p className="text-warning flex items-center gap-1.5 text-xs">
-                <ScanText aria-hidden className="size-3.5" />
+                <ScanText aria-hidden className="size-3.5" strokeWidth={1.5} />
                 No text layer: this page is scanned, so the agent cannot read
                 it.
               </p>
@@ -291,7 +291,11 @@ const Details = ({
             key={warning}
             className="text-warning flex items-start gap-1.5 text-xs"
           >
-            <CircleAlert aria-hidden className="mt-px size-3.5 shrink-0" />
+            <CircleAlert
+              aria-hidden
+              className="mt-px size-3.5 shrink-0"
+              strokeWidth={1.5}
+            />
             {warning}
           </p>
         )

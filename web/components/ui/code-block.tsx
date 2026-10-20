@@ -121,7 +121,26 @@ function CodeBlockCopyButton({
         }}
         {...props}
       >
-        {copied ? <CheckIcon /> : <CopyIcon />}
+        <span className="relative">
+          <CheckIcon
+            aria-hidden
+            className={cn(
+              "absolute inset-0 transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)]",
+              copied
+                ? "scale-100 opacity-100 blur-none"
+                : "scale-[0.25] opacity-0 blur-[4px]"
+            )}
+          />
+          <CopyIcon
+            aria-hidden
+            className={cn(
+              "transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)]",
+              copied
+                ? "scale-[0.25] opacity-0 blur-[4px]"
+                : "scale-100 opacity-100 blur-none"
+            )}
+          />
+        </span>
       </Button>
       <span aria-live="polite" className="sr-only">
         {copied ? "Copied" : ""}

@@ -35,9 +35,9 @@ const Mark = ({ multiple }: { multiple: boolean }) => (
     )}
   >
     {multiple ? (
-      <Check className="hidden size-3 group-data-checked:block" />
+      <Check className="size-3 transition duration-300 ease-out group-data-unchecked:scale-25 group-data-unchecked:opacity-0 group-data-unchecked:blur-xs" />
     ) : (
-      <span className="bg-primary-foreground hidden size-1.5 rounded-full group-data-checked:block" />
+      <span className="bg-primary-foreground size-1.5 rounded-full transition duration-300 ease-out group-data-unchecked:scale-25 group-data-unchecked:opacity-0 group-data-unchecked:blur-xs" />
     )}
   </span>
 );

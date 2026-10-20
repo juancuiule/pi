@@ -232,7 +232,7 @@ export const Composer = ({
   return (
     <div className="relative flex flex-col gap-2">
       {active === undefined ? null : (
-        <div className="bg-popover text-popover-foreground absolute inset-x-0 bottom-full z-10 mb-2 flex max-h-64 flex-col overflow-y-auto rounded-lg border p-1 shadow-md">
+        <div className="bg-popover text-popover-foreground absolute inset-x-0 bottom-full z-10 mb-2 flex max-h-64 flex-col overflow-y-auto rounded-xl border p-1 shadow-md">
           {options.map((option) => (
             <button
               key={option.name}
@@ -254,6 +254,7 @@ export const Composer = ({
                 <BookOpen
                   aria-hidden
                   className="text-muted-foreground size-3.5"
+                  strokeWidth={1.5}
                 />
                 /skill:{option.name}
               </span>

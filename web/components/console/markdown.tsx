@@ -98,6 +98,7 @@ const MermaidDiagram = ({
         <LoaderCircle
           aria-hidden
           className="size-3.5 motion-safe:animate-spin"
+          strokeWidth={1.5}
         />
         Drawing the diagram…
       </p>
@@ -387,7 +388,7 @@ const UntrustedImage = ({
         title={src}
         className="bg-background text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-1 rounded-md border px-1.5 align-baseline text-xs outline-none focus-visible:ring-2"
       >
-        <ImageIcon aria-hidden className="size-3" />
+        <ImageIcon aria-hidden className="size-3" strokeWidth={1.5} />
         Show image
       </button>
     </span>

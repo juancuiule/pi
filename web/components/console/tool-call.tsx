@@ -335,7 +335,11 @@ const Diagnostics = ({
           key={index}
           className={cn("flex items-start gap-1.5 text-xs", className)}
         >
-          <Icon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+          <Icon
+            aria-hidden
+            className="mt-0.5 size-3.5 shrink-0"
+            strokeWidth={1.5}
+          />
           <span>{item.message}</span>
         </p>
       );
@@ -373,6 +377,7 @@ const Sources = ({ details }: { readonly details: unknown }) => {
               <SquareArrowOutUpRight
                 aria-hidden
                 className="text-muted-foreground size-3 shrink-0 self-center"
+                strokeWidth={1.5}
               />
             </a>
             <span className="text-muted-foreground">
