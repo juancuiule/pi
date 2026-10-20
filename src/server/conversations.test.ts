@@ -1488,4 +1488,36 @@ describe("attention", () => {
       }).pipe(Effect.provide(layer))
     );
   });
+
+  it("keeps the flag on an archived Conversation", async () => {
+    const { layer } = setup([
+      fauxAssistantMessage([fauxText("boom")], {
+        stopReason: "error",
+        errorMessage: "boom",
+      }),
+    ]);
+
+    const listed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hi",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.attention?.reason === "model_error")
+          )
+        );
+        yield* conversations.archive(created.id);
+        return yield* conversations.list;
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(listed[0]?.status).toBe("archived");
+    expect(listed[0]?.attention).toStrictEqual({
+      reason: "model_error",
+      detail: "boom",
+    });
+  });
 });
