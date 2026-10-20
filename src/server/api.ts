@@ -9,6 +9,7 @@ import {
   HttpApiSchema,
 } from "effect/http-api";
 
+import { ATTENTION_REASONS } from "../attention.ts";
 import {
   ApprovalNotFound,
   ArtifactNotFound,
@@ -74,6 +75,16 @@ export type SandboxChoice = typeof SandboxChoice.Type;
 export const SoftwareId = Schema.Literals(SOFTWARE_IDS);
 export type SoftwareId = typeof SoftwareId.Type;
 
+export const AttentionReason = Schema.Literals(ATTENTION_REASONS);
+export type AttentionReason = typeof AttentionReason.Type;
+
+/** The last settled input ended badly — why the conversation needs the person. */
+export const Attention = Schema.Struct({
+  reason: AttentionReason,
+  detail: Schema.optionalKey(Schema.String),
+});
+export type Attention = typeof Attention.Type;
+
 export const ApprovalChoice = Schema.Literals(["approve", "deny", "always"]);
 export type ApprovalChoice = typeof ApprovalChoice.Type;
 
@@ -99,6 +110,7 @@ export const ConversationSummary = Schema.Struct({
   pausing: Schema.Boolean,
   createdAt: Schema.Number,
   pendingApprovals: Schema.Number,
+  attention: Schema.optionalKey(Attention),
 });
 export type ConversationSummary = typeof ConversationSummary.Type;
 

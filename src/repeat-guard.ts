@@ -24,6 +24,8 @@ import type {
 const BLOCK_AT = 3;
 /** Emissions of one stuck call that flag it; the next result votes to end the run. */
 const TERMINATE_AT = 6;
+/** The diagnostic code `afterTool` stamps on the results that end a repeating run. */
+export const REPEAT_GUARD_CODE = "repeat_guard";
 
 interface Streak {
   resultKey: string;
@@ -145,7 +147,7 @@ export const repeatGuardExtension = (): Extension => {
                 ...(result.diagnostics ?? []),
                 {
                   severity: "error" as const,
-                  code: "repeat_guard",
+                  code: REPEAT_GUARD_CODE,
                   message: `Ended the run: the identical ${call.name} call was emitted ${repeats} times with byte-identical output.`,
                 },
               ],

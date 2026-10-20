@@ -29,6 +29,7 @@ import type {
 import type { SettingsChange } from "../agents/settings.ts";
 import type { AnswerInput, ApprovalChoice } from "../approvals.ts";
 import { Attachments } from "../attachments/attachments.ts";
+import type { Attention } from "../attention.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
 import type { ConversationEvent, HistoryPage } from "../conversation-events.ts";
@@ -71,6 +72,8 @@ export interface ConversationSummary {
   readonly pausing: boolean;
   /** Calls waiting for an approval decision; only a Seat has any. */
   readonly pendingApprovals: number;
+  /** The last settled input ended badly — a failed run or the repeat guard's stop. */
+  readonly attention?: Attention;
   readonly createdAt: number;
 }
 
@@ -112,7 +115,8 @@ const asId = (id: number) => id as ConversationId;
 const summaryOf = (
   stored: StoredConversation,
   live: Live | undefined,
-  pendingApprovals: number
+  pendingApprovals: number,
+  attention: Attention | undefined
 ): ConversationSummary => {
   const sandbox = live?.seat.sandbox;
   let status: ConversationStatus = live?.running ? "running" : "idle";
@@ -129,6 +133,7 @@ const summaryOf = (
     status,
     pausing: live?.pausing ?? false,
     pendingApprovals,
+    ...(attention === undefined ? {} : { attention }),
     createdAt: stored.meta.createdAt,
   };
 };
@@ -332,6 +337,17 @@ export class Conversations extends Context.Service<
               ? Effect.succeed(entry)
               : Deferred.await(gate).pipe(Effect.andThen(() => seatEntry(id)));
           });
+
+        // Every summary carries attention: the console replaces its cached summary with each
+        // response, so one caller skipping it would drop the dot until the next poll. A stored
+        // id cannot vanish, but the catch keeps `list` total.
+        const attentionOf = (id: number) =>
+          agents.attention(asId(id)).pipe(
+            Effect.catchTag("ConversationNotFound", () =>
+              // oxlint-disable-next-line unicorn/no-useless-undefined -- a conversation gone between list and read reports nothing
+              Effect.succeed(undefined)
+            )
+          );
 
         // End a Seat: its scope closes, which aborts the conversation, removes its Sandbox and releases its claim.
         const close = (id: number) =>
@@ -689,7 +705,10 @@ export class Conversations extends Context.Service<
             input.requestId
           ).pipe(Effect.onError(() => close(id)));
           const stored = yield* agents.get(asId(id));
-          return { ...summaryOf(stored, entry, 0), submission };
+          return {
+            ...summaryOf(stored, entry, 0, yield* attentionOf(id)),
+            submission,
+          };
         });
 
         const resume = Effect.fn("Conversations.resume")(function* (
@@ -699,7 +718,7 @@ export class Conversations extends Context.Service<
           // Resuming a Seat whose Pause waits for the Run cancels that Pause.
           entry.pausing = false;
           const stored = yield* agents.get(asId(id));
-          return summaryOf(stored, entry, 0);
+          return summaryOf(stored, entry, 0, yield* attentionOf(id));
         });
 
         const pause = Effect.fn("Conversations.pause")(function* (id: number) {
@@ -751,7 +770,8 @@ export class Conversations extends Context.Service<
           return summaryOf(
             stored,
             live.get(id),
-            entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+            entry === undefined ? 0 : yield* entry.seat.pendingApprovals,
+            yield* attentionOf(id)
           );
         });
 
@@ -853,7 +873,14 @@ export class Conversations extends Context.Service<
             const entry = live.get(Number(each.id));
             const pending =
               entry === undefined ? 0 : yield* entry.seat.pendingApprovals;
-            listed.push(summaryOf(each, entry, pending));
+            listed.push(
+              summaryOf(
+                each,
+                entry,
+                pending,
+                yield* attentionOf(Number(each.id))
+              )
+            );
           }
           return listed.toSorted((a, b) => b.createdAt - a.createdAt);
         });
@@ -894,7 +921,8 @@ export class Conversations extends Context.Service<
             return summaryOf(
               stored,
               entry,
-              entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+              entry === undefined ? 0 : yield* entry.seat.pendingApprovals,
+              yield* attentionOf(id)
             );
           }),
           generateTitle: Effect.fn("Conversations.generateTitle")(
@@ -904,7 +932,8 @@ export class Conversations extends Context.Service<
               return summaryOf(
                 stored,
                 entry,
-                entry === undefined ? 0 : yield* entry.seat.pendingApprovals
+                entry === undefined ? 0 : yield* entry.seat.pendingApprovals,
+                yield* attentionOf(id)
               );
             }
           ),
