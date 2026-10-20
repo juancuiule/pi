@@ -8,7 +8,7 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 
 const codeBlockVariants = cva(
-  "group/code-block has-[>[data-slot=code-block-content]:focus-visible]:ring-ring/50 relative flex w-full min-w-0 flex-col overflow-hidden rounded-lg text-sm has-[>[data-slot=code-block-content]:focus-visible]:ring-3 data-[size=sm]:text-xs",
+  "group/code-block has-[>[data-slot=code-block-content]:focus-visible]:ring-ring relative flex w-full min-w-0 flex-col overflow-hidden rounded-lg text-sm has-[>[data-slot=code-block-content]:focus-visible]:ring-3 data-[size=sm]:text-xs",
   {
     variants: {
       variant: {

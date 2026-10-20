@@ -275,8 +275,8 @@ export const Composer = ({
       <div
         {...dropHandlers}
         className={cn(
-          "bg-card focus-within:border-ring focus-within:ring-ring/50 flex flex-col gap-1.5 rounded-xl border p-1.5 shadow-xs focus-within:ring-3",
-          dragging && "border-ring ring-ring/50 ring-3"
+          "bg-card focus-within:border-ring focus-within:ring-ring flex flex-col gap-1.5 rounded-xl border p-1.5 shadow-xs focus-within:ring-3",
+          dragging && "border-ring ring-ring ring-3"
         )}
       >
         <DraftList attachments={attachments} />

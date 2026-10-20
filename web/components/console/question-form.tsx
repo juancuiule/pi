@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 const OTHER = "\u0000other";
 
 const CHOICE =
-  "focus-visible:border-ring focus-visible:ring-ring/50 data-checked:border-primary data-checked:bg-accent data-checked:ring-primary flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors duration-150 outline-none focus-visible:ring-3 data-checked:ring-1";
+  "focus-visible:border-ring focus-visible:ring-ring data-checked:border-primary data-checked:bg-accent data-checked:ring-primary flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors duration-150 outline-none focus-visible:ring-3 data-checked:ring-1";
 
 const Mark = ({ multiple }: { multiple: boolean }) => (
   <span
@@ -91,7 +91,7 @@ const QuestionField = ({
       onChange={(event) =>
         onChange(setOther(draft, question, event.target.value))
       }
-      className="border-input focus-visible:border-ring focus-visible:ring-ring/50 bg-background mt-1 w-full rounded-md border px-2.5 py-1.5 text-base outline-none focus-visible:ring-3 md:text-sm"
+      className="border-input focus-visible:border-ring focus-visible:ring-ring bg-background mt-1 w-full rounded-md border px-2.5 py-1.5 text-base outline-none focus-visible:ring-3 md:text-sm"
     />
   ) : null;
 

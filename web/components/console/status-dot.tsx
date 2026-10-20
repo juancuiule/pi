@@ -5,17 +5,18 @@ import type { DotStatus } from "@/lib/conversation-status";
 import { cn } from "@/lib/utils";
 
 const DOT_CLASS: Record<DotStatus, string> = {
-  error: "bg-status-error",
-  waiting: "bg-status-waiting",
-  live: "bg-status-live",
-  paused: "bg-status-paused",
+  error: "bg-status-error rounded-xs",
+  waiting: "bg-status-waiting rounded-full",
+  live: "bg-status-live rounded-full",
+  paused: "border-status-paused rounded-full border-2",
 };
 
 /**
- * The conversation's state as a colored circle, before its title in the sidebar: green while the Seat is up
+ * The conversation's state as a small marker before its title in the sidebar: green while the Seat is up
  * (running or idle), yellow while it waits for a decision or answers, red when the server lost it or its
- * last run ended badly, gray when paused or archived. `title` gives a native tooltip; the label repeats
- * in sr-only text for screen readers.
+ * last run ended badly, gray when paused or archived. Shape repeats the state without color: error is a
+ * square, paused an empty circle, the rest a filled circle. `title` gives a native tooltip; the label
+ * repeats in sr-only text for screen readers.
  */
 export const StatusDot = ({
   conversation,
@@ -40,7 +41,7 @@ export const StatusDot = ({
         aria-hidden
         title={label}
         className={cn(
-          "size-2 shrink-0 rounded-full",
+          "size-2 shrink-0",
           DOT_CLASS[dotStatusOf(conversation, ended)],
           className
         )}

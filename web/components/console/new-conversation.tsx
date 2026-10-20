@@ -206,7 +206,7 @@ export const NewConversation = ({
                   <Radio.Root
                     key={choice.value}
                     value={choice.value}
-                    className="focus-visible:border-ring focus-visible:ring-ring/50 data-checked:border-primary data-checked:bg-accent data-checked:ring-primary flex flex-1 cursor-pointer flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors duration-150 outline-none focus-visible:ring-3 data-checked:ring-1"
+                    className="focus-visible:border-ring focus-visible:ring-ring data-checked:border-primary data-checked:bg-accent data-checked:ring-primary flex flex-1 cursor-pointer flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors duration-150 outline-none focus-visible:ring-3 data-checked:ring-1"
                   >
                     <span className="flex items-center gap-2 text-sm font-medium">
                       <Icon className="text-muted-foreground size-4" />
@@ -254,7 +254,7 @@ export const NewConversation = ({
         </div>
         {settings === undefined ? null : (
           <Collapsible.Root>
-            <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group text-muted-foreground -mx-2 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium outline-none focus-visible:ring-2">
+            <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring group text-muted-foreground -mx-2 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium outline-none focus-visible:ring-2">
               <ChevronRight
                 aria-hidden
                 className="size-3.5 transition-transform duration-150 group-data-panel-open:rotate-90"

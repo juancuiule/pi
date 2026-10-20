@@ -51,7 +51,7 @@ export const ExtensionsSection = ({
         <li key={extension.name}>
           <Collapsible.Root>
             <h3 className="text-sm font-medium">
-              <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
+              <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
                 <ChevronRight
                   aria-hidden
                   className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90"
@@ -110,7 +110,7 @@ export const McpServersSection = ({
         <li key={server.name}>
           <Collapsible.Root>
             <h3 className="text-sm font-medium">
-              <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
+              <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2">
                 <ChevronRight
                   aria-hidden
                   className="text-muted-foreground size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90"
@@ -118,10 +118,10 @@ export const McpServersSection = ({
                 <span
                   aria-hidden
                   className={cn(
-                    "size-2 shrink-0 rounded-full",
+                    "size-2 shrink-0",
                     server.status === "connected"
-                      ? "bg-success"
-                      : "bg-destructive"
+                      ? "bg-success rounded-full"
+                      : "bg-destructive rounded-xs"
                   )}
                 />
                 <span className="flex min-w-0 flex-col">

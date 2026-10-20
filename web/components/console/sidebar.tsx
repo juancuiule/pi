@@ -26,6 +26,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { parseConversationId } from "@/lib/conversation-id";
+import { ATTENTION_LABEL } from "@/lib/conversation-status";
 import { relativeTime } from "@/lib/format";
 import { PAGES } from "@/lib/navigation";
 import { useConversations, useInfo } from "@/lib/queries";
@@ -58,11 +59,21 @@ const activityOf = (
   return conversation.status === "running" ? "Running" : undefined;
 };
 
-/** The row's trailing status word, e.g. " · Paused"; a resume in flight reads " · Resuming" instead. */
+/**
+ * The row's trailing status word, e.g. " · Paused"; a resume in flight reads " · Resuming" instead.
+ * Error states name the failure so the red dot is never the only cue.
+ */
 const statusSuffix = (
   conversation: ConversationSummary,
-  isResuming: boolean
+  isResuming: boolean,
+  ended: boolean
 ): string => {
+  if (ended) {
+    return " · Unreachable";
+  }
+  if (conversation.attention !== undefined) {
+    return ` · ${ATTENTION_LABEL[conversation.attention.reason]}`;
+  }
   if (conversation.status === "paused") {
     return isResuming ? " · Resuming" : " · Paused";
   }
@@ -151,6 +162,7 @@ export const Sidebar = () => {
               conversation.status === "paused" ||
               conversation.status === "archived";
             const needsApproval = conversation.pendingApprovals > 0;
+            const isEnded = ended[conversation.id] === true;
             const isResuming =
               conversation.status === "paused" &&
               (resuming[conversation.id] ?? 0) > 0;
@@ -161,14 +173,14 @@ export const Sidebar = () => {
                   href={`/?c=${conversation.id}`}
                   aria-current={selected ? "page" : undefined}
                   className={cn(
-                    "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2",
+                    "hover:bg-muted focus-visible:ring-ring flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2",
                     selected && "bg-accent text-accent-foreground font-medium"
                   )}
                 >
                   <span className="flex min-w-0 items-center gap-1.5">
                     <StatusDot
                       conversation={conversation}
-                      ended={ended[conversation.id] === true}
+                      ended={isEnded}
                       resuming={isResuming}
                     />
                     <span
@@ -204,7 +216,7 @@ export const Sidebar = () => {
                     {label}
                     {" · "}
                     {relativeTime(conversation.createdAt, now)}
-                    {statusSuffix(conversation, isResuming)}
+                    {statusSuffix(conversation, isResuming, isEnded)}
                     {conversation.pausing ? " · Pausing" : ""}
                     {needsApproval ? " · Needs approval" : ""}
                   </span>
@@ -269,7 +281,7 @@ export const Sidebar = () => {
                 href={href}
                 aria-current={pathname === href ? "page" : undefined}
                 className={cn(
-                  "hover:bg-muted focus-visible:ring-ring/50 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors duration-150 outline-none focus-visible:ring-2",
+                  "hover:bg-muted focus-visible:ring-ring flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors duration-150 outline-none focus-visible:ring-2",
                   pathname === href &&
                     "bg-accent text-accent-foreground font-medium"
                 )}

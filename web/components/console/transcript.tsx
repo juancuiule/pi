@@ -557,7 +557,7 @@ const Earlier = ({
               void showEarlier(conversation, state.earlier.frontier);
             }
           }}
-          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 mx-auto flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors outline-none focus-visible:ring-3 disabled:opacity-60"
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring mx-auto flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors outline-none focus-visible:ring-3 disabled:opacity-60"
         >
           {loading ? (
             <LoaderCircle
@@ -707,7 +707,7 @@ export const Transcript = ({
           type="button"
           aria-label="Jump to latest"
           onClick={jump}
-          className="bg-background hover:bg-muted focus-visible:ring-ring/50 absolute bottom-4 left-1/2 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border shadow-md transition-colors duration-150 outline-none focus-visible:ring-2"
+          className="bg-background hover:bg-muted focus-visible:ring-ring absolute bottom-4 left-1/2 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border shadow-md transition-colors duration-150 outline-none focus-visible:ring-2"
         >
           <ArrowDown className="size-4" />
         </button>
