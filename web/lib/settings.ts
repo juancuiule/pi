@@ -4,6 +4,7 @@ import type {
   Capabilities,
   ConversationAgent,
   SandboxChoice,
+  SoftwareId,
 } from "effect-pi/api";
 
 /** The settings a panel shows: a conversation's, or a new one's. */
@@ -22,20 +23,30 @@ export const NO_OVERRIDES: Overrides = {
   skills: {},
 };
 
-/** What a new conversation at `level` gets, with `overrides` applied; the server applies the same rules. */
+/**
+ * What a new conversation at `level` with `software` gets, with `overrides` applied; the server applies the same
+ * rules.
+ */
 export const newConversationSettings = (
   capabilities: Capabilities,
   level: SandboxChoice,
+  software: readonly SoftwareId[],
   overrides: Overrides
 ): Settings => ({
   extensions: capabilities.extensions.map((extension) => {
-    const available = extension.levels.includes(level);
+    const available =
+      extension.levels.includes(level) &&
+      (extension.software === undefined ||
+        software.includes(extension.software));
     // The skills extension carries the write tools too, so it is on even with no skills.
     const byDefault = available;
     return {
       name: extension.name,
       available,
       locked: extension.locked,
+      ...(extension.software === undefined
+        ? {}
+        : { software: extension.software }),
       enabled: available && (overrides.extensions[extension.name] ?? byDefault),
       tools: extension.tools.map((tool) => ({
         ...tool,

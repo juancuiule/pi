@@ -88,6 +88,40 @@ describe(toolSummary, () => {
     ]);
   });
 
+  it("summarizes browser tools", () => {
+    expect(
+      cases([
+        ["browser_open", { url: "https://example.com" }],
+        ["browser_snapshot", { all: true }],
+        ["browser_click", { target: "@e3" }],
+        ["browser_fill", { target: "@e5", text: "a@b.c" }],
+        ["browser_select", { target: "@e2", values: ["pro", "team"] }],
+        ["browser_press", { key: "Enter" }],
+        ["browser_scroll", { direction: "down", pixels: 300 }],
+        ["browser_wait", { text: "Done" }],
+        ["browser_wait", {}],
+        ["browser_wait", { ms: 500 }],
+        ["browser_text", {}],
+        ["browser_navigate", { action: "back" }],
+        ["browser_tabs", { switchTo: "t2" }],
+      ]).got
+    ).toStrictEqual([
+      "https://example.com",
+      "",
+      "@e3",
+      "@e5 ← a@b.c",
+      "@e2 ← pro, team",
+      "Enter",
+      "down 300px",
+      "Done",
+      "page load",
+      "500 ms",
+      "",
+      "back",
+      "t2",
+    ]);
+  });
+
   it("summarizes the calculator", () => {
     expect(
       cases([

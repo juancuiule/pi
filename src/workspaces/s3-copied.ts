@@ -24,6 +24,16 @@ const ADAPTER = "s3-copied";
 
 const keyOf = (id: string) => `${id}/files.tar.zst`;
 
+// Left out of a snapshot: the copies every Seat makes again (attachments, skills), and what the browser rebuilds —
+// its caches (`Cache`, `Code Cache`, `GPUCache`, `ShaderCache`, ...), and its Singleton lock files, which name the
+// stopped Sandbox and would make Chrome refuse the profile.
+const EXCLUDED = [
+  "./.attachments",
+  "./.skills",
+  "./.browser/Singleton*",
+  "./.browser/*Cache",
+];
+
 const CHUNK = 8 * 1024 * 1024;
 
 /**
@@ -156,7 +166,7 @@ export const layer = (options: {
           try: async () => {
             try {
               const packed = await env.exec(
-                `tar cf ${tar} --exclude=./.attachments --exclude=./.skills -C ${env.cwd} .`,
+                `tar cf ${tar} ${EXCLUDED.map((pattern) => `--exclude='${pattern}'`).join(" ")} -C ${env.cwd} .`,
                 {},
                 BACKGROUND_CONTEXT
               );

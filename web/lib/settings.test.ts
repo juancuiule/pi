@@ -37,6 +37,15 @@ const capabilities: Capabilities = {
       hooks: 0,
       locked: false,
     },
+    {
+      name: "browser",
+      levels: ["shell", "desktop"],
+      software: "agent-browser",
+      tools: [tool("browser_open")],
+      sections: ["browser"],
+      hooks: 0,
+      locked: false,
+    },
   ],
   skills: [
     {
@@ -61,6 +70,14 @@ const capabilities: Capabilities = {
   software: [],
 };
 
+const browser = (level: "none" | "shell", software: "agent-browser"[]) =>
+  newConversationSettings(
+    capabilities,
+    level,
+    software,
+    NO_OVERRIDES
+  ).extensions.find((e) => e.name === "browser");
+
 const enabledOf = (settings: ReturnType<typeof newConversationSettings>) =>
   settings.extensions.filter((e) => e.enabled).map((e) => e.name);
 
@@ -68,8 +85,8 @@ describe(newConversationSettings, () => {
   it("turns on what the Level allows", () => {
     expect(
       [
-        newConversationSettings(capabilities, "none", NO_OVERRIDES),
-        newConversationSettings(capabilities, "shell", NO_OVERRIDES),
+        newConversationSettings(capabilities, "none", [], NO_OVERRIDES),
+        newConversationSettings(capabilities, "shell", [], NO_OVERRIDES),
       ].map(enabledOf)
     ).toStrictEqual([
       ["calculator", "skills"],
@@ -77,11 +94,30 @@ describe(newConversationSettings, () => {
     ]);
   });
 
+  it("turns on an extension that needs Software only when it is picked, at a Level that offers it", () => {
+    expect(
+      [
+        browser("shell", []),
+        browser("shell", ["agent-browser"]),
+        browser("none", ["agent-browser"]),
+      ].map((e) => [e?.available, e?.enabled, e?.software])
+    ).toStrictEqual([
+      [false, false, "agent-browser"],
+      [true, true, "agent-browser"],
+      [false, false, "agent-browser"],
+    ]);
+  });
+
   it("applies flipped switches, and keeps the skills extension without skills", () => {
     let overrides = flip(NO_OVERRIDES, "tools", "bash", false);
     overrides = flip(overrides, "skills", "convert", false);
     overrides = flip(overrides, "skills", "notes", false);
-    const settings = newConversationSettings(capabilities, "shell", overrides);
+    const settings = newConversationSettings(
+      capabilities,
+      "shell",
+      [],
+      overrides
+    );
     expect([
       enabledOf(settings),
       settings.extensions
@@ -104,8 +140,8 @@ describe(newConversationSettings, () => {
 describe(settingsPayload, () => {
   it("drops extension switches the Level does not allow, and sends nothing when nothing is left", () => {
     const flipped = flip(NO_OVERRIDES, "extensions", "coding-tools", true);
-    const chat = newConversationSettings(capabilities, "none", flipped);
-    const shell = newConversationSettings(capabilities, "shell", flipped);
+    const chat = newConversationSettings(capabilities, "none", [], flipped);
+    const shell = newConversationSettings(capabilities, "shell", [], flipped);
     expect([
       settingsPayload(flipped, chat),
       settingsPayload(flipped, shell),

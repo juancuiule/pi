@@ -278,3 +278,123 @@ describe("Software", () => {
     );
   });
 });
+
+const BROWSER_TOOLS = [
+  "browser_click",
+  "browser_fill",
+  "browser_navigate",
+  "browser_open",
+  "browser_press",
+  "browser_screenshot",
+  "browser_scroll",
+  "browser_select",
+  "browser_snapshot",
+  "browser_tabs",
+  "browser_text",
+  "browser_wait",
+];
+
+const browserTools = (answer: string) =>
+  offeredIn(answer).tools.filter((tool) => tool.startsWith("browser_"));
+
+// Chrome for Testing, which agent-browser installs, has no Linux arm64 build, so only x64 hosts offer it.
+describe.skipIf(process.arch !== "x64")("Software with an extension", () => {
+  it("offers the browser tools and section only to a Workspace with agent-browser", async () => {
+    const { layer } = fauxAgents([offered, offered]);
+
+    const [without, withBrowser] = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const plain = yield* agents.open(yield* create());
+          const browsing = yield* agents.open(
+            yield* create({ software: ["agent-browser"] })
+          );
+          return [yield* plain.ask("hi"), yield* browsing.ask("hi")];
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(browserTools(without)).toStrictEqual([]);
+    expect(offeredIn(without).system).not.toContain("<page_content>");
+    expect(browserTools(withBrowser)).toStrictEqual(BROWSER_TOOLS);
+    expect(offeredIn(withBrowser).system).toContain("<page_content>");
+  });
+
+  it("adds the browser tools to a running conversation when an Upgrade adds agent-browser", async () => {
+    const { layer } = fauxAgents([offered, offered]);
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create();
+          const seat = yield* agents.open(id);
+          const before = yield* seat.ask("hi");
+          yield* seat.upgrade({ software: ["agent-browser"] });
+          const after = yield* seat.ask("hi");
+          const settings = yield* agents.agent(id);
+          return {
+            before,
+            after,
+            browser: settings.extensions.find(
+              (each) => each.name === "browser"
+            ),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(browserTools(result.before)).toStrictEqual([]);
+    expect(browserTools(result.after)).toStrictEqual(BROWSER_TOOLS);
+    expect(result.browser).toMatchObject({
+      enabled: true,
+      available: true,
+      software: "agent-browser",
+    });
+  });
+
+  it("adds the browser tools when agent-browser is added to a paused conversation", async () => {
+    const { layer } = fauxAgents([offered]);
+
+    const answer = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create();
+          yield* agents.upgrade(id, { software: ["agent-browser"] });
+          const seat = yield* agents.open(id);
+          return yield* seat.ask("hi");
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(browserTools(answer)).toStrictEqual(BROWSER_TOOLS);
+  });
+
+  it("refuses to turn the browser on without agent-browser, and says what to add", async () => {
+    const { layer } = fauxAgents([]);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const agents = yield* Agents;
+        const id = yield* create();
+        const refused = yield* Effect.flip(
+          agents.configure(id, { extensions: { browser: true } })
+        );
+        const settings = yield* agents.agent(id);
+        return {
+          refused,
+          browser: settings.extensions.find((each) => each.name === "browser"),
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(result.refused).toMatchObject({
+      _tag: "InvalidSetting",
+      name: "browser",
+      reason: "needs the Browser for the agent software; add it first",
+    });
+    expect(result.browser).toMatchObject({ enabled: false, available: false });
+  });
+});

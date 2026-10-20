@@ -115,6 +115,7 @@ import {
   normalize,
   offered,
   SOFTWARE,
+  SOFTWARE_IDS,
 } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
@@ -122,6 +123,7 @@ import type { Skill } from "../skills/format.ts";
 import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
 import type { SkillRemoveOutcome, SkillSaveOutcome } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
+import { browserExtension } from "../tools/browser.ts";
 import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
 import { questionsExtension } from "../tools/questions.ts";
@@ -201,6 +203,8 @@ export interface ExtensionInfo {
   readonly name: string;
   /** The Levels whose conversations select it. */
   readonly levels: readonly SandboxChoice[];
+  /** Software its conversations need as well; they select it once their Workspace has it. */
+  readonly software?: SoftwareId;
   readonly tools: readonly ToolInfo[];
   /** Keys of the system prompt sections it adds. */
   readonly sections: readonly string[];
@@ -281,6 +285,7 @@ const readState = async (
   }));
   const state: SettingsState = {
     level: workspace.level,
+    software: [...(workspace.software ?? [])],
     approvals: approvals.policy,
     // Conversations this app creates select an array; another shape selects nothing it knows of.
     extensions: Array.isArray(agent.extensions) ? [...agent.extensions] : [],
@@ -332,20 +337,31 @@ const upgradeTarget = (
   return { level, software, added };
 };
 
-/** The extensions a conversation runs with, by its Workspace's Level. */
+/** The extensions a Level or Software brings that take options; one instance each per layer. */
+export interface SandboxExtensions {
+  readonly desktop: Extension;
+  readonly browser: Extension;
+}
+
+/** The extensions a conversation runs with, by its Workspace's Level and Software. */
 export const extensionsFor = (
   level: SandboxChoice,
-  desktop: Extension = desktopExtension()
+  software: readonly SoftwareId[],
+  extensions: SandboxExtensions
 ): Extension[] => {
+  const bySoftware =
+    level !== "none" && software.includes("agent-browser")
+      ? [extensions.browser]
+      : [];
   switch (level) {
     case "none": {
       return [Calculator];
     }
     case "shell": {
-      return [Calculator, CodingTools];
+      return [Calculator, CodingTools, ...bySoftware];
     }
     case "desktop": {
-      return [Calculator, CodingTools, desktop];
+      return [Calculator, CodingTools, extensions.desktop, ...bySoftware];
     }
     default: {
       throw new TypeError(`Unknown Level: ${level satisfies never}`);
@@ -774,12 +790,21 @@ export class Agents extends Context.Service<
         for (const extension of mcp.extensions) {
           registry.install(extension);
         }
-        const desktop = desktopExtension(
+        const screenshots =
           options.saveScreenshot === undefined
             ? {}
-            : { saveScreenshot: options.saveScreenshot }
+            : { saveScreenshot: options.saveScreenshot };
+        const sandboxExtensions: SandboxExtensions = {
+          desktop: desktopExtension(screenshots),
+          browser: browserExtension(screenshots),
+        };
+        // Every Level's and every Software's, whether or not this host offers that Software.
+        const everySandboxExtension = extensionsFor(
+          "desktop",
+          SOFTWARE_IDS,
+          sandboxExtensions
         );
-        for (const extension of extensionsFor("desktop", desktop)) {
+        for (const extension of everySandboxExtension) {
           registry.install(extension);
         }
         // The upgrade of each conversation with a Seat, for the `upgrade_workspace` tool.
@@ -843,7 +868,7 @@ export class Agents extends Context.Service<
         }
         // Every installed extension, for the console; and those every conversation selects, whatever its Level.
         const installed = [
-          ...extensionsFor("desktop", desktop),
+          ...everySandboxExtension,
           workspaceExt,
           attachmentsExt,
           artifactsExt,
@@ -873,14 +898,23 @@ export class Agents extends Context.Service<
         const levelsOf = (extension: Extension) =>
           LEVELS.filter(
             (level) =>
-              extensionsFor(level, desktop).includes(extension) ||
-              everyLevel.has(extension)
+              extensionsFor(level, SOFTWARE_IDS, sandboxExtensions).includes(
+                extension
+              ) || everyLevel.has(extension)
           );
+        // The Software an extension needs besides its Level.
+        const softwareOf = (extension: Extension): SoftwareId | undefined =>
+          extension === sandboxExtensions.browser ? "agent-browser" : undefined;
+        const softwareField = (extension: Extension) => {
+          const software = softwareOf(extension);
+          return software === undefined ? {} : { software };
+        };
         const installedInfo: InstalledExtension[] = installed.map(
           (extension) => ({
             name: extension.name,
             tools: (extension.tools ?? []).map(toolInfo),
             levels: levelsOf(extension),
+            software: softwareOf(extension),
             locked: isLocked(extension),
           })
         );
@@ -892,11 +926,14 @@ export class Agents extends Context.Service<
             (extension.tools ?? []).map((tool) => [tool.name, tool] as const)
           )
         );
-        // What a conversation at `level` gets unless its settings say otherwise; the skills extension is
-        // always among them — it also carries the write tools, so it is on even with no skills.
-        const defaultExtensions = (level: SandboxChoice) =>
+        // What a conversation at `level` with `software` gets unless its settings say otherwise; the skills
+        // extension is always among them — it also carries the write tools, so it is on even with no skills.
+        const defaultExtensions = (
+          level: SandboxChoice,
+          software: readonly SoftwareId[]
+        ) =>
           [
-            ...extensionsFor(level, desktop),
+            ...extensionsFor(level, software, sandboxExtensions),
             workspaceExt,
             attachmentsExt,
             artifactsExt,
@@ -1455,8 +1492,9 @@ export class Agents extends Context.Service<
             sourceSkills,
             {
               level: createOptions.level,
+              software,
               approvals: createOptions.approvals ?? "auto",
-              extensions: defaultExtensions(createOptions.level),
+              extensions: defaultExtensions(createOptions.level, software),
               disabledTools: [],
               skills: sourceSkills.map((skill) => skill.name),
             },
@@ -1720,9 +1758,15 @@ export class Agents extends Context.Service<
                 return yield* target;
               }
               const previous = machine;
-              const added = extensionsFor(target.level, desktop).filter(
+              const added = extensionsFor(
+                target.level,
+                target.software,
+                sandboxExtensions
+              ).filter(
                 (extension) =>
-                  !extensionsFor(level, desktop).includes(extension)
+                  !extensionsFor(level, software, sandboxExtensions).includes(
+                    extension
+                  )
               );
               const claimed =
                 target.level === level
@@ -2194,28 +2238,36 @@ export class Agents extends Context.Service<
           request: UpgradeRequest
         ) {
           yield* handleOf(id);
-          const { from, target } = yield* attempt(() =>
+          const { from, fromSoftware, target } = yield* attempt(() =>
             harness.commit(async (tx) => {
               const doc = await tx.doc(WorkspaceDoc, id);
               const current = doc.level;
+              const currentSoftware = [...(doc.software ?? [])];
               const reached = upgradeTarget(
                 id,
-                { level: current, software: doc.software ?? [] },
+                { level: current, software: currentSoftware },
                 request
               );
               if (!(reached instanceof InvalidUpgrade)) {
                 doc.level = reached.level;
                 doc.software = [...reached.software];
               }
-              return { from: current, target: reached };
+              return {
+                from: current,
+                fromSoftware: currentSoftware,
+                target: reached,
+              };
             }, context)
           );
           if (target instanceof InvalidUpgrade) {
             return yield* target;
           }
-          const added = extensionsFor(target.level, desktop).filter(
-            (extension) => !extensionsFor(from, desktop).includes(extension)
-          );
+          const before = extensionsFor(from, fromSoftware, sandboxExtensions);
+          const added = extensionsFor(
+            target.level,
+            target.software,
+            sandboxExtensions
+          ).filter((extension) => !before.includes(extension));
           yield* locked(
             id,
             addExtensions(id, added).pipe(
@@ -2457,6 +2509,7 @@ export class Agents extends Context.Service<
                 extensions: installed.map((extension): ExtensionInfo => ({
                   name: extension.name,
                   levels: levelsOf(extension),
+                  ...softwareField(extension),
                   tools: (extension.tools ?? []).map(toolInfo),
                   sections: (extension.sections ?? []).map(
                     (section) => section.key
@@ -2616,7 +2669,7 @@ export class Agents extends Context.Service<
             id,
             (state, _skillCatalog, source) => ({
               ...state,
-              extensions: defaultExtensions(state.level),
+              extensions: defaultExtensions(state.level, state.software),
               disabledTools: [],
               skills: source.map((skill) => skill.name),
             }),

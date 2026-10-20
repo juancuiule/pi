@@ -191,9 +191,11 @@ export const ConversationAgent = Schema.Struct({
     Schema.Struct({
       name: Schema.String,
       enabled: Schema.Boolean,
-      /** False when the Level does not allow it; it can then only be off. */
+      /** False when the Level or the Software does not allow it; it can then only be off. */
       available: Schema.Boolean,
       locked: Schema.Boolean,
+      /** Software it needs besides its Level. */
+      software: Schema.optionalKey(SoftwareId),
       tools: Schema.Array(
         Schema.Struct({ ...ToolInfo.fields, enabled: Schema.Boolean })
       ),
@@ -215,6 +217,8 @@ export const Capabilities = Schema.Struct({
     Schema.Struct({
       name: Schema.String,
       levels: Schema.Array(SandboxChoice),
+      /** Software its conversations need as well; they select it once their Workspace has it. */
+      software: Schema.optionalKey(SoftwareId),
       tools: Schema.Array(ToolInfo),
       sections: Schema.Array(Schema.String),
       hooks: Schema.Number,

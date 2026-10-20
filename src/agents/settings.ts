@@ -2,6 +2,7 @@
 // reads the state from the conversation's documents, and applies what `applyChange` returns.
 import type { ApprovalPolicy } from "../approvals.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
+import { SOFTWARE } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
 
 export interface InstalledTool {
@@ -17,6 +18,8 @@ export interface InstalledExtension {
   readonly tools: readonly InstalledTool[];
   /** The Levels at which it can be on; at other Levels it needs an Upgrade first. */
   readonly levels: readonly SandboxChoice[];
+  /** Software the Workspace needs as well (the browser tools need agent-browser); without it, an Upgrade first. */
+  readonly software?: SoftwareId | undefined;
   /** Always on, whatever the person asks (tracing). */
   readonly locked: boolean;
 }
@@ -29,6 +32,8 @@ export interface CatalogSkill {
 /** What a conversation has now. */
 export interface SettingsState {
   readonly level: SandboxChoice;
+  /** The Workspace's Software, which some extensions need. */
+  readonly software: readonly SoftwareId[];
   readonly approvals: ApprovalPolicy;
   /** Names of the enabled extensions. */
   readonly extensions: readonly string[];
@@ -57,9 +62,11 @@ export interface ConversationSettings {
   readonly extensions: readonly {
     readonly name: string;
     readonly enabled: boolean;
-    /** False when the Level does not allow it; it can then only be off. */
+    /** False when the Level or the Software does not allow it; it can then only be off. */
     readonly available: boolean;
     readonly locked: boolean;
+    /** Software it needs besides its Level. */
+    readonly software?: SoftwareId;
     readonly tools: readonly (InstalledTool & { readonly enabled: boolean })[];
   }[];
   readonly skills: readonly (CatalogSkill & { readonly enabled: boolean })[];
@@ -70,6 +77,29 @@ export interface SettingsProblem {
   readonly name: string;
   readonly reason: string;
 }
+
+const NEEDS: Record<SandboxChoice, string> = {
+  none: "a chat",
+  shell: "a shell; upgrade first",
+  desktop: "a desktop; upgrade first",
+};
+
+/** Why `extension` cannot be on in `state`'s Workspace, or `undefined` when it can. */
+const missing = (
+  extension: InstalledExtension,
+  state: Pick<SettingsState, "level" | "software">
+): string | undefined => {
+  if (!extension.levels.includes(state.level)) {
+    return `needs ${NEEDS[extension.levels[0] ?? "desktop"]}`;
+  }
+  if (
+    extension.software !== undefined &&
+    !state.software.includes(extension.software)
+  ) {
+    return `needs the ${SOFTWARE[extension.software].label} software; add it first`;
+  }
+  return undefined;
+};
 
 export const describeSettings = (
   installed: readonly InstalledExtension[],
@@ -85,8 +115,11 @@ export const describeSettings = (
     extensions: installed.map((extension) => ({
       name: extension.name,
       enabled: enabled.has(extension.name),
-      available: extension.levels.includes(state.level),
+      available: missing(extension, state) === undefined,
       locked: extension.locked,
+      ...(extension.software === undefined
+        ? {}
+        : { software: extension.software }),
       tools: extension.tools.map((tool) => ({
         ...tool,
         enabled: !disabledTools.has(tool.name),
@@ -99,12 +132,6 @@ export const describeSettings = (
   };
 };
 
-const NEEDS: Record<SandboxChoice, string> = {
-  none: "a chat",
-  shell: "a shell; upgrade first",
-  desktop: "a desktop; upgrade first",
-};
-
 const toggle = (names: Set<string>, name: string, on: boolean) => {
   if (on) {
     names.add(name);
@@ -115,7 +142,7 @@ const toggle = (names: Set<string>, name: string, on: boolean) => {
 
 const toggleExtensions = (
   installed: readonly InstalledExtension[],
-  level: SandboxChoice,
+  state: Pick<SettingsState, "level" | "software">,
   extensions: Set<string>,
   change: Readonly<Record<string, boolean>>
 ): SettingsProblem | undefined => {
@@ -127,11 +154,9 @@ const toggleExtensions = (
     if (extension.locked && !on) {
       return { name, reason: "always on" };
     }
-    if (on && !extension.levels.includes(level)) {
-      return {
-        name,
-        reason: `needs ${NEEDS[extension.levels[0] ?? "desktop"]}`,
-      };
+    const reason = on ? missing(extension, state) : undefined;
+    if (reason !== undefined) {
+      return { name, reason };
     }
     toggle(extensions, name, on);
   }
@@ -187,12 +212,7 @@ export const applyChange = (
   );
   const skills = new Set(state.skills);
   const problem =
-    toggleExtensions(
-      installed,
-      state.level,
-      extensions,
-      change.extensions ?? {}
-    ) ??
+    toggleExtensions(installed, state, extensions, change.extensions ?? {}) ??
     lockedTool(installed, change.tools ?? {}) ??
     toggleKnown(allTools, enabledTools, change.tools ?? {}, "tool") ??
     toggleKnown(
@@ -213,6 +233,7 @@ export const applyChange = (
   }
   return {
     level: state.level,
+    software: state.software,
     approvals: change.approvals ?? state.approvals,
     // Installed order, which is the order conversations select them in.
     extensions: installed

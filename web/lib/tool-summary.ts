@@ -1,5 +1,5 @@
 // One-line summaries of tool calls for the transcript headers. Argument shapes come from the tools themselves:
-// src/tools/desktop.ts, src/tools/calculator.ts, src/skills/skills.ts (skill) and pi's
+// src/tools/desktop.ts, src/tools/browser.ts, src/tools/calculator.ts, src/skills/skills.ts (skill) and pi's
 // durable/coding-agent tools (bash, read, write, edit, ls, grep, find). Arguments may be missing or partial while a
 // call streams, so every read goes through helpers that never throw.
 
@@ -87,6 +87,36 @@ const fallback = (args: Args): string => {
   }
 };
 
+const browserFill = (args: Args): string => {
+  const target = text(args.target) ?? "";
+  const value = text(args.text);
+  return value === undefined ? target : `${target} ← ${value}`;
+};
+
+const browserSelect = (args: Args): string => {
+  const target = text(args.target) ?? "";
+  const values = Array.isArray(args.values)
+    ? args.values.flatMap((value) => text(value) ?? [])
+    : [];
+  return values.length === 0 ? target : `${target} ← ${values.join(", ")}`;
+};
+
+const browserScroll = (args: Args): string => {
+  const direction = text(args.direction) ?? "";
+  const pixels = number(args.pixels);
+  return pixels === undefined ? direction : `${direction} ${pixels}px`;
+};
+
+const browserWait = (args: Args): string => {
+  const ms = number(args.ms);
+  return (
+    text(args.target) ??
+    text(args.text) ??
+    text(args.url) ??
+    (ms === undefined ? "page load" : `${ms} ms`)
+  );
+};
+
 const askUser = (args: Args): string => {
   const questions = Array.isArray(args.questions) ? args.questions : [];
   const first = text(asArgs(questions[0]).question) ?? "";
@@ -108,6 +138,18 @@ const SUMMARIES: Record<string, (args: Args) => string> = {
   desktop_scroll: scroll,
   desktop_drag: drag,
   desktop_screenshot: () => "",
+  browser_open: (args) => text(args.url) ?? "",
+  browser_snapshot: () => "",
+  browser_click: (args) => text(args.target) ?? "",
+  browser_fill: browserFill,
+  browser_select: browserSelect,
+  browser_press: (args) => text(args.key) ?? "",
+  browser_scroll: browserScroll,
+  browser_wait: browserWait,
+  browser_text: (args) => text(args.target) ?? "",
+  browser_screenshot: () => "",
+  browser_navigate: (args) => text(args.action) ?? "",
+  browser_tabs: (args) => text(args.switchTo) ?? "",
   calculate,
   ask_user: askUser,
   web_search: (args) => text(args.query) ?? "",
