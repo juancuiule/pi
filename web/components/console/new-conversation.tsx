@@ -168,134 +168,140 @@ export const NewConversation = ({
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center gap-5 p-6">
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Conversations"
-        className="absolute top-3 left-3 md:hidden"
-        onClick={openMenu}
-      >
-        <Menu />
-      </Button>
-      <div className="flex flex-col gap-1.5">
-        <h1 className="font-heading text-2xl font-semibold text-balance">
-          What should the agent do?
-        </h1>
-        {info === undefined ? null : (
-          <p className="text-muted-foreground text-sm">Runs on {info.model}</p>
-        )}
-      </div>
-      <fieldset className="flex flex-col gap-2">
-        <legend className="text-muted-foreground mb-2 text-xs font-medium">
-          Environment
-        </legend>
-        <div className="@container">
-          <RadioGroup
-            aria-label="Environment"
-            value={sandbox}
-            onValueChange={(value) => setSandbox(value)}
-            className="flex flex-col @min-[30rem]:flex-row"
-          >
-            {CHOICES.map((choice) => {
-              const { icon: Icon, label } = SANDBOX_INFO[choice.value];
-              return (
-                <Radio.Root
-                  key={choice.value}
-                  value={choice.value}
-                  className="focus-visible:border-ring focus-visible:ring-ring/50 data-checked:border-primary data-checked:bg-accent data-checked:ring-primary flex flex-1 cursor-pointer flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors duration-150 outline-none focus-visible:ring-3 data-checked:ring-1"
-                >
-                  <span className="flex items-center gap-2 text-sm font-medium">
-                    <Icon className="text-muted-foreground size-4" />
-                    {label}
-                  </span>
-                  <span className="text-muted-foreground text-xs">
-                    {choice.hint}
-                  </span>
-                </Radio.Root>
-              );
-            })}
-          </RadioGroup>
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      <div className="mx-auto my-auto flex w-full max-w-2xl min-w-0 flex-col gap-5 p-6">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Conversations"
+          className="absolute top-3 left-3 md:hidden"
+          onClick={openMenu}
+        >
+          <Menu />
+        </Button>
+        <div className="flex flex-col gap-1.5">
+          <h1 className="font-heading text-2xl font-semibold text-balance">
+            What should the agent do?
+          </h1>
+          {info === undefined ? null : (
+            <p className="text-muted-foreground text-sm">
+              Runs on {info.model}
+            </p>
+          )}
         </div>
-      </fieldset>
-      {sandbox === "none" || catalog.length === 0 ? null : (
         <fieldset className="flex flex-col gap-2">
           <legend className="text-muted-foreground mb-2 text-xs font-medium">
-            Software
+            Environment
           </legend>
-          <SoftwareChecklist
-            choices={softwareChoices(catalog, sandbox, [], picked)}
-            onPick={(id, on) => setPicked((current) => pick(current, id, on))}
-          />
-          <p className="text-muted-foreground text-xs">{SOFTWARE_BUILD_HINT}</p>
+          <div className="@container">
+            <RadioGroup
+              aria-label="Environment"
+              value={sandbox}
+              onValueChange={(value) => setSandbox(value)}
+              className="flex flex-col @min-[30rem]:flex-row"
+            >
+              {CHOICES.map((choice) => {
+                const { icon: Icon, label } = SANDBOX_INFO[choice.value];
+                return (
+                  <Radio.Root
+                    key={choice.value}
+                    value={choice.value}
+                    className="focus-visible:border-ring focus-visible:ring-ring/50 data-checked:border-primary data-checked:bg-accent data-checked:ring-primary flex flex-1 cursor-pointer flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors duration-150 outline-none focus-visible:ring-3 data-checked:ring-1"
+                  >
+                    <span className="flex items-center gap-2 text-sm font-medium">
+                      <Icon className="text-muted-foreground size-4" />
+                      {label}
+                    </span>
+                    <span className="text-muted-foreground text-xs">
+                      {choice.hint}
+                    </span>
+                  </Radio.Root>
+                );
+              })}
+            </RadioGroup>
+          </div>
         </fieldset>
-      )}
-      <div className="flex items-start gap-3">
-        <Switch
-          checked={approvals}
-          onCheckedChange={setApprovals}
-          className="mt-0.5"
-          aria-label="Ask before running commands"
-        />
-        <span className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">
-            Ask before running commands
-          </span>
-          <span className="text-muted-foreground text-xs">
-            You approve each command, file change and desktop action, and the
-            agent asking for a bigger machine.
-          </span>
-        </span>
-      </div>
-      {settings === undefined ? null : (
-        <Collapsible.Root>
-          <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group text-muted-foreground -mx-2 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium outline-none focus-visible:ring-2">
-            <ChevronRight
-              aria-hidden
-              className="size-3.5 transition-transform duration-150 group-data-panel-open:rotate-90"
+        {sandbox === "none" || catalog.length === 0 ? null : (
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-muted-foreground mb-2 text-xs font-medium">
+              Software
+            </legend>
+            <SoftwareChecklist
+              choices={softwareChoices(catalog, sandbox, [], picked)}
+              onPick={(id, on) => setPicked((current) => pick(current, id, on))}
             />
-            Customize tools and skills
-            {customized === undefined ? "" : " · changed"}
-          </Collapsible.Trigger>
-          <Collapsible.Panel>
-            <div className="pt-3">
-              <SettingsPanel
-                settings={settings}
-                onExtension={(name, on) =>
-                  setOverrides((current) =>
-                    flip(current, "extensions", name, on)
-                  )
-                }
-                onTool={(name, on) =>
-                  setOverrides((current) => flip(current, "tools", name, on))
-                }
-                onSkill={(name, on) =>
-                  setOverrides((current) => flip(current, "skills", name, on))
-                }
-              />
-            </div>
-          </Collapsible.Panel>
-        </Collapsible.Root>
-      )}
-      <Composer
-        prompt={prompt}
-        onPrompt={setPrompt}
-        onSubmit={submit}
-        pending={create.isPending}
-        tall
-        inputRef={textarea}
-        attachments={{
-          items: files.items,
-          onAdd: files.add,
-          onRemove: files.remove,
-        }}
-        placeholder="Describe a task…"
-        hint={
-          <span className="inline-flex items-center gap-1">
-            <Kbd>Enter</Kbd> to start · <Kbd>Shift+Enter</Kbd> for a new line
+            <p className="text-muted-foreground text-xs">
+              {SOFTWARE_BUILD_HINT}
+            </p>
+          </fieldset>
+        )}
+        <div className="flex items-start gap-3">
+          <Switch
+            checked={approvals}
+            onCheckedChange={setApprovals}
+            className="mt-0.5"
+            aria-label="Ask before running commands"
+          />
+          <span className="flex flex-col gap-0.5">
+            <span className="text-sm font-medium">
+              Ask before running commands
+            </span>
+            <span className="text-muted-foreground text-xs">
+              You approve each command, file change and desktop action, and the
+              agent asking for a bigger machine.
+            </span>
           </span>
-        }
-      />
+        </div>
+        {settings === undefined ? null : (
+          <Collapsible.Root>
+            <Collapsible.Trigger className="hover:bg-muted focus-visible:ring-ring/50 group text-muted-foreground -mx-2 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium outline-none focus-visible:ring-2">
+              <ChevronRight
+                aria-hidden
+                className="size-3.5 transition-transform duration-150 group-data-panel-open:rotate-90"
+              />
+              Customize tools and skills
+              {customized === undefined ? "" : " · changed"}
+            </Collapsible.Trigger>
+            <Collapsible.Panel>
+              <div className="pt-3">
+                <SettingsPanel
+                  settings={settings}
+                  onExtension={(name, on) =>
+                    setOverrides((current) =>
+                      flip(current, "extensions", name, on)
+                    )
+                  }
+                  onTool={(name, on) =>
+                    setOverrides((current) => flip(current, "tools", name, on))
+                  }
+                  onSkill={(name, on) =>
+                    setOverrides((current) => flip(current, "skills", name, on))
+                  }
+                />
+              </div>
+            </Collapsible.Panel>
+          </Collapsible.Root>
+        )}
+        <Composer
+          prompt={prompt}
+          onPrompt={setPrompt}
+          onSubmit={submit}
+          pending={create.isPending}
+          tall
+          inputRef={textarea}
+          attachments={{
+            items: files.items,
+            onAdd: files.add,
+            onRemove: files.remove,
+          }}
+          placeholder="Describe a task…"
+          hint={
+            <span className="inline-flex items-center gap-1">
+              <Kbd>Enter</Kbd> to start · <Kbd>Shift+Enter</Kbd> for a new line
+            </span>
+          }
+        />
+      </div>
     </div>
   );
 };

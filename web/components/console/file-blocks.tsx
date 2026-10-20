@@ -110,7 +110,10 @@ export const FilePreview = ({
   readonly content: string;
 }) => {
   const themeType = useThemeType();
-  const options = useMemo(() => ({ theme: THEME, themeType }), [themeType]);
+  const options = useMemo(
+    () => ({ theme: THEME, themeType, overflow: "wrap" as const }),
+    [themeType]
+  );
   const file = useMemo<FileContents>(
     () => ({ name: path, contents: content }),
     [path, content]
@@ -133,7 +136,7 @@ export const EditPreview = ({
   const themeType = useThemeType();
   const diffStyle = useDiffStyle();
   const options = useMemo(
-    () => ({ theme: THEME, themeType, diffStyle }),
+    () => ({ theme: THEME, themeType, diffStyle, overflow: "wrap" as const }),
     [themeType, diffStyle]
   );
   const files = useMemo<{ oldFile: FileContents; newFile: FileContents }>(
@@ -167,7 +170,7 @@ export const PatchPreview = ({ patch }: { readonly patch: string }) => {
   const themeType = useThemeType();
   const diffStyle = useDiffStyle();
   const options = useMemo(
-    () => ({ theme: THEME, themeType, diffStyle }),
+    () => ({ theme: THEME, themeType, diffStyle, overflow: "wrap" as const }),
     [themeType, diffStyle]
   );
   return (

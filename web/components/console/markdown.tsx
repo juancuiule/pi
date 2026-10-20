@@ -105,7 +105,7 @@ const MermaidDiagram = ({
   } else {
     body = (
       <div
-        className="overflow-x-auto px-3 pb-3 [&_svg]:max-w-full"
+        className="scroll-fade-x overflow-x-auto px-3 pb-3 [&_svg]:max-w-full"
         // oxlint-disable-next-line react/no-danger -- pele's own SVG: no scripts, handlers or HTML labels; links limited to safe schemes
         dangerouslySetInnerHTML={{ __html: result.svg }}
       />
@@ -279,7 +279,7 @@ export const markdownComponents: Components = {
   pre: ({ children }) => <CodeFence>{children}</CodeFence>,
   hr: () => <hr className="border-border my-4" />,
   table: ({ children }) => (
-    <div className="my-2 overflow-x-auto">
+    <div className="scroll-fade-x my-2 overflow-x-auto">
       <table className="border-border w-full border-collapse text-sm tabular-nums">
         {children}
       </table>

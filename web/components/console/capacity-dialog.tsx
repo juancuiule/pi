@@ -159,7 +159,7 @@ export const CapacityGuardProvider = ({
               Nothing can be paused right now. Try again in a moment.
             </p>
           ) : (
-            <ul className="flex flex-col gap-2">
+            <ul className="flex min-h-0 flex-col gap-2 overflow-y-auto">
               {holders.map((holder) => (
                 <HolderRow
                   key={holder.id}
