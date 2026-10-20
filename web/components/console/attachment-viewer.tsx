@@ -69,7 +69,7 @@ const TableView = ({ prepared }: { prepared: PreparedAttachment }) => {
   const [header = "", ...rows] = lines;
   return (
     <div className="flex flex-col gap-3">
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="scroll-fade-x overflow-x-auto rounded-lg border">
         <table className="w-full border-collapse text-xs">
           <thead className="bg-muted">
             <tr>

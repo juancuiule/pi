@@ -107,15 +107,17 @@ export const AddSoftwareDialog = ({
             {SOFTWARE_BUILD_HINT}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <SoftwareChecklist
-          choices={softwareChoices(
-            catalog,
-            conversation.sandbox,
-            conversation.software,
-            picked
-          )}
-          onPick={(id, on) => setPicked((current) => pick(current, id, on))}
-        />
+        <div className="min-h-0 overflow-y-auto">
+          <SoftwareChecklist
+            choices={softwareChoices(
+              catalog,
+              conversation.sandbox,
+              conversation.software,
+              picked
+            )}
+            onPick={(id, on) => setPicked((current) => pick(current, id, on))}
+          />
+        </div>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
