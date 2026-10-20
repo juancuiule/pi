@@ -527,7 +527,7 @@ const showEarlier = async (
     toast.error(
       error instanceof Error
         ? error.message
-        : "Could not load the earlier entries."
+        : "Couldn't load earlier entries. Try again."
     );
   }
 };

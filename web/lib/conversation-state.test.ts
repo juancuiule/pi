@@ -192,7 +192,7 @@ describe(applyEvent, () => {
       } as unknown as ConversationEvent,
     ]);
     expect(state.queued).toBe(1);
-    expect(state.failures).toStrictEqual(["pi.generation: boom"]);
+    expect(state.failures).toStrictEqual(["boom"]);
   });
 
   it("keeps the inputs that were never answered, from the snapshot and as they settle", () => {

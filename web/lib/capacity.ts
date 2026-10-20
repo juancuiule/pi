@@ -37,6 +37,13 @@ const NOUNS: Record<CapacityShortage["resource"], [string, string]> = {
   desktop: ["desktop sandbox", "desktop sandboxes"],
 };
 
+/** What a waiter is short of, after "waiting for" ("an active conversation", "a shell sandbox"). */
+export const WAITING_FOR: Record<CapacityShortage["resource"], string> = {
+  seat: "an active conversation",
+  shell: "a shell sandbox",
+  desktop: "a desktop sandbox",
+};
+
 /** "All 3 shell sandboxes are in use." */
 export const shortageText = (shortage: CapacityShortage): string => {
   const [one, many] = NOUNS[shortage.resource];

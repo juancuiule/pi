@@ -63,7 +63,7 @@ const levelHint = (levels: boolean, locked: boolean): string | undefined => {
   if (locked) {
     return "Always on";
   }
-  return levels ? undefined : "Needs a bigger machine; upgrade first";
+  return levels ? undefined : "Needs a shell or desktop sandbox; upgrade first";
 };
 
 export const SettingsPanel = ({
@@ -78,7 +78,7 @@ export const SettingsPanel = ({
     {approvals === undefined ? null : (
       <Row
         label="Ask before running commands"
-        hint="You approve each command, file change and desktop action, and the agent asking for a bigger machine."
+        hint="You approve each command, file change and desktop action. The agent also asks before upgrading to a shell or desktop sandbox."
         checked={approvals.ask}
         disabled={disabled}
         onChange={approvals.handleChange}

@@ -6,7 +6,7 @@ import { Hourglass } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { waitingShortage } from "@/lib/capacity";
+import { WAITING_FOR, waitingShortage } from "@/lib/capacity";
 import { useMakeRoom } from "@/lib/capacity-context";
 import { useCancelWait, useCapacity } from "@/lib/queries";
 
@@ -27,7 +27,7 @@ export const WaitingNotice = ({
     <div className="bg-muted/50 flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm md:px-4">
       <Hourglass aria-hidden className="text-muted-foreground size-4" />
       <span className="flex-1">
-        The agent is waiting for a {shortage.resource} sandbox. Pause another
+        The agent is waiting for {WAITING_FOR[shortage.resource]}. Pause another
         conversation to make room.
       </span>
       <Button variant="outline" size="sm" onClick={() => makeRoom(shortage)}>

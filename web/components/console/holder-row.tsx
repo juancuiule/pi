@@ -31,7 +31,7 @@ export const HolderRow = ({
           disabled={disabled || holder.pausing}
           onClick={() => onPause(false)}
         >
-          After this run
+          Pause after this run
         </Button>
         <Button
           variant="outline"
