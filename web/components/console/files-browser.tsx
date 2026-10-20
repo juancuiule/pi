@@ -10,7 +10,9 @@ import type { CSSProperties } from "react";
 
 import { runApi } from "@/lib/api";
 import { useOpenFile } from "@/lib/file-context";
+import type { TreeChildren } from "@/lib/workspace-files";
 import {
+  cappedDirs,
   entryWirePath,
   mergeTreePaths,
   needsChildren as listingNeedsChildren,
@@ -42,10 +44,12 @@ const TREE_STYLE = {
  */
 const Tree = ({
   paths,
+  capped,
   onLoadDirectory,
   needsChildren,
 }: {
   paths: readonly string[];
+  capped: ReadonlySet<string>;
   onLoadDirectory: (dir: string) => void;
   needsChildren: (dir: string) => boolean;
 }) => {
@@ -53,6 +57,7 @@ const Tree = ({
   // Options apply once, when the model is created; the callbacks read the newest data through refs.
   const live = useRef({
     dirs: new Set<string>(),
+    capped,
     openFile,
     onLoadDirectory,
     needsChildren,
@@ -65,6 +70,7 @@ const Tree = ({
           .filter((path) => path.endsWith("/"))
           .map((path) => path.slice(0, -1))
       ),
+      capped,
       openFile,
       onLoadDirectory,
       needsChildren,
@@ -97,6 +103,11 @@ const Tree = ({
         live.current.onLoadDirectory(dir);
       }
     },
+    // A badge on a directory the endpoint cut short: it holds more entries than the row list shows.
+    renderRowDecoration: ({ row }) =>
+      live.current.capped.has(row.path.replace(/\/+$/u, ""))
+        ? { text: "500+", title: "Only the first 500 entries are listed" }
+        : null,
   });
   // Refreshed listings flow in as add/remove diffs: resetPaths would rebuild the store and collapse expansion.
   const previous = useRef(paths);
@@ -160,9 +171,9 @@ export const FilesBrowser = ({ id, live }: { id: number; live: boolean }) => {
     refetchInterval: 2000,
   });
   // Children the tree listing withheld (truncated or skipped dirs), fetched per directory on expand.
-  const [extra, setExtra] = useState<
-    Readonly<Record<string, readonly string[]>>
-  >({});
+  const [extra, setExtra] = useState<Readonly<Record<string, TreeChildren>>>(
+    {}
+  );
   // Directories already asked for, in flight or listed; a failure drops the dir so a later
   // trigger retries it.
   const requested = useRef(new Set<string>());
@@ -181,13 +192,13 @@ export const FilesBrowser = ({ id, live }: { id: number; live: boolean }) => {
       requested.current.add(dir);
       void (async () => {
         try {
-          const { entries } = await runApi((c) =>
+          const { entries, truncated } = await runApi((c) =>
             c.files.list({ params: { id }, query: { path: dir } })
           );
           if (mounted.current) {
             setExtra((prev) => ({
               ...prev,
-              [dir]: entries.map(entryWirePath),
+              [dir]: { paths: entries.map(entryWirePath), truncated },
             }));
           }
         } catch {
@@ -206,6 +217,7 @@ export const FilesBrowser = ({ id, live }: { id: number; live: boolean }) => {
     () => mergeTreePaths(data?.paths ?? [], extra),
     [data, extra]
   );
+  const capped = useMemo(() => cappedDirs(extra), [extra]);
 
   if (!live) {
     return (
@@ -242,6 +254,7 @@ export const FilesBrowser = ({ id, live }: { id: number; live: boolean }) => {
       <div className="min-h-0 flex-1">
         <Tree
           paths={paths}
+          capped={capped}
           onLoadDirectory={loadDirectory}
           needsChildren={dirNeedsChildren}
         />

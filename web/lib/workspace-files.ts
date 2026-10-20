@@ -88,6 +88,12 @@ const MARKERS: ReadonlySet<string> = new Set([".git", "node_modules"]);
 export const needsChildren = (dir: string, truncated: boolean): boolean =>
   truncated || dir.split("/").some((segment) => MARKERS.has(segment));
 
+/** A directory's lazily fetched children and whether the endpoint cut its listing short. */
+export interface TreeChildren {
+  readonly paths: readonly string[];
+  readonly truncated: boolean;
+}
+
 /** A directory listing entry as a tree wire path: directories carry the trailing "/". */
 export const entryWirePath = (entry: WorkspaceFileEntry): string =>
   entry.kind === "directory" ? `${entry.path}/` : entry.path;
@@ -98,11 +104,11 @@ export const entryWirePath = (entry: WorkspaceFileEntry): string =>
  */
 export const mergeTreePaths = (
   paths: readonly string[],
-  extra: Readonly<Record<string, readonly string[]>>
+  extra: Readonly<Record<string, TreeChildren>>
 ): string[] => {
   const listed = new Set(paths);
   const merged = new Set(paths);
-  for (const [dir, children] of Object.entries(extra)) {
+  for (const [dir, { paths: children }] of Object.entries(extra)) {
     if (!listed.has(`${dir}/`)) {
       continue;
     }
@@ -112,3 +118,13 @@ export const mergeTreePaths = (
   }
   return [...merged];
 };
+
+/** The directories whose fetched listing the endpoint cut short. */
+export const cappedDirs = (
+  extra: Readonly<Record<string, TreeChildren>>
+): ReadonlySet<string> =>
+  new Set(
+    Object.entries(extra)
+      .filter(([, { truncated }]) => truncated)
+      .map(([dir]) => dir)
+  );

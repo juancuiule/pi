@@ -2,6 +2,7 @@ import type { WorkspaceFileEntry } from "effect-pi/api";
 import { describe, expect, it } from "vitest";
 
 import {
+  cappedDirs,
   entryWirePath,
   fileLanguage,
   filePathOf,
@@ -90,23 +91,36 @@ describe(mergeTreePaths, () => {
   it("appends a listed directory's fetched children", () => {
     expect(
       mergeTreePaths(["src/", "src/a.ts"], {
-        src: ["src/b.ts", "src/lib/"],
+        src: { paths: ["src/b.ts", "src/lib/"], truncated: false },
       })
     ).toStrictEqual(["src/", "src/a.ts", "src/b.ts", "src/lib/"]);
   });
 
   it("dedupes children the listing already has", () => {
     expect(
-      mergeTreePaths(["src/", "src/a.ts"], { src: ["src/a.ts", "src/"] })
+      mergeTreePaths(["src/", "src/a.ts"], {
+        src: { paths: ["src/a.ts", "src/"], truncated: false },
+      })
     ).toStrictEqual(["src/", "src/a.ts"]);
   });
 
   it("drops children whose directory left the listing", () => {
     expect(
       mergeTreePaths(["keep/"], {
-        gone: ["gone/a.ts"],
-        keep: ["keep/b.ts"],
+        gone: { paths: ["gone/a.ts"], truncated: false },
+        keep: { paths: ["keep/b.ts"], truncated: false },
       })
     ).toStrictEqual(["keep/", "keep/b.ts"]);
+  });
+});
+
+describe(cappedDirs, () => {
+  it("names the directories the endpoint cut short", () => {
+    expect(
+      cappedDirs({
+        full: { paths: ["full/a"], truncated: false },
+        huge: { paths: ["huge/a"], truncated: true },
+      })
+    ).toStrictEqual(new Set(["huge"]));
   });
 });
