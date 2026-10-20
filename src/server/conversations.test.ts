@@ -1372,3 +1372,120 @@ describe("titles", () => {
     });
   });
 });
+
+describe("attention", () => {
+  it("flags a conversation whose last run ended on a model error", async () => {
+    const { layer } = setup([
+      fauxAssistantMessage([fauxText("boom")], {
+        stopReason: "error",
+        errorMessage: "boom",
+      }),
+    ]);
+
+    const listed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        yield* conversations.create({ sandbox: "none", prompt: "say hi" });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        return yield* conversations.list;
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(listed[0]?.attention).toStrictEqual({
+      reason: "model_error",
+      detail: "boom",
+    });
+  });
+
+  it("does not flag a run the person stopped", async () => {
+    const { layer, faux } = setup([
+      callTool("bash", { command: "sleep 5" }),
+      echoToolResult,
+    ]);
+
+    const listed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "shell",
+          prompt: "sleep",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "running")
+          )
+        );
+        yield* waitUntil(
+          Effect.sync(() => faux.getPendingResponseCount() === 1)
+        );
+        yield* conversations.stop(created.id);
+        return yield* conversations.list;
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(listed[0]?.status).toBe("idle");
+    expect(listed[0]?.attention).toBeUndefined();
+  }, 30_000);
+
+  it("flags a run the repeat guard ended", async () => {
+    const a = callTool("calculate", { op: "add", a: 1, b: 2 });
+    const b = callTool("calculate", { op: "multiply", a: 3, b: 4 });
+    const { layer } = setup([
+      ...Array.from({ length: 20 }, (_, i) => (i % 2 === 0 ? a : b)),
+      answer("done"),
+    ]);
+
+    const listed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        yield* conversations.create({ sandbox: "none", prompt: "loop" });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.status === "idle")
+          )
+        );
+        return yield* conversations.list;
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(listed[0]?.attention?.reason).toBe("repeat_guard");
+    expect(listed[0]?.attention?.detail).toContain("Ended the run");
+  });
+
+  it("clears the flag when a newer input settles well", async () => {
+    const { layer } = setup([
+      fauxAssistantMessage([fauxText("boom")], {
+        stopReason: "error",
+        errorMessage: "boom",
+      }),
+      answer("fine"),
+    ]);
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const created = yield* conversations.create({
+          sandbox: "none",
+          prompt: "say hi",
+        });
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.attention?.reason === "model_error")
+          )
+        );
+        yield* conversations.send(created.id, "again");
+        yield* waitUntil(
+          conversations.list.pipe(
+            Effect.map((all) => all[0]?.attention === undefined)
+          )
+        );
+        const listed = yield* conversations.list;
+        expect(listed[0]?.status).toBe("idle");
+      }).pipe(Effect.provide(layer))
+    );
+  });
+});
