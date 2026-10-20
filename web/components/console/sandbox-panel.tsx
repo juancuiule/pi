@@ -20,7 +20,7 @@ const PanelTabs = ({
   tab: PanelTab;
   onTab: (tab: PanelTab) => void;
 }) => (
-  <div role="tablist" className="flex shrink-0 gap-1">
+  <div className="flex shrink-0 gap-1">
     {(
       [
         ["shell", "Shell"],
@@ -31,8 +31,7 @@ const PanelTabs = ({
       <button
         key={value}
         type="button"
-        role="tab"
-        aria-selected={tab === value}
+        aria-pressed={tab === value}
         onClick={() => onTab(value)}
         className={buttonVariants({
           variant: tab === value ? "secondary" : "ghost",

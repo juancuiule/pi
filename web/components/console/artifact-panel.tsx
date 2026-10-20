@@ -138,7 +138,7 @@ const TabSwitch = ({
   tab: "page" | "code";
   onTab: (tab: "page" | "code") => void;
 }) => (
-  <div role="tablist" className="flex shrink-0 gap-1">
+  <div className="flex shrink-0 gap-1">
     {(
       [
         ["page", "Page"],
@@ -148,8 +148,7 @@ const TabSwitch = ({
       <button
         key={value}
         type="button"
-        role="tab"
-        aria-selected={tab === value}
+        aria-pressed={tab === value}
         onClick={() => onTab(value)}
         className={buttonVariants({
           variant: tab === value ? "secondary" : "ghost",

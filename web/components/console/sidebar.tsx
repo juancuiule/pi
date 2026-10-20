@@ -157,10 +157,9 @@ export const Sidebar = () => {
             const activity = activityOf(conversation, isResuming);
             return (
               <li key={conversation.id}>
-                <button
-                  type="button"
+                <Link
+                  href={`/?c=${conversation.id}`}
                   aria-current={selected ? "page" : undefined}
-                  onClick={() => router.push(`/?c=${conversation.id}`)}
                   className={cn(
                     "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2",
                     selected && "bg-accent text-accent-foreground font-medium"
@@ -209,7 +208,7 @@ export const Sidebar = () => {
                     {conversation.pausing ? " · Pausing" : ""}
                     {needsApproval ? " · Needs approval" : ""}
                   </span>
-                </button>
+                </Link>
               </li>
             );
           })}

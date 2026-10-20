@@ -44,6 +44,12 @@ export const ConsoleShell = ({ children }: { children: ReactNode }) => {
     <MenuContext.Provider value={openMenu}>
       <SearchContext.Provider value={openSearch}>
         <CapacityGuardProvider>
+          <a
+            href="#main"
+            className="bg-background ring-ring/50 sr-only z-50 rounded-md px-3 py-2 text-sm outline-none focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:ring-2"
+          >
+            Skip to content
+          </a>
           <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
           <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
             <SheetContent side="left" className="w-72">
@@ -61,11 +67,25 @@ export const ConsoleShell = ({ children }: { children: ReactNode }) => {
                 <Sidebar />
               </ResizablePanel>
               <ResizableHandle />
-              <ResizablePanel minSize="30%">{children}</ResizablePanel>
+              <ResizablePanel minSize="30%">
+                <main
+                  id="main"
+                  tabIndex={-1}
+                  className="h-full min-h-0 outline-none"
+                >
+                  {children}
+                </main>
+              </ResizablePanel>
             </ResizablePanelGroup>
           ) : null}
           {isDesktop === false ? (
-            <div className="flex h-dvh flex-col">{children}</div>
+            <main
+              id="main"
+              tabIndex={-1}
+              className="flex h-dvh min-h-0 flex-col outline-none"
+            >
+              {children}
+            </main>
           ) : null}
         </CapacityGuardProvider>
       </SearchContext.Provider>
