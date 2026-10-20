@@ -199,3 +199,39 @@ div.console-terminal {
   --term-color-14: #0184bc;
   --term-color-15: #ffffff;
 }
+
+/* Reduced motion: overlays crossfade in place instead of sliding or scaling, and every other
+   transition snaps. The tw-animate-css enter/exit keyframes read the --tw-enter and --tw-exit
+   custom properties, so zeroing the movement vars keeps only their opacity. transition-property
+   keeps the non-spatial entries from the Tailwind transition list, which drops sheet and dialog
+   slide-ins, collapsible height, switch-thumb and chevron rotations without touching color or
+   opacity fades. Unlayered so it wins over layered utilities. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-enter-scale: 1;
+    --tw-enter-rotate: 0deg;
+    --tw-enter-blur: 0px;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+    --tw-exit-scale: 1;
+    --tw-exit-rotate: 0deg;
+    --tw-exit-blur: 0px;
+    transition-property:
+      color, background-color, border-color, outline-color,
+      text-decoration-color, fill, stroke, --tw-gradient-from,
+      --tw-gradient-via, --tw-gradient-to, opacity, box-shadow, filter,
+      -webkit-backdrop-filter, backdrop-filter, display, content-visibility,
+      overlay, pointer-events;
+  }
+
+  /* The shadcn scroll-fade-* utilities reveal the scroll edge mask with scroll-timeline animations. */
+  .scroll-fade,
+  .scroll-fade-x,
+  .scroll-fade-y {
+    animation: none;
+  }
+}
