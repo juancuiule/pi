@@ -122,7 +122,6 @@ import type { Skill } from "../skills/format.ts";
 import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
 import type { SkillRemoveOutcome, SkillSaveOutcome } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
-import { Calculator } from "../tools/calculator.ts";
 import { desktopExtension } from "../tools/desktop.ts";
 import { questionsExtension } from "../tools/questions.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
@@ -339,13 +338,13 @@ export const extensionsFor = (
 ): Extension[] => {
   switch (level) {
     case "none": {
-      return [Calculator];
+      return [];
     }
     case "shell": {
-      return [Calculator, CodingTools];
+      return [CodingTools];
     }
     case "desktop": {
-      return [Calculator, CodingTools, desktop];
+      return [CodingTools, desktop];
     }
     default: {
       throw new TypeError(`Unknown Level: ${level satisfies never}`);

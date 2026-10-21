@@ -10,10 +10,10 @@ describe(parseSkillMessage, () => {
   it("splits the skill block from the request", () => {
     expect(
       parseSkillMessage(
-        '<skill name="repo-report">\n# Report\nDo it.\n</skill>\n\nreport this repo'
+        '<skill name="convert">\n# Report\nDo it.\n</skill>\n\nreport this repo'
       )
     ).toStrictEqual({
-      skill: "repo-report",
+      skill: "convert",
       instructions: "# Report\nDo it.",
       request: "report this repo",
     });

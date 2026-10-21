@@ -12,8 +12,8 @@ import { describe, expect, it } from "vitest";
 import { Agents } from "./agents/agents.ts";
 import { callTool, fauxAgents, openSeat } from "./testing/faux.ts";
 
-const a = callTool("calculate", { op: "add", a: 1, b: 2 });
-const b = callTool("calculate", { op: "multiply", a: 3, b: 4 });
+const a = callTool("bash", { command: "echo a" });
+const b = callTool("bash", { command: "echo b" });
 
 const toolResults = (
   entries: readonly { kind: string; model?: unknown }[]
@@ -43,7 +43,7 @@ describe("repeat guard", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const agents = yield* Agents;
-          const seat = yield* openSeat();
+          const seat = yield* openSeat({ sandbox: "shell" });
           yield* seat.ask("page the git log");
           const entries = [
             ...(yield* Stream.runCollect(yield* agents.entries(seat.id))),
@@ -67,7 +67,7 @@ describe("repeat guard", () => {
   it("leaves a run of distinct calls alone", async () => {
     const { layer } = fauxAgents([
       ...Array.from({ length: 8 }, (_, i) =>
-        callTool("calculate", { op: "add", a: i, b: 1 })
+        callTool("bash", { command: `echo ${i}` })
       ),
       fauxAssistantMessage([fauxText("done")]),
     ]);
@@ -76,7 +76,7 @@ describe("repeat guard", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const agents = yield* Agents;
-          const seat = yield* openSeat();
+          const seat = yield* openSeat({ sandbox: "shell" });
           const reply = yield* seat.ask("add up");
           const entries = [
             ...(yield* Stream.runCollect(yield* agents.entries(seat.id))),

@@ -8,11 +8,11 @@ import {
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
 import type { McpServerConfig } from "../mcp.ts";
-import { Skills } from "../skills/skills.ts";
+import { Skills, SkillSource } from "../skills/skills.ts";
 import {
   ask,
   callTool,
@@ -130,9 +130,12 @@ describe("Agents with MCP servers", () => {
       },
     };
     const agents = fauxAgents([fauxAssistantMessage([fauxText("ok")])], {
-      skills: Skills.directory(
-        "skills",
-        mkdtempSync(path.join(tmpdir(), "effect-pi-skills-org-"))
+      skills: Skills.layer.pipe(
+        Layer.provide(
+          SkillSource.memory({
+            "alpha/SKILL.md": "---\nname: alpha\ndescription: Alpha.\n---\n",
+          })
+        )
       ),
       mcp: [echo, unreachable],
     });
@@ -144,12 +147,7 @@ describe("Agents with MCP servers", () => {
     );
     expect(
       capabilities.skills.map((s) => [s.name, s.modelInvocable])
-    ).toStrictEqual([
-      ["desktop-notes", true],
-      ["diagrams", true],
-      ["repo-report", true],
-      ["unit-conversion", true],
-    ]);
+    ).toStrictEqual([["alpha", true]]);
     expect(capabilities.mcp.map((s) => [s.name, s.status])).toStrictEqual([
       ["test", "connected"],
       ["down", "unavailable"],

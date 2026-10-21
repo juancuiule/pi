@@ -96,7 +96,7 @@ describe("agent tracing", () => {
   it("nests model requests and tool calls under the ask", async () => {
     const { spans, tracer } = recordingTracer();
     const { layer } = fauxAgents([
-      callTool("calculate", { op: "multiply", a: 6, b: 7 }),
+      callTool("artifact_create", { title: "The answer", html: "<p>42</p>" }),
       fauxAssistantMessage([fauxText("42")]),
     ]);
 
@@ -110,7 +110,7 @@ describe("agent tracing", () => {
     expect(tree(spans)).toStrictEqual([
       "Seat.ask < -",
       "generation < Seat.ask",
-      "tool calculate < Seat.ask",
+      "tool artifact_create < Seat.ask",
       "generation < Seat.ask",
     ]);
     const [askSpan, firstRequest, toolCall] = spans.filter(
@@ -123,14 +123,14 @@ describe("agent tracing", () => {
     }).toStrictEqual({
       ask: "42",
       model: "faux-1",
-      toolOutput: '[{"type":"text","text":"42"}]',
+      toolOutput: expect.stringContaining("(art_"),
     });
   });
 
   it("puts a send-driven run's spans on one trace, recorded for feedback", async () => {
     const { spans, tracer } = recordingTracer();
     const { layer } = fauxAgents([
-      callTool("calculate", { op: "multiply", a: 6, b: 7 }),
+      callTool("artifact_create", { title: "The answer", html: "<p>42</p>" }),
       fauxAssistantMessage([fauxText("42")]),
     ]);
     const traced = await Effect.runPromise(
@@ -177,7 +177,7 @@ describe("agent tracing", () => {
   it("starts a fresh trace for the next run of the same conversation", async () => {
     const { spans, tracer } = recordingTracer();
     const { layer } = fauxAgents([
-      callTool("calculate", { op: "multiply", a: 6, b: 7 }),
+      callTool("artifact_create", { title: "The answer", html: "<p>42</p>" }),
       fauxAssistantMessage([fauxText("42")]),
       fauxAssistantMessage([fauxText("43")]),
     ]);
@@ -220,22 +220,25 @@ describe("failed tool calls", () => {
   it("records why the tool failed", async () => {
     const { spans, tracer } = recordingTracer();
     const { layer } = fauxAgents([
-      callTool("calculate", { op: "divide", a: 1, b: 0 }),
-      fauxAssistantMessage([fauxText("Cannot divide by zero.")]),
+      callTool("artifact_update", { id: "art_missing", html: "<p>x</p>" }),
+      fauxAssistantMessage([fauxText("There is no such page.")]),
     ]);
 
     await Effect.runPromise(
-      ask("What is 1 / 0?").pipe(
+      ask("Change the page.").pipe(
         Effect.provide(layer),
         Effect.provideService(Tracer.Tracer, tracer)
       )
     );
 
-    const tool = spans.find((span) => span.name === "tool calculate");
+    const tool = spans.find((span) => span.name === "tool artifact_update");
     expect({
       level: tool?.attributes.get("langfuse.observation.level"),
       message: tool?.attributes.get("langfuse.observation.status_message"),
-    }).toStrictEqual({ level: "ERROR", message: "Division by zero" });
+    }).toStrictEqual({
+      level: "ERROR",
+      message: "No artifact art_missing in this conversation.",
+    });
   });
 });
 
@@ -288,9 +291,9 @@ describe(redactArtifactArguments, () => {
     expect(json).toBe(
       '{"id":"art_1","edits":[{"find":"[6 characters of HTML]","replace":"[9 characters of HTML]"}],"title":"kept"}'
     );
-    expect(
-      redactArtifactArguments("calculate", { html: "kept" })
-    ).toStrictEqual({ html: "kept" });
+    expect(redactArtifactArguments("bash", { html: "kept" })).toStrictEqual({
+      html: "kept",
+    });
   });
 });
 
@@ -314,7 +317,7 @@ describe(redactAttachments, () => {
       {
         role: "toolResult",
         toolCallId: "c2",
-        toolName: "calculate",
+        toolName: "bash",
         content: [{ type: "text", text: "4" }],
         isError: false,
         timestamp: 0,

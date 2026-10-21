@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
@@ -213,16 +212,10 @@ describe("HTTP API", () => {
 
     const byName = new Map(extensions.map((each) => [each.name, each]));
     expect(
-      [
-        "calculator",
-        "coding-tools",
-        "desktop",
-        "workspace",
-        "artifacts",
-        "tracing",
-      ].map((name) => byName.get(name)?.levels)
+      ["coding-tools", "desktop", "workspace", "artifacts", "tracing"].map(
+        (name) => byName.get(name)?.levels
+      )
     ).toStrictEqual([
-      ["none", "shell", "desktop"],
       ["shell", "desktop"],
       ["desktop"],
       ["none", "shell", "desktop"],
@@ -252,7 +245,6 @@ describe("HTTP API", () => {
       agent.sections,
     ]).toStrictEqual([
       [
-        "calculate",
         "upgrade_workspace",
         "read_attachment",
         "search_attachment",
@@ -269,9 +261,13 @@ describe("HTTP API", () => {
   });
 
   it("expands /skill: on create and refuses an unknown skill on send", async () => {
-    const skills = Skills.directory(
-      "skills",
-      mkdtempSync(path.join(tmpdir(), "effect-pi-skills-org-"))
+    const skills = Skills.layer.pipe(
+      Layer.provide(
+        SkillSource.memory({
+          "convert/SKILL.md":
+            "---\nname: convert\ndescription: Convert units.\n---\nDo it.\n",
+        })
+      )
     );
     const agents = fauxAgents(
       [
@@ -286,7 +282,7 @@ describe("HTTP API", () => {
         const created = yield* client.conversations.create({
           payload: {
             sandbox: "none",
-            prompt: "/skill:unit-conversion 3 mi to km",
+            prompt: "/skill:convert 3 mi to km",
           },
         });
         const stream = yield* client.conversations.events({
@@ -313,8 +309,8 @@ describe("HTTP API", () => {
         return { created, unknown, events: JSON.stringify([...events]) };
       }).pipe(Effect.provide(serverWith(agents.layer, skills)))
     );
-    expect(result.created.title).toBe("/skill:unit-conversion 3 mi to km");
-    expect(result.events).toContain('<skill name=\\"unit-conversion\\">');
+    expect(result.created.title).toBe("/skill:convert 3 mi to km");
+    expect(result.events).toContain('<skill name=\\"convert\\">');
     expect(result.events).toContain("3 mi to km");
     expect(result.unknown).toMatchObject({
       _tag: "SkillNotFound",
