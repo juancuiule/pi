@@ -8,11 +8,14 @@ import { usePanelRef } from "react-resizable-panels";
 import { toast } from "sonner";
 
 import {
+  ArtifactDrawer,
   ArtifactResizablePanel,
-  ArtifactSheet,
 } from "@/components/console/artifact-panel";
 import { ConversationHeader } from "@/components/console/conversation-header";
-import { FileResizablePanel, FileSheet } from "@/components/console/file-panel";
+import {
+  FileDrawer,
+  FileResizablePanel,
+} from "@/components/console/file-panel";
 import { MessageInput } from "@/components/console/message-input";
 import { NewConversation } from "@/components/console/new-conversation";
 import {
@@ -357,13 +360,13 @@ const Console = () => {
             />
           </>
         ) : null}
-        <ArtifactSheet
+        <ArtifactDrawer
           artifact={artifact}
           conversation={selectedId}
           isDesktop={isDesktop}
           onClose={() => setArtifact(undefined)}
         />
-        <FileSheet
+        <FileDrawer
           file={file}
           conversation={selectedId}
           isDesktop={isDesktop}

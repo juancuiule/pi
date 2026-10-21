@@ -51,9 +51,10 @@ export const SandboxContent = ({
 
 /**
  * Below the desktop breakpoint the sandbox panel is a bottom drawer instead of a resizable pane. Non-modal so
- * the transcript stays interactive behind it and the artifact and file sheets can stack above. The content is
- * data-vaul-no-drag so its scrollable regions scroll instead of dragging — the handle is the drag surface.
- * Closing unmounts the panel; the shell's PTY lives on the server and replays on reconnect.
+ * the transcript stays interactive behind it and the artifact and file drawers can stack above. The content is
+ * data-vaul-no-drag so its scrollable regions scroll instead of dragging; handleOnly restricts presses to the
+ * handle so vaul's pointer capture can't swallow clicks aimed at the file tree's shadow-DOM rows. Closing
+ * unmounts the panel; the shell's PTY lives on the server and replays on reconnect.
  */
 export const SandboxDrawer = ({
   open,
@@ -77,6 +78,7 @@ export const SandboxDrawer = ({
       onOpenChange={onOpenChange}
       modal={false}
       snapPoints={SNAP_POINTS}
+      handleOnly
     >
       <DrawerContent>
         <DrawerTitle className="sr-only">
