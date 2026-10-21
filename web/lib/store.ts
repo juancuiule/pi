@@ -28,6 +28,8 @@ interface Store {
   readonly resuming: Readonly<Record<number, number>>;
   /** Conversations whose thinking steps the person chose to hide in the transcript. */
   readonly hiddenThinking: Readonly<Record<number, true>>;
+  /** Conversations shown in the transcript's simple view: messages and final answers, details folded away. */
+  readonly simpleView: Readonly<Record<number, true>>;
   apply(id: number, event: ConversationEvent): void;
   /** One stream chunk's events in a single update: a commit's events land together or not at all. */
   applyAll(id: number, events: Iterable<ConversationEvent>): void;
@@ -45,6 +47,8 @@ interface Store {
   beginResume(id: number): void;
   endResume(id: number): void;
   toggleThinking(id: number): void;
+  /** Switch `id`'s transcript between the full view and the simple one. */
+  toggleSimple(id: number): void;
 }
 
 const update =
@@ -84,6 +88,7 @@ export const useConversationStore = create<Store>()((set) => ({
   ended: {},
   resuming: {},
   hiddenThinking: {},
+  simpleView: {},
   apply: (id, event) => set((store) => applyBatch(store, id, [event])),
   applyAll: (id, events) => set((store) => applyBatch(store, id, events)),
   markEnded: (id) =>
@@ -119,6 +124,14 @@ export const useConversationStore = create<Store>()((set) => ({
       }
       return { hiddenThinking: { ...store.hiddenThinking, [id]: true } };
     }),
+  toggleSimple: (id) =>
+    set((store) => {
+      if (store.simpleView[id] === true) {
+        const { [id]: _full, ...simpleView } = store.simpleView;
+        return { simpleView };
+      }
+      return { simpleView: { ...store.simpleView, [id]: true } };
+    }),
 }));
 
 /** True while `conversation` reads paused and a resume is in flight for it — the wait the resuming view covers. */
@@ -134,3 +147,7 @@ export const useResuming = (
 /** True while `id`'s thinking steps are hidden in its transcript. */
 export const useThinkingHidden = (id: number): boolean =>
   useConversationStore((store) => store.hiddenThinking[id] === true);
+
+/** True while `id`'s transcript shows the simple view. */
+export const useSimpleView = (id: number): boolean =>
+  useConversationStore((store) => store.simpleView[id] === true);

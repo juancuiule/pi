@@ -118,6 +118,12 @@ const ConversationsHandlers = HttpApiBuilder.group(
           })
         )
       )
+      .handle("withdraw", ({ params }) =>
+        conversations.withdraw(params.id, params.submission).pipe(
+          Effect.map((outcome) => ({ outcome })),
+          Effect.catchTag("AgentError", Effect.die)
+        )
+      )
       .handle("resume", ({ params }) =>
         conversations.resume(params.id).pipe(
           Effect.catchTags({

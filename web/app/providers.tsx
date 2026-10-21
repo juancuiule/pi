@@ -20,7 +20,7 @@ export const Providers = ({ children }: { children: ReactNode }) => {
     >
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>{children}</TooltipProvider>
-        <Toaster />
+        <Toaster closeButton />
       </QueryClientProvider>
     </ThemeProvider>
   );

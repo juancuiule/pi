@@ -20,6 +20,7 @@ import type {
   Extension,
   Harness as HarnessType,
   Storage,
+  SubmissionId,
   SubmissionRecord,
   TaskId,
   ToolRegistration,
@@ -33,6 +34,7 @@ import {
   configure,
   createRegistry,
   Harness,
+  InboxDoc,
   LiveDoc,
   MemoryStorage,
   watchEvents,
@@ -78,6 +80,7 @@ import type { Claim, ClaimCancelled } from "../capacity.ts";
 import type {
   ConversationEvent,
   HistoryPage,
+  QueuedInput,
   UnansweredInput,
 } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
@@ -96,6 +99,7 @@ import {
   InvalidSetting,
   InvalidUpgrade,
   SandboxUnavailable,
+  SubmissionNotFound,
   TitleGenerationFailed,
   TraceUnavailable,
 } from "../errors.ts";
@@ -178,6 +182,14 @@ const attempt = <A>(run: () => Promise<A>) =>
 
 /** History pages are capped so a transcript cannot be pulled whole in one request. */
 const HISTORY_PAGE = 200;
+
+/** The text of a queued input's content; its image blocks are left out. */
+const inputText = (content: UserInput): string =>
+  typeof content === "string"
+    ? content
+    : content
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n\n");
 
 // The hidden range is everything on the chain before the latest head marker's first retained entry; its `head`
 // always resolves to a stored numeric id (`"self"` is rewritten when the marker is appended).
@@ -672,6 +684,17 @@ export class Agents extends Context.Service<
     attention(
       id: ConversationId
     ): Effect.Effect<Attention | undefined, AgentError | ConversationNotFound>;
+    /**
+     * Withdraw a queued input — a message still waiting behind a run — by submission id. `placed` or `settled`
+     * report that it is already out of the queue; `SubmissionNotFound` when it is unknown to this conversation.
+     */
+    withdraw(
+      id: ConversationId,
+      submission: number
+    ): Effect.Effect<
+      "withdrawn" | "placed" | "settled",
+      AgentError | ConversationNotFound | SubmissionNotFound
+    >;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -2236,6 +2259,25 @@ export class Agents extends Context.Service<
             return page.items.length === 0 ? false : bound;
           }, context);
 
+        // The inbox's items as the console's queue shows them: the input's text, or a write's entry kind.
+        const queuedInputs = async (
+          id: ConversationId
+        ): Promise<QueuedInput[]> => {
+          const doc = await harness.snapshot(InboxDoc, id, context);
+          return (doc?.items ?? []).map((item): QueuedInput => ({
+            id: item.id,
+            mode: item.mode,
+            ...(item.mode === "write"
+              ? {
+                  text: "",
+                  ...(typeof item.entry["kind"] === "string"
+                    ? { kind: item.entry["kind"] }
+                    : {}),
+                }
+              : { text: inputText(item.content as UserInput) }),
+          }));
+        };
+
         const history = Effect.fn("Agents.history")(function* (
           id: ConversationId,
           range: {
@@ -2363,6 +2405,32 @@ export class Agents extends Context.Service<
           return yield* attempt(() => attentionOf(durableStorage, id, context));
         });
 
+        /**
+         * Withdraw a queued input before a run places it: it settles `unanswered` and leaves the inbox. `placed`
+         * and `settled` report that it is already out of the queue — nothing is withdrawn.
+         */
+        const withdraw = Effect.fn("Agents.withdraw")(function* (
+          id: ConversationId,
+          submission: number
+        ) {
+          yield* handleOf(id);
+          const outcome = yield* attempt(() =>
+            harness.abortSubmission(submission as SubmissionId, context, id)
+          );
+          if (outcome === "not_found") {
+            return yield* new SubmissionNotFound({
+              id: Number(id),
+              submission,
+            });
+          }
+          if (outcome === "aborted") {
+            return "withdrawn" as const;
+          }
+          return outcome === "already_placed"
+            ? ("placed" as const)
+            : ("settled" as const);
+        });
+
         const events = Effect.fn("Agents.events")(function* (
           id: ConversationId
         ) {
@@ -2385,6 +2453,7 @@ export class Agents extends Context.Service<
                 attempt(async () => ({
                   earlier: await earlierOf(id),
                   unanswered: await unansweredInputs(id),
+                  inbox: await queuedInputs(id),
                 }))
               );
               if (Exit.isFailure(settled)) {
@@ -2393,23 +2462,36 @@ export class Agents extends Context.Service<
               }
               Queue.offerUnsafe(queue, {
                 ...watch.snapshot,
+                inbox: settled.value.inbox,
                 earlier: settled.value.earlier,
                 unanswered: settled.value.unanswered,
               });
               // A watch that falls behind replaces its undelivered batches with a fresh snapshot, which gets the
               // unanswered inputs read again. Deliveries are awaited one at a time, so the order holds; a read that
-              // fails ends the watch, and the stream with it.
+              // fails ends the watch, and the stream with it. The queue's items are a snapshot in either kind of
+              // event, so both carry the doc's current contents — with the input text the wire shape omits.
               watch.start(async (batch) => {
+                const inbox = batch.some(
+                  (event) =>
+                    event.type === "snapshot" || event.type === "inbox_update"
+                )
+                  ? await queuedInputs(id)
+                  : undefined;
                 const delivered = await Promise.all(
-                  batch.map(async (event): Promise<ConversationEvent> =>
-                    event.type === "snapshot"
-                      ? {
-                          ...event,
-                          earlier: await earlierOf(id),
-                          unanswered: await unansweredInputs(id),
-                        }
-                      : event
-                  )
+                  batch.map(async (event): Promise<ConversationEvent> => {
+                    if (event.type === "snapshot") {
+                      return {
+                        ...event,
+                        inbox: inbox ?? [],
+                        earlier: await earlierOf(id),
+                        unanswered: await unansweredInputs(id),
+                      };
+                    }
+                    if (event.type === "inbox_update") {
+                      return { type: "inbox_update", items: inbox ?? [] };
+                    }
+                    return event;
+                  })
                 );
                 Queue.offerAllUnsafe(queue, delivered);
               });
@@ -2872,6 +2954,7 @@ export class Agents extends Context.Service<
           entryTrace,
           entries,
           attention,
+          withdraw,
           renameTitle,
           autoTitle,
           generateTitle,

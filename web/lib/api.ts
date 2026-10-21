@@ -88,6 +88,7 @@ const plainError: Record<string, string> = {
   WorkspaceFileNotFound: "The file isn't in the workspace (anymore).",
   SandboxUnavailable: "The conversation's sandbox isn't running.",
   EntryNotFound: "That message can't be rated.",
+  SubmissionNotFound: "That message is no longer queued.",
   TraceUnavailable: "Scoring isn't available for that message.",
 };
 

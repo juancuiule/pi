@@ -273,6 +273,17 @@ export const useSendMessage = (id: number) => {
   });
 };
 
+/** Take a queued message back before a run picks it up; the outcome says whether it was still queued. */
+export const useWithdrawMessage = (id: number | undefined) =>
+  useMutation({
+    mutationFn: (submission: number) =>
+      id === undefined
+        ? Promise.reject(new Error("The conversation is not ready yet."))
+        : runApi((c) =>
+            c.conversations.withdraw({ params: { id, submission } })
+          ),
+  });
+
 export const useDecideApproval = (id: number) => {
   const queryClient = useQueryClient();
   return useMutation({

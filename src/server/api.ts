@@ -26,6 +26,7 @@ import {
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
+  SubmissionNotFound,
   TitleGenerationFailed,
   TraceUnavailable,
   WorkspaceFileNotFound,
@@ -39,6 +40,7 @@ export type {
   ConversationEvent,
   ConversationSnapshot,
   HistoryPage,
+  QueuedInput,
   UnansweredInput,
 } from "../conversation-events.ts";
 export type {
@@ -64,6 +66,7 @@ export {
   InvalidUpgrade,
   SandboxUnavailable,
   SkillNotFound,
+  SubmissionNotFound,
   TitleGenerationFailed,
   TraceUnavailable,
   WorkspaceFileNotFound,
@@ -278,6 +281,7 @@ const ById = { id: Schema.Int };
 const Empty = EmptyMessage.pipe(HttpApiSchema.status(400));
 const Refused = AttachmentRefused.pipe(HttpApiSchema.status(400));
 const NoAttachment = AttachmentNotFound.pipe(HttpApiSchema.status(404));
+const NoSubmission = SubmissionNotFound.pipe(HttpApiSchema.status(404));
 const NoEntry = EntryNotFound.pipe(HttpApiSchema.status(404));
 const NoTrace = TraceUnavailable.pipe(HttpApiSchema.status(409));
 /** Text, attachments (ids of uploads), or both. */
@@ -338,6 +342,18 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
       NoAttachment,
     ],
   }),
+  // Take back a message still queued behind a run; `placed`/`settled` say it already went in.
+  HttpApiEndpoint.post(
+    "withdraw",
+    "/conversations/:id/messages/:submission/withdraw",
+    {
+      params: { id: Schema.Int, submission: Schema.Int },
+      success: Schema.Struct({
+        outcome: Schema.Literals(["withdrawn", "placed", "settled"]),
+      }),
+      error: [NotFound, NoSubmission],
+    }
+  ),
   // What the conversation runs with now: its settings, model and prompt sections.
   HttpApiEndpoint.get("agent", "/conversations/:id/agent", {
     params: ById,

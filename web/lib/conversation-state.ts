@@ -8,11 +8,13 @@ import type {
   HistoryPage,
   Message,
   MessageChange,
+  QueuedInput,
   UnansweredInput,
   UsageState,
 } from "effect-pi/api";
 
 import type { AttachmentRef } from "./attachments";
+import { boundaryNote } from "./boundary-note";
 import { unansweredNote } from "./unanswered-note";
 
 export interface ToolRun {
@@ -70,7 +72,8 @@ export interface ConversationState {
   readonly streaming: AssistantMessage | undefined;
   readonly tools: Readonly<Record<string, ToolRun>>;
   readonly running: boolean;
-  readonly queued: number;
+  /** The inbox's queued submissions, in order, with each input's text. */
+  readonly queue: readonly QueuedInput[];
   readonly usage: UsageState | undefined;
   readonly failures: readonly string[];
   /** User messages whose run ended without an answer, by entry id. */
@@ -92,7 +95,7 @@ export const initialState: ConversationState = {
   streaming: undefined,
   tools: {},
   running: false,
-  queued: 0,
+  queue: [],
   usage: undefined,
   failures: [],
   unanswered: {},
@@ -390,7 +393,7 @@ const applySnapshot = (
     ),
     streaming: event.generation?.message,
     running: event.run !== undefined,
-    queued: event.inbox.length,
+    queue: event.inbox,
     usage: event.usage,
     hydrated: true,
     unanswered: Object.fromEntries(
@@ -537,7 +540,7 @@ export const applyEvent = (
         : { ...ended, entries: withEntry(ended.entries, event.entry) };
     }
     case "inbox_update": {
-      return { ...state, queued: event.items.length };
+      return { ...state, queue: event.items };
     }
     case "usage_changed": {
       return { ...state, usage: event.usage };
@@ -578,6 +581,62 @@ export const toolResultOf = (
     (m): m is Extract<Message, { role: "toolResult" }> =>
       m.role === "toolResult" && m.toolCallId === callId
   );
+
+/**
+ * The simple view's grouping of a transcript span: the person's own messages stand alone; everything between
+ * them — the run's thinking, tool calls, boundary rows — folds into one expandable block.
+ */
+export type SimpleItem =
+  | { readonly kind: "message"; readonly entry: EntryRecord }
+  | { readonly kind: "run"; readonly entries: readonly EntryRecord[] };
+
+/**
+ * Group `entries` into `SimpleItem`s: a user entry that is not a boundary (a head marker carries a user-role
+ * message, but it is not something the person sent) breaks the run.
+ */
+export const groupSimple = (
+  entries: readonly EntryRecord[]
+): readonly SimpleItem[] => {
+  const items: SimpleItem[] = [];
+  let run: EntryRecord[] = [];
+  const flush = () => {
+    if (run.length > 0) {
+      items.push({ kind: "run", entries: run });
+      run = [];
+    }
+  };
+  for (const entry of entries) {
+    if (
+      entry.model?.[0]?.role === "user" &&
+      boundaryNote(entry) === undefined
+    ) {
+      flush();
+      items.push({ kind: "message", entry });
+    } else {
+      run.push(entry);
+    }
+  }
+  flush();
+  return items;
+};
+
+/** A run's closing answer: the last text block of its last assistant entry that has one. */
+export const finalResponse = (
+  entries: readonly EntryRecord[]
+): { readonly entry: EntryRecord; readonly text: string } | undefined => {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    const message = entry?.model?.[0];
+    if (message?.role !== "assistant") {
+      continue;
+    }
+    const text = message.content.findLast((block) => block.type === "text");
+    if (text !== undefined && text.type === "text") {
+      return { entry, text: text.text };
+    }
+  }
+  return undefined;
+};
 
 export const totalUsage = (usage: UsageState | undefined) => {
   let tokens = 0;

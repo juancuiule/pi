@@ -37,7 +37,7 @@ import {
   useAnswerQuestions,
   useDecideApproval,
 } from "@/lib/queries";
-import { useConversationStore, useResuming } from "@/lib/store";
+import { useConversationStore, useResuming, useSimpleView } from "@/lib/store";
 import { useConversationEvents } from "@/lib/use-conversation-events";
 import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
 import type { OpenFile } from "@/lib/workspace-files";
@@ -218,6 +218,7 @@ const Console = () => {
     (store) =>
       selectedId !== undefined && store.hiddenThinking[selectedId] === true
   );
+  const simple = useSimpleView(selectedId ?? -1);
   const gone = useConversationStore(
     (store) => selectedId !== undefined && (store.ended[selectedId] ?? false)
   );
@@ -283,6 +284,7 @@ const Console = () => {
             conversation={selectedId}
             resuming={resuming}
             showThinking={!thinkingHidden}
+            simple={simple}
           />
           <Composer
             id={selectedId}

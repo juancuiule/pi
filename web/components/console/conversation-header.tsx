@@ -4,6 +4,7 @@ import type { ConversationSummary } from "effect-pi/api";
 import {
   Brain,
   Download,
+  ListCollapse,
   LoaderCircle,
   Menu,
   PanelRight,
@@ -40,6 +41,7 @@ import type { ConversationAction } from "@/lib/queries";
 import {
   useConversationStore,
   useResuming,
+  useSimpleView,
   useThinkingHidden,
 } from "@/lib/store";
 
@@ -95,7 +97,13 @@ const ConversationTitle = ({
 
   return (
     <div className="flex min-w-0 items-center gap-1">
-      <h1 className="min-w-0 flex-1 text-sm font-medium">
+      <h1
+        className={
+          editing
+            ? "min-w-0 flex-1 text-sm font-medium"
+            : "min-w-0 truncate text-sm font-medium"
+        }
+      >
         {editing ? (
           <input
             type="text"
@@ -127,7 +135,7 @@ const ConversationTitle = ({
             type="button"
             title={conversation.title}
             onClick={startEditing}
-            className="hover:bg-muted focus-visible:ring-ring -mx-1.5 -my-0.5 block w-full truncate rounded-md px-1.5 py-0.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2"
+            className="hover:bg-muted focus-visible:ring-ring -mx-1.5 -my-0.5 inline rounded-md px-1.5 py-0.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2"
           >
             {conversation.title}
           </button>
@@ -167,6 +175,56 @@ const ConversationTitle = ({
   );
 };
 
+/** The transcript's per-conversation display switches: thinking steps, and the simple view. */
+const ViewToggles = ({ id }: { id: number }) => {
+  const thinkingHidden = useThinkingHidden(id);
+  const toggleThinking = useConversationStore((store) => store.toggleThinking);
+  const simple = useSimpleView(id);
+  const toggleSimple = useConversationStore((store) => store.toggleSimple);
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant={thinkingHidden ? "ghost" : "secondary"}
+              size="icon-sm"
+              aria-label={
+                thinkingHidden ? "Show thinking steps" : "Hide thinking steps"
+              }
+              aria-pressed={!thinkingHidden}
+              onClick={() => toggleThinking(id)}
+            >
+              <Brain />
+            </Button>
+          }
+        />
+        <TooltipContent>
+          {thinkingHidden ? "Show thinking steps" : "Hide thinking steps"}
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant={simple ? "secondary" : "ghost"}
+              size="icon-sm"
+              aria-label={simple ? "Show full transcript" : "Simple view"}
+              aria-pressed={simple}
+              onClick={() => toggleSimple(id)}
+            >
+              <ListCollapse />
+            </Button>
+          }
+        />
+        <TooltipContent>
+          {simple ? "Show full transcript" : "Simple view"}
+        </TooltipContent>
+      </Tooltip>
+    </>
+  );
+};
+
 export const ConversationHeader = ({
   conversation,
   state,
@@ -184,8 +242,6 @@ export const ConversationHeader = ({
   const openMenu = useOpenMenu();
   const act = useConversationAction();
   const resuming = useResuming(conversation);
-  const thinkingHidden = useThinkingHidden(conversation.id);
-  const toggleThinking = useConversationStore((store) => store.toggleThinking);
   const { tokens, cost } = totalUsage(state.usage);
   const { status } = conversation;
 
@@ -218,7 +274,7 @@ export const ConversationHeader = ({
 
   return (
     <>
-      <header className="flex items-center gap-3 border-b px-3 py-2 md:px-4">
+      <header className="flex flex-wrap items-end gap-x-3 gap-y-3 border-b px-3 py-2 md:px-4">
         <Button
           variant="ghost"
           size="icon-sm"
@@ -228,7 +284,7 @@ export const ConversationHeader = ({
         >
           <Menu />
         </Button>
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex min-w-40 flex-1 flex-col gap-0.5">
           <ConversationTitle conversation={conversation} />
           <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             <SandboxBadge sandbox={conversation.sandbox} />
@@ -254,8 +310,8 @@ export const ConversationHeader = ({
                 Working
               </span>
             ) : null}
-            {state.queued > 0 ? (
-              <span className="tabular-nums">{state.queued} queued</span>
+            {state.queue.length > 0 ? (
+              <span className="tabular-nums">{state.queue.length} queued</span>
             ) : null}
             {status === "paused" && !resuming ? <span>Paused</span> : null}
             {resuming ? (
@@ -290,67 +346,51 @@ export const ConversationHeader = ({
             ) : null}
           </div>
         </div>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant={thinkingHidden ? "ghost" : "secondary"}
-                size="icon-sm"
-                aria-label={
-                  thinkingHidden ? "Show thinking steps" : "Hide thinking steps"
+        {/* One cluster, so the whole row wraps under the title instead of overflowing over the side panel. */}
+        <div className="ml-auto flex items-center gap-1">
+          <ViewToggles id={conversation.id} />
+          {hasSandbox && sidePanel !== undefined ? (
+            <Button
+              variant={sidePanel.collapsed ? "ghost" : "secondary"}
+              size="icon-sm"
+              aria-label={`${sidePanel.collapsed ? "Show" : "Hide"} ${sidePanel.label}`}
+              aria-pressed={!sidePanel.collapsed}
+              onClick={handleTogglePanel}
+            >
+              <PanelRight />
+            </Button>
+          ) : null}
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Export conversation"
+                      >
+                        <Download />
+                      </Button>
+                    }
+                  />
                 }
-                aria-pressed={!thinkingHidden}
-                onClick={() => toggleThinking(conversation.id)}
-              >
-                <Brain />
-              </Button>
-            }
-          />
-          <TooltipContent>
-            {thinkingHidden ? "Show thinking steps" : "Hide thinking steps"}
-          </TooltipContent>
-        </Tooltip>
-        {hasSandbox && sidePanel !== undefined ? (
-          <Button
-            variant={sidePanel.collapsed ? "ghost" : "secondary"}
-            size="icon-sm"
-            aria-label={`${sidePanel.collapsed ? "Show" : "Hide"} ${sidePanel.label}`}
-            aria-pressed={!sidePanel.collapsed}
-            onClick={handleTogglePanel}
-          >
-            <PanelRight />
-          </Button>
-        ) : null}
-        <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="Export conversation"
-                    >
-                      <Download />
-                    </Button>
-                  }
-                />
-              }
-            />
-            <TooltipContent>Export conversation</TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => download("md")}>
-              Markdown
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => download("jsonl")}>
-              JSON Lines
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <ConversationSettings conversationId={conversation.id} />
-        <ConversationActions conversation={conversation} />
+              />
+              <TooltipContent>Export conversation</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => download("md")}>
+                Markdown
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => download("jsonl")}>
+                JSON Lines
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <ConversationSettings conversationId={conversation.id} />
+          <ConversationActions conversation={conversation} />
+        </div>
       </header>
       <WaitingNotice conversation={conversation} />
       <ResumingNotice conversation={conversation} />

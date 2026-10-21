@@ -341,6 +341,77 @@ describe("send while a run is busy", () => {
     );
   });
 
+  it("withdraws a queued follow-up before the run picks it up", async () => {
+    const seen: TranscriptContext["messages"][] = [];
+    // Generation held open, so the run is observably working while the send queues behind it.
+    const entered = Promise.withResolvers<boolean>();
+    const release = Promise.withResolvers<boolean>();
+    const gated: FauxResponseStep = async () => {
+      entered.resolve(true);
+      await release.promise;
+      return reply("done");
+    };
+    const { layer } = fauxAgents([gated, recording(seen, reply("next"))]);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const { conversation, ref } = yield* watching();
+          const first = yield* conversation.send("work");
+          yield* Effect.promise(() => entered.promise);
+          const sent = yield* conversation.send("never mind");
+          // The queue the stream reports carries the input's text, so a client can show the bubble.
+          yield* waitUntil(
+            Ref.get(ref).pipe(
+              Effect.map((all) =>
+                all.some(
+                  (event) =>
+                    event.type === "inbox_update" &&
+                    event.items.some((item) => item.id === sent.id)
+                )
+              )
+            )
+          );
+          const items = (yield* Ref.get(ref)).findLast(
+            (event) => event.type === "inbox_update"
+          );
+          expect(
+            items?.type === "inbox_update" ? items.items : []
+          ).toStrictEqual([
+            { id: sent.id, mode: "followUp", text: "never mind" },
+          ]);
+
+          // Withdrawn: it settles unanswered and leaves the inbox. A repeat reports it settled; the first
+          // send is already placed — too late to withdraw.
+          expect([
+            yield* agents.withdraw(conversation.id, sent.id),
+            yield* agents.withdraw(conversation.id, sent.id),
+            yield* agents.withdraw(conversation.id, first.id),
+          ]).toStrictEqual(["withdrawn", "settled", "placed"]);
+          const missing = yield* Effect.flip(
+            agents.withdraw(conversation.id, 999_999)
+          );
+          expect(missing).toMatchObject({ _tag: "SubmissionNotFound" });
+
+          // The run ends with the input gone: nothing ever queued behind it for the model to see.
+          release.resolve(true);
+          yield* waitUntil(hasRunEnd(ref));
+          expect(yield* count(ref, "run_start")).toBe(1);
+          expect(
+            seen.some((messages) =>
+              messages.some(
+                (message) =>
+                  message.role === "user" &&
+                  textOf(message.content).includes("never mind")
+              )
+            )
+          ).toBeFalsy();
+        })
+      ).pipe(Effect.provide(layer))
+    );
+  });
+
   it("admits a retried requestId once while parked", async () => {
     const seen: TranscriptContext["messages"][] = [];
     const { layer } = fauxAgents([

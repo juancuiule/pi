@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyEvent,
+  finalResponse,
+  groupSimple,
   initialState,
   toolResultOf,
   withAck,
@@ -182,7 +184,7 @@ describe(applyEvent, () => {
       snapshot([]),
       {
         type: "inbox_update",
-        items: [{ id: 1, mode: "followUp" }],
+        items: [{ id: 1, mode: "followUp", text: "and then?" }],
       } as unknown as ConversationEvent,
       {
         type: "task_failed",
@@ -191,7 +193,9 @@ describe(applyEvent, () => {
         message: "boom",
       } as unknown as ConversationEvent,
     ]);
-    expect(state.queued).toBe(1);
+    expect(state.queue).toStrictEqual([
+      { id: 1, mode: "followUp", text: "and then?" },
+    ]);
     expect(state.failures).toStrictEqual(["boom"]);
   });
 
@@ -528,5 +532,87 @@ describe("pending inputs", () => {
       withoutPending(withPending(sent, { ...pending, requestId: "r2" }), "rx")
         .pending
     ).toHaveLength(2);
+  });
+});
+
+const userEntry = (id: number, text: string): EntryRecord =>
+  entry(id, {
+    role: "user",
+    content: [{ type: "text", text }],
+    timestamp: 0,
+  });
+
+describe(groupSimple, () => {
+  it("folds the entries between person messages into runs", () => {
+    const items = groupSimple([
+      userEntry(1, "first"),
+      entry(2, assistant("working on it")),
+      entry(3, {
+        role: "toolResult",
+        toolCallId: "c1",
+        content: [{ type: "text", text: "ok" }],
+      }),
+      entry(4, assistant("the answer")),
+      userEntry(5, "second"),
+      entry(6, assistant("next answer")),
+    ]);
+    expect(items.map((item) => item.kind)).toStrictEqual([
+      "message",
+      "run",
+      "message",
+      "run",
+    ]);
+    const [, run] = items;
+    expect(
+      run?.kind === "run" ? run.entries.map((e) => e.id) : []
+    ).toStrictEqual([2, 3, 4]);
+  });
+
+  it("keeps a head marker inside its run — it is not a message the person sent", () => {
+    const items = groupSimple([
+      userEntry(1, "before"),
+      entry(2, assistant("the answer")),
+      head(3),
+      entry(4, assistant("continuing")),
+    ]);
+    expect(items.map((item) => item.kind)).toStrictEqual(["message", "run"]);
+    const [, run] = items;
+    expect(
+      run?.kind === "run" ? run.entries.map((e) => e.id) : []
+    ).toStrictEqual([2, 3, 4]);
+  });
+});
+
+describe(finalResponse, () => {
+  it("is the last text block of the last assistant entry that has one", () => {
+    const found = finalResponse([
+      entry(2, {
+        role: "assistant",
+        content: [
+          { type: "text", text: "first half" },
+          { type: "toolCall", id: "c1", name: "bash", arguments: {} },
+          { type: "text", text: "the answer" },
+        ],
+      }),
+      entry(3, {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "only thought" }],
+      }),
+    ]);
+    expect(found?.entry.id).toBe(2);
+    expect(found?.text).toBe("the answer");
+  });
+
+  it("is undefined for a run with no assistant text", () => {
+    expect(
+      finalResponse([
+        entry(2, {
+          role: "toolResult",
+          toolCallId: "c1",
+          content: [{ type: "text", text: "ok" }],
+        }),
+      ])
+    ).toBeUndefined();
+    expect(finalResponse([])).toBeUndefined();
   });
 });

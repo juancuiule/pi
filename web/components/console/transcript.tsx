@@ -1,24 +1,43 @@
 "use client";
 
-import type { AssistantMessage, EntryRecord, HistoryPage } from "effect-pi/api";
+import { cn } from "cn";
+import type {
+  AssistantMessage,
+  EntryRecord,
+  HistoryPage,
+  QueuedInput,
+} from "effect-pi/api";
 import {
   ArrowDown,
   BookOpen,
   Brain,
   CircleAlert,
+  Clock,
   FoldVertical,
   History,
   Info,
+  ListCollapse,
   LoaderCircle,
   RotateCcw,
   SeparatorHorizontal,
   SlidersHorizontal,
+  X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { CodeBlock, CodeBlockContent } from "@/components/ui/code-block";
+import { Button } from "@/components/ui/button";
+import {
+  CodeBlock,
+  CodeBlockContent,
+  CodeBlockCopyButton,
+} from "@/components/ui/code-block";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Trace,
   TraceCollapsible,
@@ -30,20 +49,18 @@ import {
 } from "@/components/ui/trace";
 import { runApi } from "@/lib/api";
 import { hasPendingApproval } from "@/lib/approval";
-import { splitAttachments } from "@/lib/attachments";
 import { boundaryNote } from "@/lib/boundary-note";
 import type { BoundaryNote } from "@/lib/boundary-note";
 import type { ConversationState, PendingInput } from "@/lib/conversation-state";
-import { useInfo } from "@/lib/queries";
+import { finalResponse, groupSimple } from "@/lib/conversation-state";
+import { messageTime } from "@/lib/format";
+import { useInfo, useWithdrawMessage } from "@/lib/queries";
 import { settingsNote } from "@/lib/settings-note";
-import {
-  parseSkillMessage,
-  skillMentionParts,
-  splitSkillHints,
-} from "@/lib/skill-message";
+import { skillMentionParts } from "@/lib/skill-message";
 import { useConversationStore } from "@/lib/store";
-import { isNearBottom, userParts } from "@/lib/transcript";
+import { displayParts, isNearBottom, userParts } from "@/lib/transcript";
 import { unansweredNote } from "@/lib/unanswered-note";
+import { useNow } from "@/lib/use-now";
 
 import { ArtifactCard } from "./artifact-card";
 import { SentChip } from "./attachment-chip";
@@ -127,6 +144,105 @@ const SkillMention = ({ skill }: { skill: string }) => (
     <BookOpen aria-hidden className="size-3" strokeWidth={1.5} />
     {skill}
   </span>
+);
+
+/** The message's timestamp, when it carries one (older entries and test fixtures may not). */
+const atOf = (entry: EntryRecord): number | undefined => {
+  const at = entry.model?.[0]?.timestamp;
+  return typeof at === "number" && at > 0 ? at : undefined;
+};
+
+/** A message's clock time; the shared 30s clock keeps the same-day/other-day boundary right. */
+const MessageTime = ({ at }: { at: number }) => {
+  const now = useNow();
+  return (
+    <time
+      dateTime={new Date(at).toISOString()}
+      className="text-muted-foreground/70 shrink-0 text-xs tabular-nums"
+    >
+      {messageTime(at, now)}
+    </time>
+  );
+};
+
+/**
+ * A copy button under a message, revealed on hover/focus like the feedback controls; always shown on touch.
+ * `group/msg` is the message's own hover scope (its bubble, or the assistant block).
+ */
+const MessageCopy = ({ value }: { value: string }) => (
+  <span className="opacity-0 transition-opacity group-focus-within/msg:opacity-100 group-hover/msg:opacity-100 pointer-coarse:opacity-100">
+    <CodeBlockCopyButton
+      value={value}
+      aria-label="Copy message"
+      title="Copy message"
+    />
+  </span>
+);
+
+/**
+ * Under a message: its clock time, then rating (assistant entries, when the server traces) and copy, which
+ * reveal on hover. The time leads the left-aligned row so it sits flush under the message instead of floating
+ * past the unseen controls; under a right-aligned bubble it trails, keeping the bubble's corner. Nothing when
+ * none of the three apply — a person's message before timestamps, for instance.
+ */
+const MessageFooter = ({
+  conversation,
+  entry,
+  copy,
+  at,
+  align,
+}: {
+  conversation?: number;
+  /** The assistant entry feedback scores on; unset for a person's message. */
+  entry?: number;
+  /** The text "Copy message" puts on the clipboard. */
+  copy?: string;
+  /** The message's timestamp, when it carries one. */
+  at?: number;
+  /** `end` aligns the row under a right-aligned bubble. */
+  align?: "end";
+}) => {
+  const { data: info } = useInfo();
+  const feedback =
+    conversation !== undefined && entry !== undefined && info?.tracing === true;
+  if (!feedback && (copy === undefined || copy === "") && at === undefined) {
+    return null;
+  }
+  const time = at === undefined ? null : <MessageTime at={at} />;
+  return (
+    <div
+      className={cn(
+        "mt-1 flex items-center gap-0.5 px-0.5",
+        align === "end" && "justify-end"
+      )}
+    >
+      {align === "end" ? null : time}
+      {feedback && conversation !== undefined && entry !== undefined ? (
+        <FeedbackActions conversation={conversation} entry={entry} />
+      ) : null}
+      {copy === undefined || copy === "" ? null : <MessageCopy value={copy} />}
+      {align === "end" ? time : null}
+    </div>
+  );
+};
+
+/** The X beside a queued message: takes it back before a run picks it up. */
+const WithdrawQueued = ({ onClick }: { onClick: () => void }) => (
+  <Tooltip>
+    <TooltipTrigger
+      render={
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Withdraw queued message"
+          onClick={onClick}
+        >
+          <X />
+        </Button>
+      }
+    />
+    <TooltipContent>Withdraw queued message</TooltipContent>
+  </Tooltip>
 );
 
 type ContentBlock = AssistantMessage["content"][number];
@@ -280,7 +396,6 @@ const Entry = ({
   /** For the attachments' download links; unset while a create is in flight. */
   conversation?: number;
 }) => {
-  const { data: info } = useInfo();
   // A head marker carries a user-role message (the summary or handoff); it is a boundary, not a sent message.
   const boundary = boundaryNote(entry);
   if (boundary !== undefined) {
@@ -323,68 +438,76 @@ const Entry = ({
   switch (message.role) {
     case "user": {
       const parsed = userParts(message);
-      // Attachment blocks come last, after any skill hints.
-      const files = splitAttachments(parsed.text);
-      const { text, hinted } = splitSkillHints(files.text);
+      const parts = displayParts(parsed.text);
       // A message's images are its attached images, already shown as chips that open them.
-      const images = files.attachments.length > 0 ? [] : parsed.images;
-      const skill = parseSkillMessage(text);
-      const shown = skill === undefined ? text : skill.request;
+      const images = parts.attachments.length > 0 ? [] : parsed.images;
       return (
-        <div className="bg-muted text-foreground ml-auto flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5">
-          {skill === undefined ? null : (
-            <SkillChip skill={skill.skill} instructions={skill.instructions} />
-          )}
-          {shown === "" ? null : (
-            <p className="text-prose break-words whitespace-pre-wrap">
-              {skillMentionParts(shown, hinted).map((part, index) =>
-                part.kind === "text" ? (
-                  part.text
-                ) : (
-                  <SkillMention
-                    // oxlint-disable-next-line no-array-index-key -- parts have no identity beyond their order
-                    key={index}
-                    skill={part.skill}
+        <div className="group/msg ml-auto flex max-w-[85%] flex-col">
+          <div className="bg-muted text-foreground flex flex-col gap-2 rounded-2xl px-4 py-2.5">
+            {parts.skill === undefined ? null : (
+              <SkillChip
+                skill={parts.skill.skill}
+                instructions={parts.skill.instructions}
+              />
+            )}
+            {parts.shown === "" ? null : (
+              <p className="text-prose break-words whitespace-pre-wrap">
+                {skillMentionParts(parts.shown, parts.hinted).map(
+                  (part, index) =>
+                    part.kind === "text" ? (
+                      part.text
+                    ) : (
+                      <SkillMention
+                        // oxlint-disable-next-line no-array-index-key -- parts have no identity beyond their order
+                        key={index}
+                        skill={part.skill}
+                      />
+                    )
+                )}
+              </p>
+            )}
+            {parts.attachments.length === 0 ? null : (
+              <div className="flex flex-wrap gap-1.5">
+                {parts.attachments.map((attachment) => (
+                  <SentChip
+                    key={attachment.id}
+                    attachment={attachment}
+                    conversation={conversation}
                   />
-                )
-              )}
-            </p>
-          )}
-          {files.attachments.length === 0 ? null : (
-            <div className="flex flex-wrap gap-1.5">
-              {files.attachments.map((attachment) => (
-                <SentChip
-                  key={attachment.id}
-                  attachment={attachment}
-                  conversation={conversation}
-                />
-              ))}
-            </div>
-          )}
-          {images.map((image) => (
-            // oxlint-disable-next-line next/no-img-element -- inline data URL, nothing for next/image to optimize
-            <img
-              key={image.src}
-              src={image.src}
-              alt="Attachment"
-              className="max-w-full rounded-lg outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
-            />
-          ))}
+                ))}
+              </div>
+            )}
+            {images.map((image) => (
+              // oxlint-disable-next-line next/no-img-element -- inline data URL, nothing for next/image to optimize
+              <img
+                key={image.src}
+                src={image.src}
+                alt="Attachment"
+                className="max-w-full rounded-lg outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+              />
+            ))}
+          </div>
+          <MessageFooter copy={parts.shown} at={atOf(entry)} align="end" />
         </div>
       );
     }
     case "assistant": {
-      // Feedback is scored on the run's Langfuse trace, so the controls appear only when the server traces.
+      const text = message.content
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n\n");
       return (
-        <div className="group/feedback">
+        <div className="group/msg group/feedback">
           <AssistantBlocks
             message={message}
             state={state}
             showThinking={showThinking}
           />
-          {conversation === undefined || info?.tracing !== true ? null : (
-            <FeedbackActions conversation={conversation} entry={entry.id} />
-          )}
+          <MessageFooter
+            conversation={conversation}
+            entry={entry.id}
+            copy={text}
+            at={atOf(entry)}
+          />
         </div>
       );
     }
@@ -392,6 +515,34 @@ const Entry = ({
       return null;
     }
   }
+};
+
+/** A pending bubble's corner mark: "Sending…" until admitted, "Queued" (with a withdraw) while it waits. */
+const SendStatus = ({
+  pending,
+  queued,
+  onWithdraw,
+}: {
+  pending: PendingInput;
+  queued: boolean;
+  onWithdraw?: () => void;
+}) => {
+  if (pending.submission === undefined) {
+    return (
+      <span className="text-muted-foreground self-end text-xs">Sending…</span>
+    );
+  }
+  if (!queued) {
+    return null;
+  }
+  return (
+    <span className="flex items-center gap-1 self-end">
+      <span className="text-muted-foreground text-xs">Queued</span>
+      {onWithdraw === undefined ? null : (
+        <WithdrawQueued onClick={onWithdraw} />
+      )}
+    </span>
+  );
 };
 
 /**
@@ -402,32 +553,112 @@ const Entry = ({
 export const PendingMessage = ({
   pending,
   conversation,
+  onWithdraw,
 }: {
   pending: PendingInput;
   conversation?: number;
-}) => (
-  <div className="bg-muted text-foreground ml-auto flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5">
-    {pending.prompt === "" ? null : (
-      <p className="text-prose break-words whitespace-pre-wrap">
-        {pending.prompt}
+  /** Offered while the submission waits in the inbox: withdraws it. */
+  onWithdraw?: (submission: number, pending: PendingInput) => void;
+}) => {
+  const { submission } = pending;
+  // Still in the inbox — neither placed nor settled — while the send is confirmed and no entry replaced it.
+  const queued = submission !== undefined && pending.entry === undefined;
+  return (
+    <div className="bg-muted text-foreground ml-auto flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5">
+      {pending.prompt === "" ? null : (
+        <p className="text-prose break-words whitespace-pre-wrap">
+          {pending.prompt}
+        </p>
+      )}
+      {pending.attachments.length === 0 ? null : (
+        <div className="flex flex-wrap gap-1.5">
+          {pending.attachments.map((attachment) => (
+            <SentChip
+              key={attachment.id}
+              attachment={attachment}
+              conversation={conversation}
+            />
+          ))}
+        </div>
+      )}
+      <SendStatus
+        pending={pending}
+        queued={queued}
+        onWithdraw={
+          submission === undefined || onWithdraw === undefined
+            ? undefined
+            : () => onWithdraw(submission, pending)
+        }
+      />
+    </div>
+  );
+};
+
+/**
+ * A queued send carried by the inbox's items — one this client did not send (its own show as "Queued" pending
+ * bubbles). A write item has no text, so it renders as a muted line instead of a bubble.
+ */
+const QueuedMessage = ({
+  item,
+  conversation,
+  onWithdraw,
+}: {
+  item: QueuedInput;
+  conversation?: number;
+  onWithdraw?: (submission: number) => void;
+}) => {
+  if (item.mode === "write") {
+    return (
+      <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+        <Clock aria-hidden className="size-3.5" strokeWidth={1.5} />
+        Queued: {item.kind ?? "a change"}
       </p>
-    )}
-    {pending.attachments.length === 0 ? null : (
-      <div className="flex flex-wrap gap-1.5">
-        {pending.attachments.map((attachment) => (
-          <SentChip
-            key={attachment.id}
-            attachment={attachment}
-            conversation={conversation}
-          />
-        ))}
-      </div>
-    )}
-    {pending.submission === undefined ? (
-      <span className="text-muted-foreground self-end text-xs">Sending…</span>
-    ) : null}
-  </div>
-);
+    );
+  }
+  const parts = displayParts(item.text);
+  return (
+    <div className="bg-muted text-foreground ml-auto flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5">
+      {parts.skill === undefined ? null : (
+        <SkillChip
+          skill={parts.skill.skill}
+          instructions={parts.skill.instructions}
+        />
+      )}
+      {parts.shown === "" ? null : (
+        <p className="text-prose break-words whitespace-pre-wrap">
+          {skillMentionParts(parts.shown, parts.hinted).map((part, index) =>
+            part.kind === "text" ? (
+              part.text
+            ) : (
+              <SkillMention
+                // oxlint-disable-next-line no-array-index-key -- parts have no identity beyond their order
+                key={index}
+                skill={part.skill}
+              />
+            )
+          )}
+        </p>
+      )}
+      {parts.attachments.length === 0 ? null : (
+        <div className="flex flex-wrap gap-1.5">
+          {parts.attachments.map((attachment) => (
+            <SentChip
+              key={attachment.id}
+              attachment={attachment}
+              conversation={conversation}
+            />
+          ))}
+        </div>
+      )}
+      <span className="flex items-center gap-1 self-end">
+        <span className="text-muted-foreground text-xs">Queued</span>
+        {onWithdraw === undefined ? null : (
+          <WithdrawQueued onClick={() => onWithdraw(item.id)} />
+        )}
+      </span>
+    </div>
+  );
+};
 
 /** The transcript's trailing activity line: "Resuming…" while a paused Conversation gets a Seat, else "Working…". */
 const StatusLine = ({
@@ -504,6 +735,83 @@ const EntryItem = ({
 };
 
 /**
+ * One run in the simple view: its steps fold under "Details", its closing answer stays outside. A run that was
+ * only its answer — a single all-text entry — has nothing to fold, so it renders whole.
+ */
+const SimpleRun = ({
+  entries,
+  state,
+  showThinking,
+  conversation,
+}: {
+  entries: readonly EntryRecord[];
+  state: ConversationState;
+  showThinking: boolean;
+  conversation?: number;
+}) => {
+  const final = finalResponse(entries);
+  const [only] = entries;
+  if (
+    entries.length === 1 &&
+    only !== undefined &&
+    final !== undefined &&
+    only.model?.[0]?.role === "assistant" &&
+    only.model[0].content.every((block) => block.type === "text")
+  ) {
+    return (
+      <EntryItem
+        entry={only}
+        state={state}
+        showThinking={showThinking}
+        conversation={conversation}
+      />
+    );
+  }
+  return (
+    <div className="flex min-w-0 flex-col gap-3">
+      {entries.length === 0 ? null : (
+        <Trace>
+          <TraceCollapsible>
+            <TraceCollapsibleTrigger>
+              <TraceLine>
+                <TraceIcon>
+                  <ListCollapse />
+                </TraceIcon>
+                <TraceTitle>Details</TraceTitle>
+              </TraceLine>
+            </TraceCollapsibleTrigger>
+            <TraceCollapsibleContent>
+              <div className="flex flex-col gap-4">
+                {entries.map((entry) => (
+                  <EntryItem
+                    key={entry.id}
+                    entry={entry}
+                    state={state}
+                    showThinking={showThinking}
+                    conversation={conversation}
+                  />
+                ))}
+              </div>
+            </TraceCollapsibleContent>
+          </TraceCollapsible>
+        </Trace>
+      )}
+      {final === undefined ? null : (
+        <div className="group/msg group/feedback">
+          <Markdown>{final.text}</Markdown>
+          <MessageFooter
+            conversation={conversation}
+            entry={final.entry.id}
+            copy={final.text}
+            at={atOf(final.entry)}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
  * Fetch one page of hidden history: the newest page when `before` is unset, deeper ones with the oldest held
  * entry's id. A failure only clears the spinner, so the gate stays for a retry.
  */
@@ -533,14 +841,45 @@ const showEarlier = async (
   }
 };
 
-/** Hidden history at the top of the transcript: fetched pages in order, behind a "Show earlier entries" gate. */
-const Earlier = ({
+/** An entry, or — in the simple view — a person message or one folded run. */
+const TranscriptItem = ({
+  item,
   state,
   showThinking,
   conversation,
 }: {
+  item: ReturnType<typeof groupSimple>[number];
   state: ConversationState;
   showThinking: boolean;
+  conversation?: number;
+}) =>
+  item.kind === "message" ? (
+    <EntryItem
+      entry={item.entry}
+      state={state}
+      showThinking={showThinking}
+      conversation={conversation}
+    />
+  ) : (
+    <SimpleRun
+      entries={item.entries}
+      state={state}
+      showThinking={showThinking}
+      conversation={conversation}
+    />
+  );
+
+/** Hidden history at the top of the transcript: fetched pages in order, behind a "Show earlier entries" gate. */
+const Earlier = ({
+  state,
+  showThinking,
+  simple,
+  conversation,
+}: {
+  state: ConversationState;
+  showThinking: boolean;
+  /** The simple view groups the fetched pages into messages and folded runs too. */
+  simple: boolean;
   conversation?: number;
 }) => {
   const { entries, hasMore, loading } = state.earlier;
@@ -572,15 +911,25 @@ const Earlier = ({
           {loading ? "Loading earlier entries…" : "Show earlier entries"}
         </button>
       ) : null}
-      {entries.map((entry) => (
-        <EntryItem
-          key={entry.id}
-          entry={entry}
-          state={state}
-          showThinking={showThinking}
-          conversation={conversation}
-        />
-      ))}
+      {simple
+        ? groupSimple(entries).map((item, index) => (
+            <TranscriptItem
+              key={item.kind === "message" ? item.entry.id : `run-${index}`}
+              item={item}
+              state={state}
+              showThinking={showThinking}
+              conversation={conversation}
+            />
+          ))
+        : entries.map((entry) => (
+            <EntryItem
+              key={entry.id}
+              entry={entry}
+              state={state}
+              showThinking={showThinking}
+              conversation={conversation}
+            />
+          ))}
     </>
   );
 };
@@ -589,55 +938,113 @@ const Body = ({
   state,
   resuming,
   showThinking,
+  simple,
   conversation,
 }: {
   state: ConversationState;
   resuming: boolean;
   showThinking: boolean;
+  /** The simple view: the person's messages and each run's final answer, steps folded under "Details". */
+  simple: boolean;
   conversation?: number;
-}) => (
-  <>
-    <Earlier
-      state={state}
-      showThinking={showThinking}
-      conversation={conversation}
-    />
-    {state.entries.map((entry) => (
-      <EntryItem
-        key={entry.id}
-        entry={entry}
+}) => {
+  const withdraw = useWithdrawMessage(conversation);
+  const takeBack = (submission: number, pending?: PendingInput) => {
+    // The settled event replaces the queue bubble; drop the local pending bubble with it so it does not read
+    // "Not sent" in the gap.
+    if (pending !== undefined && conversation !== undefined) {
+      useConversationStore
+        .getState()
+        .dropPending(conversation, pending.requestId);
+    }
+    withdraw.mutate(submission, {
+      onError: (error) => {
+        if (pending !== undefined && conversation !== undefined) {
+          useConversationStore.getState().addPending(conversation, pending);
+        }
+        toast.error(error.message, { duration: Infinity });
+      },
+      onSuccess: ({ outcome }) => {
+        // "placed"/"settled" mean the run got the message after all — its entry lands with the next events.
+        if (outcome !== "withdrawn") {
+          toast("The run already picked it up.");
+        }
+      },
+    });
+  };
+  // Queued sends this client did not make: its own already show as "Queued" pending bubbles.
+  const queued = state.queue.filter(
+    (item) => !state.pending.some((pending) => pending.submission === item.id)
+  );
+  return (
+    <>
+      <Earlier
         state={state}
         showThinking={showThinking}
+        simple={simple}
         conversation={conversation}
       />
-    ))}
-    {state.streaming === undefined ? null : (
-      <AssistantBlocks
-        message={state.streaming}
+      {simple
+        ? groupSimple(state.entries).map((item, index) => (
+            <TranscriptItem
+              key={item.kind === "message" ? item.entry.id : `run-${index}`}
+              item={item}
+              state={state}
+              showThinking={showThinking}
+              conversation={conversation}
+            />
+          ))
+        : state.entries.map((entry) => (
+            <EntryItem
+              key={entry.id}
+              entry={entry}
+              state={state}
+              showThinking={showThinking}
+              conversation={conversation}
+            />
+          ))}
+      {state.streaming === undefined ? null : (
+        <AssistantBlocks
+          message={state.streaming}
+          state={state}
+          caret
+          showThinking={showThinking}
+        />
+      )}
+      {state.pending.map((pending) => (
+        <PendingMessage
+          key={pending.requestId}
+          pending={pending}
+          conversation={conversation}
+          onWithdraw={conversation === undefined ? undefined : takeBack}
+        />
+      ))}
+      {queued.map((item) => (
+        <QueuedMessage
+          key={item.id}
+          item={item}
+          conversation={conversation}
+          onWithdraw={conversation === undefined ? undefined : takeBack}
+        />
+      ))}
+      {state.failures.map((failure) => (
+        <Failure key={failure}>{failure}</Failure>
+      ))}
+      <StatusLine
         state={state}
-        caret
+        resuming={resuming}
         showThinking={showThinking}
       />
-    )}
-    {state.pending.map((pending) => (
-      <PendingMessage
-        key={pending.requestId}
-        pending={pending}
-        conversation={conversation}
-      />
-    ))}
-    {state.failures.map((failure) => (
-      <Failure key={failure}>{failure}</Failure>
-    ))}
-    <StatusLine state={state} resuming={resuming} showThinking={showThinking} />
-  </>
-);
+    </>
+  );
+};
 
 export const Transcript = ({
   state,
   conversation,
   resuming = false,
   showThinking = true,
+  simple = false,
 }: {
   state: ConversationState;
   /** For the attachments' links; unset on the new-conversation screen while its create is in flight. */
@@ -646,6 +1053,8 @@ export const Transcript = ({
   resuming?: boolean;
   /** The header's per-conversation switch: false drops thinking blocks, keeping text and tool calls. */
   showThinking?: boolean;
+  /** The header's per-conversation switch: messages and final answers, each run's steps under "Details". */
+  simple?: boolean;
 }) => {
   const viewport = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
@@ -700,6 +1109,7 @@ export const Transcript = ({
             state={state}
             resuming={resuming}
             showThinking={showThinking}
+            simple={simple}
             conversation={conversation}
           />
         </div>
