@@ -79,7 +79,7 @@ describe.skipIf(!(await dockerAvailable()) || !(await s3GatewayUp()))(
       if (volumes.length > 0) {
         execFileSync("docker", ["volume", "rm", "--force", ...volumes]);
       }
-      await store?.removePrefix(bucket, "");
+      await store?.drop(bucket);
     });
 
     it("times save and restore over three cycles", async () => {

@@ -82,7 +82,7 @@ describe.skipIf(!(await s3GatewayUp()))(
         );
       } finally {
         rmSync(root, { recursive: true, force: true });
-        await store.removePrefix(bucket, "");
+        await store.drop(bucket);
       }
     });
   }

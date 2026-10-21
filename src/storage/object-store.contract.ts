@@ -35,7 +35,7 @@ export const storeContract = (
     });
 
     afterAll(async () => {
-      await store?.removePrefix(bucket, "");
+      await store?.drop(bucket);
     });
 
     it("round-trips bytes, a stream and a file given by path", async () => {
@@ -126,7 +126,7 @@ export const storeContract = (
       await store.ensure(other);
       await store.put(other, "key", Uint8Array.of(1));
       expect(await store.get(other, "key")).toStrictEqual(Uint8Array.of(1));
-      await store.removePrefix(other, "");
+      await store.drop(other);
     });
   });
 };

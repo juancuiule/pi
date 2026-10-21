@@ -1,7 +1,7 @@
 # Local SeaweedFS for the S3 object store (src/storage/object-store.ts): master, volume server, filer and the
 # S3 gateway in one `weed server` process (upstream marks `weed mini` dev-only). init-env.ts (`pnpm seaweed:up`)
 # writes s3.json, the identity file -s3.config reads, and the matching keys in the root .env; without them the
-# gateway allows every request. Only the gateway port is published, on loopback.
+# gateway allows every request. The S3 gateway (8333) and the filer's web UI (8888, /buckets/ to browse) are published, on loopback.
 services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.48
@@ -9,6 +9,7 @@ services:
     command: server -dir=/data -filer -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port.iceberg=0 -s3.port.lance=0
     ports:
       - 127.0.0.1:8333:8333
+      - 127.0.0.1:8888:8888
     volumes:
       - seaweedfs_data:/data
       - ./s3.json:/etc/seaweedfs/s3.json:ro

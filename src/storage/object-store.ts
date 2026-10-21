@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 
 import {
   CreateBucketCommand,
+  DeleteBucketCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
@@ -49,6 +50,8 @@ export interface ObjectStore {
   removePrefix(bucket: string, prefix: string): Promise<void>;
   /** Create the bucket when it is missing. */
   ensure(bucket: string): Promise<void>;
+  /** Delete the bucket and everything in it; a missing bucket is a no-op. */
+  drop(bucket: string): Promise<void>;
   /** Expire every object in the bucket after `days` (a lifecycle rule). */
   setExpiration(bucket: string, days: number): Promise<void>;
 }
@@ -85,6 +88,32 @@ export const s3 = (options: {
       secretAccessKey: options.secretAccessKey,
     },
   });
+  const removePrefix = async (bucket: string, prefix: string) => {
+    let token: string | undefined;
+    do {
+      // oxlint-disable-next-line no-await-in-loop -- each page's token comes from the previous page
+      const page = await client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          ContinuationToken: token,
+        })
+      );
+      const objects = (page.Contents ?? []).flatMap((object) =>
+        object.Key === undefined ? [] : [{ Key: object.Key }]
+      );
+      for (let from = 0; from < objects.length; from += DELETE_PAGE) {
+        // oxlint-disable-next-line no-await-in-loop -- deletes of one page finish before the next list page
+        await client.send(
+          new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: { Objects: objects.slice(from, from + DELETE_PAGE) },
+          })
+        );
+      }
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token !== undefined);
+  };
   return {
     put: async (bucket, key, body) => {
       if (body instanceof Uint8Array) {
@@ -149,32 +178,7 @@ export const s3 = (options: {
     remove: async (bucket, key) => {
       await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
     },
-    removePrefix: async (bucket, prefix) => {
-      let token: string | undefined;
-      do {
-        // oxlint-disable-next-line no-await-in-loop -- each page's token comes from the previous page
-        const page = await client.send(
-          new ListObjectsV2Command({
-            Bucket: bucket,
-            Prefix: prefix,
-            ContinuationToken: token,
-          })
-        );
-        const objects = (page.Contents ?? []).flatMap((object) =>
-          object.Key === undefined ? [] : [{ Key: object.Key }]
-        );
-        for (let from = 0; from < objects.length; from += DELETE_PAGE) {
-          // oxlint-disable-next-line no-await-in-loop -- deletes of one page finish before the next list page
-          await client.send(
-            new DeleteObjectsCommand({
-              Bucket: bucket,
-              Delete: { Objects: objects.slice(from, from + DELETE_PAGE) },
-            })
-          );
-        }
-        token = page.IsTruncated ? page.NextContinuationToken : undefined;
-      } while (token !== undefined);
-    },
+    removePrefix,
     ensure: async (bucket) => {
       try {
         await client.send(new HeadBucketCommand({ Bucket: bucket }));
@@ -183,6 +187,16 @@ export const s3 = (options: {
           throw error;
         }
         await client.send(new CreateBucketCommand({ Bucket: bucket }));
+      }
+    },
+    drop: async (bucket) => {
+      try {
+        await removePrefix(bucket, "");
+        await client.send(new DeleteBucketCommand({ Bucket: bucket }));
+      } catch (error) {
+        if (!isMissing(error)) {
+          throw error;
+        }
       }
     },
     setExpiration: async (bucket, days) => {
@@ -259,6 +273,9 @@ export const memory = (): ObjectStore => {
     },
     ensure: async (bucket) => {
       bucketOf(bucket);
+    },
+    drop: async (bucket) => {
+      buckets.delete(bucket);
     },
     setExpiration: () => Promise.resolve(),
   };
