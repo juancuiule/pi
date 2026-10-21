@@ -66,6 +66,41 @@ export const relativeTime = (then: number, now: number): string => {
   return dateFormat.format(new Date(then));
 };
 
+const clockFormat = new Intl.DateTimeFormat("en", {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+const dateClockFormat = new Intl.DateTimeFormat("en", {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+const yearClockFormat = new Intl.DateTimeFormat("en", {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+/**
+ * A message's clock time: "9:05 AM" today, "Mar 5, 9:05 AM" earlier this year, the year too beyond that.
+ * `then` and `now` are epoch ms.
+ */
+export const messageTime = (then: number, now: number): string => {
+  const when = new Date(then);
+  const at = new Date(now);
+  if (when.toDateString() === at.toDateString()) {
+    return clockFormat.format(when);
+  }
+  return when.getFullYear() === at.getFullYear()
+    ? dateClockFormat.format(when)
+    : yearClockFormat.format(when);
+};
+
 /** A file size for people: "820 B", "14 KB", "3.2 MB". */
 export const formatBytes = (bytes: number): string => {
   if (bytes < 1024) {

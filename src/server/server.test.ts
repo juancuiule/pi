@@ -645,6 +645,61 @@ describe("HTTP API", () => {
     );
   });
 
+  it("withdraws a queued message, answering placed/settled when it is too late", async () => {
+    // The first turn's generation is held open, so a send queues behind it.
+    const entered = Promise.withResolvers<boolean>();
+    const release = Promise.withResolvers<boolean>();
+    const gated: FauxResponseStep = async () => {
+      entered.resolve(true);
+      await release.promise;
+      return fauxAssistantMessage([fauxText("done")]);
+    };
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "work" },
+        });
+        // The run is generating: a send now queues as a follow-up.
+        yield* Effect.promise(() => entered.promise);
+        const sent = yield* client.conversations.send({
+          params: { id: created.id },
+          payload: { prompt: "never mind" },
+        });
+        expect(sent.status).toBe("queued");
+        const withdrawn = yield* client.conversations.withdraw({
+          params: { id: created.id, submission: sent.id },
+        });
+        // Queued once, settled ever after.
+        const settled = yield* client.conversations.withdraw({
+          params: { id: created.id, submission: sent.id },
+        });
+        const placed = yield* client.conversations.withdraw({
+          params: { id: created.id, submission: created.submission.id },
+        });
+        const missing = yield* Effect.flip(
+          client.conversations.withdraw({
+            params: { id: created.id, submission: 999_999 },
+          })
+        );
+        const unknown = yield* Effect.flip(
+          client.conversations.withdraw({
+            params: { id: 999_999, submission: sent.id },
+          })
+        );
+        release.resolve(true);
+        return { withdrawn, settled, placed, missing, unknown };
+      }).pipe(Effect.provide(server([gated])))
+    );
+    expect(result).toMatchObject({
+      withdrawn: { outcome: "withdrawn" },
+      settled: { outcome: "settled" },
+      placed: { outcome: "placed" },
+      missing: { _tag: "SubmissionNotFound" },
+      unknown: { _tag: "ConversationNotFound" },
+    });
+  });
+
   it("offers Software, creates a conversation with it and adds more with an Upgrade", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {

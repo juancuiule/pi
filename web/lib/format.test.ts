@@ -5,6 +5,7 @@ import {
   formatCost,
   formatDuration,
   formatTokens,
+  messageTime,
   relativeTime,
 } from "./format";
 
@@ -93,6 +94,24 @@ describe(relativeTime, () => {
 
   it("never goes negative", () => {
     expect(relativeTime(now + 60_000, now)).toBe("just now");
+  });
+});
+
+describe(messageTime, () => {
+  // Local-time constructions: the format is a clock reading, so the zone must not matter.
+  const now = new Date(2025, 5, 15, 12, 0).getTime();
+
+  it("is a clock time on the same day, a date and time beyond it", () => {
+    const cases: [number, string][] = [
+      [new Date(2025, 5, 15, 9, 5).getTime(), "9:05 AM"],
+      [new Date(2025, 5, 14, 9, 5).getTime(), "Jun 14, 9:05 AM"],
+      [new Date(2025, 0, 2, 23, 30).getTime(), "Jan 2, 11:30 PM"],
+      [new Date(2024, 11, 31, 9, 5).getTime(), "Dec 31, 2024, 9:05 AM"],
+      [new Date(2026, 0, 2, 9, 5).getTime(), "Jan 2, 2026, 9:05 AM"],
+    ];
+    expect(cases.map(([then]) => messageTime(then, now))).toStrictEqual(
+      cases.map(([, expected]) => expected)
+    );
   });
 });
 

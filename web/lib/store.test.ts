@@ -89,4 +89,18 @@ describe(useConversationStore, () => {
     store.toggleThinking(8);
     expect(useConversationStore.getState().hiddenThinking[8]).toBeUndefined();
   });
+
+  it("toggles a conversation's simple view, per conversation", () => {
+    const store = useConversationStore.getState();
+    store.toggleSimple(13);
+    store.toggleSimple(14);
+    expect(useConversationStore.getState().simpleView[13]).toBeTruthy();
+
+    store.toggleSimple(13);
+    expect(useConversationStore.getState().simpleView[13]).toBeUndefined();
+    expect(useConversationStore.getState().simpleView[14]).toBeTruthy();
+
+    store.toggleSimple(14);
+    expect(useConversationStore.getState().simpleView[14]).toBeUndefined();
+  });
 });

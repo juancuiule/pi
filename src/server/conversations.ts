@@ -48,6 +48,7 @@ import type {
   EntryNotFound,
   InvalidUpgrade,
   SkillNotFound,
+  SubmissionNotFound,
   TitleGenerationFailed,
 } from "../errors.ts";
 import type { LangfuseOptions } from "../langfuse.ts";
@@ -249,6 +250,17 @@ export class Conversations extends Context.Service<
       id: number,
       options?: { before?: number | undefined; limit?: number | undefined }
     ): Effect.Effect<HistoryPage, AgentError | ConversationNotFound>;
+    /**
+     * Withdraw a queued message's submission before a run places it; `placed` or `settled` when its run already
+     * took it. Seatless — a paused Conversation's queue can be withdrawn from too.
+     */
+    withdraw(
+      id: number,
+      submission: number
+    ): Effect.Effect<
+      "withdrawn" | "placed" | "settled",
+      AgentError | ConversationNotFound | SubmissionNotFound
+    >;
     /**
      * Score an assistant entry thumbs up (`value: 1`) or down (`value: 0`) on its run's Langfuse trace.
      * Scores upsert, so scoring the same entry again replaces the earlier one. `TraceUnavailable` with
@@ -913,6 +925,7 @@ export class Conversations extends Context.Service<
           unarchive: (id) => agents.unarchive(asId(id)),
           events: (id) => agents.events(asId(id)),
           history: (id, range) => agents.history(asId(id), range),
+          withdraw: (id, submission) => agents.withdraw(asId(id), submission),
           feedback,
           report,
           rename: Effect.fn("Conversations.rename")(function* (id, title) {

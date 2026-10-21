@@ -39,6 +39,12 @@ export class EntryNotFound extends Schema.TaggedError<EntryNotFound>()(
   { id: Schema.Number, entry: Schema.Number }
 ) {}
 
+/** No submission with this id in the conversation it was asked for — unknown, or another conversation's. */
+export class SubmissionNotFound extends Schema.TaggedError<SubmissionNotFound>()(
+  "SubmissionNotFound",
+  { id: Schema.Number, submission: Schema.Number }
+) {}
+
 /**
  * An entry's run has no trace to score: the server does not trace (`disabled`), or the entry's task left none
  * (`untraced` — an aborted partial, or a conversation whose run predates tracing).

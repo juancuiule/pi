@@ -114,7 +114,7 @@ const state: ConversationState = {
   streaming: undefined,
   tools: {},
   running: false,
-  queued: 0,
+  queue: [],
   usage: undefined,
   failures: [],
   unanswered: {},

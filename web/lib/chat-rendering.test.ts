@@ -35,6 +35,9 @@ const entry = (message: Message, data?: unknown): EntryRecord =>
     ...(data === undefined ? {} : { data }),
   }) as unknown as EntryRecord;
 
+const entryId = (id: number, message: Message): EntryRecord =>
+  ({ ...entry(message), id }) as EntryRecord;
+
 const assistant = (thinking: string): AssistantMessage =>
   ({
     role: "assistant",
@@ -67,7 +70,8 @@ const compaction = (reason: string): EntryRecord =>
 const transcript = (
   state: ConversationState,
   resuming = false,
-  showThinking = true
+  showThinking = true,
+  simple = false
 ) =>
   renderToStaticMarkup(
     createElement(
@@ -78,11 +82,34 @@ const transcript = (
         conversation: 1,
         resuming,
         showThinking,
+        simple,
       })
     )
   );
 const toolCall = (state: ConversationState) =>
   renderToStaticMarkup(createElement(ToolCall, { call, state }));
+
+const queuedItem = (id: number, text: string) =>
+  ({ id, mode: "followUp", text }) as ConversationState["queue"][number];
+
+const simpleMessages = (): ConversationState => ({
+  ...initialState,
+  entries: [
+    entryId(1, { role: "user", content: "first" } as Message),
+    entryId(2, {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "hmm" },
+        { type: "text", text: "the answer" },
+      ],
+    } as Message),
+    entryId(3, { role: "user", content: "second" } as Message),
+    entryId(4, {
+      role: "assistant",
+      content: [{ type: "text", text: "next answer" }],
+    } as Message),
+  ],
+});
 
 describe("chat traces", () => {
   it("opens live thinking and renders it as a running trace", () => {
@@ -709,5 +736,106 @@ describe("attachments in the transcript", () => {
     });
     expect(html).toContain(`/api/attachments/${id}/thumbnail?conversation=1`);
     expect(html).not.toContain("data:image/png;base64,AAAA");
+  });
+});
+
+describe("message metadata", () => {
+  it("offers to copy a person's message, and an assistant's text", () => {
+    const html = transcript({
+      ...initialState,
+      entries: [
+        entryId(1, { role: "user", content: "the question" } as Message),
+        entryId(2, {
+          role: "assistant",
+          content: [{ type: "text", text: "the answer" }],
+        } as Message),
+      ],
+    });
+    expect(html.match(/aria-label="Copy message"/gu)).toHaveLength(2);
+  });
+
+  it("shows a message's clock time from its timestamp, nothing for timestamp 0", () => {
+    const html = transcript({
+      ...initialState,
+      entries: [
+        entryId(1, {
+          role: "user",
+          content: "earlier",
+          timestamp: new Date(2025, 5, 14, 9, 5).getTime(),
+        } as Message),
+        entryId(2, {
+          role: "assistant",
+          content: [{ type: "text", text: "no time" }],
+          timestamp: 0,
+        } as Message),
+      ],
+    });
+    expect(html.match(/<time/gu)).toHaveLength(1);
+    expect(html).toContain("Jun 14");
+  });
+});
+
+describe("the send queue", () => {
+  it("shows a queued send as a bubble that can be withdrawn", () => {
+    const html = transcript({
+      ...initialState,
+      queue: [queuedItem(7, "hold on a second")],
+    });
+    expect(html).toContain("hold on a second");
+    expect(html).toContain(">Queued<");
+    expect(html).toContain('aria-label="Withdraw queued message"');
+  });
+
+  it("renders a queued write as a muted line, not a bubble", () => {
+    const html = transcript({
+      ...initialState,
+      queue: [
+        { id: 7, mode: "write", text: "", kind: "app.settings" } as never,
+      ],
+    });
+    expect(html).toContain("Queued: app.settings");
+    expect(html).not.toContain("ml-auto");
+  });
+
+  it("shows this client's own queued send once — as its pending bubble, not again from the inbox", () => {
+    const html = transcript({
+      ...initialState,
+      pending: [
+        {
+          requestId: "r1",
+          prompt: "mine",
+          attachments: [],
+          submission: 7,
+        },
+      ],
+      queue: [queuedItem(7, "mine"), queuedItem(8, "from another tab")],
+    });
+    expect(html.match(/>mine</gu)).toHaveLength(1);
+    expect(html).toContain("from another tab");
+    expect(html.match(/aria-label="Withdraw queued message"/gu)).toHaveLength(
+      2
+    );
+  });
+});
+
+describe("the simple view", () => {
+  it("folds a run's steps under Details, keeping the person's messages and each answer", () => {
+    const html = transcript(simpleMessages(), false, true, true);
+    expect(
+      ["first", "second", "the answer", "next answer"].every((s) =>
+        html.includes(s)
+      )
+    ).toBeTruthy();
+    // The folded run's thinking is inside a collapsed disclosure, not shown by default.
+    expect(html).toContain('aria-expanded="false"');
+    // A run that was only its answer has nothing to fold.
+    expect(html.match(/>Details</gu)).toHaveLength(1);
+  });
+
+  it("shows every step in the full view", () => {
+    const html = transcript(simpleMessages());
+    expect(html).not.toContain(">Details<");
+    // The run's thinking is its own fold, not hidden under one "Details" line.
+    expect(html).toContain(">Thought<");
   });
 });
