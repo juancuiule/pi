@@ -38,15 +38,19 @@ describe.skipIf(!(await s3GatewayUp()))(
           secretAccessKey: "",
         },
       });
-      const config = await client.send(
-        new GetBucketLifecycleConfigurationCommand({ Bucket: bucket })
-      );
-      expect(config.Rules).toStrictEqual([
-        expect.objectContaining({
-          Status: "Enabled",
-          Expiration: expect.objectContaining({ Days: 30 }),
-        }),
-      ]);
+      try {
+        const config = await client.send(
+          new GetBucketLifecycleConfigurationCommand({ Bucket: bucket })
+        );
+        expect(config.Rules).toStrictEqual([
+          expect.objectContaining({
+            Status: "Enabled",
+            Expiration: expect.objectContaining({ Days: 30 }),
+          }),
+        ]);
+      } finally {
+        await store.drop(bucket);
+      }
     });
   }
 );

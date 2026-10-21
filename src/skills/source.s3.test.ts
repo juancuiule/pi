@@ -17,7 +17,7 @@ describe.skipIf(!(await s3GatewayUp()))(
     const encoder = new TextEncoder();
 
     afterAll(async () => {
-      await store.removePrefix(bucket, "");
+      await store.drop(bucket);
     });
 
     sourceContract({
