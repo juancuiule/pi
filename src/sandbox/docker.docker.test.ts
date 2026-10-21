@@ -23,7 +23,7 @@ import { Attachments } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import { saveScreenshotsTo } from "../screenshots.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
-import { Skills } from "../skills/skills.ts";
+import { Skills, SkillSource } from "../skills/skills.ts";
 import { ask, callTool, echoToolResult } from "../testing/faux.ts";
 import * as DockerVolumes from "../workspaces/docker-volume.ts";
 import { Workspaces } from "../workspaces/workspaces.ts";
@@ -210,11 +210,9 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
           const workspaces = yield* Workspaces;
           const skills = yield* Skills;
           const { skills: available } = yield* skills.catalog;
-          const skill = available.find(
-            (each) => each.name === "unit-conversion"
-          );
+          const skill = available.find((each) => each.name === "convert");
           if (skill === undefined) {
-            return yield* Effect.die(new Error("no unit-conversion skill"));
+            return yield* Effect.die(new Error("no convert skill"));
           }
           return yield* Effect.scoped(
             Effect.gen(function* () {
@@ -222,19 +220,23 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
               const env = workspaces.env(sandbox);
               yield* run(
                 env,
-                "mkdir -p .skills/unit-conversion && echo old > .skills/unit-conversion/stale.txt"
+                "mkdir -p .skills/convert && echo old > .skills/convert/stale.txt"
               );
               yield* skills.replace(env, skill, BACKGROUND_CONTEXT);
-              return yield* run(env, "ls -A .skills .skills/unit-conversion");
+              return yield* run(env, "ls -A .skills .skills/convert");
             })
           );
         }).pipe(
           Effect.provide(
             Layer.merge(
               testWorkspaces(),
-              Skills.directory(
-                "skills",
-                mkdtempSync(path.join(tmpdir(), "effect-pi-skills-org-"))
+              Skills.layer.pipe(
+                Layer.provide(
+                  SkillSource.memory({
+                    "convert/SKILL.md":
+                      "---\nname: convert\ndescription: Convert units.\n---\nDo it.\n",
+                  })
+                )
               )
             )
           )

@@ -1432,8 +1432,8 @@ describe("attention", () => {
   }, 30_000);
 
   it("flags a run the repeat guard ended", async () => {
-    const a = callTool("calculate", { op: "add", a: 1, b: 2 });
-    const b = callTool("calculate", { op: "multiply", a: 3, b: 4 });
+    const a = callTool("bash", { command: "echo a" });
+    const b = callTool("bash", { command: "echo b" });
     const { layer } = setup([
       ...Array.from({ length: 20 }, (_, i) => (i % 2 === 0 ? a : b)),
       answer("done"),
@@ -1442,7 +1442,7 @@ describe("attention", () => {
     const listed = await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
-        yield* conversations.create({ sandbox: "none", prompt: "loop" });
+        yield* conversations.create({ sandbox: "shell", prompt: "loop" });
         yield* waitUntil(
           conversations.list.pipe(
             Effect.map((all) => all[0]?.status === "idle")

@@ -11,8 +11,8 @@ const tool = (name: string, approval = false) => ({
 
 const installed: InstalledExtension[] = [
   {
-    name: "calculator",
-    tools: [tool("calculate")],
+    name: "questions",
+    tools: [tool("ask_user")],
     levels: ["none", "shell", "desktop"],
     locked: false,
   },
@@ -44,7 +44,7 @@ const catalog = [
 const chat: SettingsState = {
   level: "none",
   approvals: "ask",
-  extensions: ["calculator", "skills", "tracing"],
+  extensions: ["questions", "skills", "tracing"],
   disabledTools: [],
   skills: ["convert", "notes"],
 };
@@ -54,7 +54,7 @@ describe(applyChange, () => {
     expect(
       applyChange(installed, catalog, chat, {
         approvals: "auto",
-        extensions: { calculator: false },
+        extensions: { questions: false },
         tools: { skill: false },
         skills: { notes: false },
       })
@@ -84,7 +84,7 @@ describe(applyChange, () => {
   });
 
   it("turns the skills extension on with a skill, unless the same change turns it off", () => {
-    const none = { ...chat, extensions: ["calculator", "tracing"], skills: [] };
+    const none = { ...chat, extensions: ["questions", "tracing"], skills: [] };
     expect(
       [
         applyChange(installed, catalog, none, { skills: { convert: true } }),
@@ -94,8 +94,8 @@ describe(applyChange, () => {
         }),
       ].map((result) => ("extensions" in result ? result.extensions : result))
     ).toStrictEqual([
-      ["calculator", "skills", "tracing"],
-      ["calculator", "tracing"],
+      ["questions", "skills", "tracing"],
+      ["questions", "tracing"],
     ]);
   });
 });
@@ -116,7 +116,7 @@ describe(describeSettings, () => {
         each.tools.filter((t) => !t.enabled).map((t) => t.name),
       ])
     ).toStrictEqual([
-      ["calculator", true, true, false, []],
+      ["questions", true, true, false, []],
       ["coding-tools", false, false, false, []],
       ["skills", true, true, false, ["skill"]],
       ["tracing", true, true, true, []],
@@ -132,7 +132,7 @@ describe(changesBetween, () => {
   it("lists what was turned on and off, and a new policy", () => {
     const after = applyChange(installed, catalog, chat, {
       approvals: "auto",
-      extensions: { calculator: false },
+      extensions: { questions: false },
       tools: { skill: false },
       skills: { notes: false },
     });
@@ -140,7 +140,7 @@ describe(changesBetween, () => {
       "reason" in after ? after : changesBetween(chat, after)
     ).toStrictEqual([
       { type: "approvals", policy: "auto" },
-      { type: "extension", name: "calculator", on: false },
+      { type: "extension", name: "questions", on: false },
       { type: "tool", name: "skill", on: false },
       { type: "skill", name: "notes", on: false },
     ]);

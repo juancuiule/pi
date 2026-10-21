@@ -88,15 +88,6 @@ describe(toolSummary, () => {
     ]);
   });
 
-  it("summarizes the calculator", () => {
-    expect(
-      cases([
-        ["calculate", { expression: "1+2" }],
-        ["calculate", { op: "add", a: 1, b: 2 }],
-      ]).got
-    ).toStrictEqual(["1+2", "1 + 2"]);
-  });
-
   it("falls back for unknown tools", () => {
     expect(
       cases([

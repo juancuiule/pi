@@ -41,8 +41,8 @@ const executeOf = (
 
 describe(mcpToolName, () => {
   it("prefixes, sanitizes and caps the name", () => {
-    expect(mcpToolName("eglc", "get_wordpress_post")).toBe(
-      "mcp_eglc_get_wordpress_post"
+    expect(mcpToolName("notes", "get_wordpress_post")).toBe(
+      "mcp_notes_get_wordpress_post"
     );
     expect(mcpToolName("a-b", "x.y z")).toBe("mcp_a-b_x_y_z");
     expect(mcpToolName("s", "t".repeat(100))).toHaveLength(64);

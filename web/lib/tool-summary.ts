@@ -1,5 +1,5 @@
 // One-line summaries of tool calls for the transcript headers. Argument shapes come from the tools themselves:
-// src/tools/desktop.ts, src/tools/calculator.ts, src/skills/skills.ts (skill) and pi's
+// src/tools/desktop.ts, src/skills/skills.ts (skill) and pi's
 // durable/coding-agent tools (bash, read, write, edit, ls, grep, find). Arguments may be missing or partial while a
 // call streams, so every read goes through helpers that never throw.
 
@@ -18,13 +18,6 @@ const point = (args: Args, x: string, y: string): string | undefined => {
   const xv = number(args[x]);
   const yv = number(args[y]);
   return xv === undefined || yv === undefined ? undefined : `${xv}, ${yv}`;
-};
-
-const OPS: Record<string, string> = {
-  add: "+",
-  subtract: "−",
-  multiply: "×",
-  divide: "÷",
 };
 
 const grep = (args: Args): string => {
@@ -58,19 +51,6 @@ const drag = (args: Args): string => {
   const from = point(args, "fromX", "fromY") ?? "?";
   const to = point(args, "toX", "toY") ?? "?";
   return `${from} → ${to}`;
-};
-
-const calculate = (args: Args): string => {
-  const expression = text(args.expression);
-  if (expression !== undefined) {
-    return expression;
-  }
-  const a = number(args.a);
-  const b = number(args.b);
-  const op = text(args.op);
-  return a === undefined || b === undefined || op === undefined
-    ? ""
-    : `${a} ${OPS[op] ?? op} ${b}`;
 };
 
 const fallback = (args: Args): string => {
@@ -108,7 +88,6 @@ const SUMMARIES: Record<string, (args: Args) => string> = {
   desktop_scroll: scroll,
   desktop_drag: drag,
   desktop_screenshot: () => "",
-  calculate,
   ask_user: askUser,
   web_search: (args) => text(args.query) ?? "",
   artifact_create: (args) => text(args.title) ?? "",

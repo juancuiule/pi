@@ -44,7 +44,7 @@ Use pnpm, never npm or yarn.
 - `pnpm env:check` validates `.env.schema` and `web/.env.schema` against the current environment with varlock (silent when valid) and regenerates `src/env.d.ts` and `web/env.d.ts`; `pnpm env:types` then fails if either differs from what is staged, so a schema change cannot be pushed without its regenerated types
 - `pnpm test` runs vitest over `src/**/*.test.ts`; tests use pi-ai's faux provider, never a real model, and local-directory sandboxes (`src/testing/sandboxes.ts`)
 - `pnpm sandbox:build` builds the Docker sandbox images; `pnpm test:docker` runs the `*.docker.test.ts` integration tests against real containers (not part of `pnpm check` or the hooks)
-- `pnpm test:integration` runs the `*.integration.test.ts` tests against real network services (the eglc MCP server); not part of `pnpm check` or the hooks
+- `pnpm test:integration` runs the `*.integration.test.ts` tests against real network services (a live SearXNG for web search); not part of `pnpm check` or the hooks
 - `pnpm langfuse:up` / `pnpm langfuse:down` start and stop a local Langfuse (see Observability)
 - `pnpm check` runs `env:check` and `env:types` first, then all of the above; run it after code changes
 - `pnpm server` runs the HTTP server (`server.ts`, `SERVER_PORT`; Node strips the types), the only entry point to the agents; configuration is loaded and validated by varlock (see Configuration), and an echo model runs when no model is configured
@@ -123,7 +123,7 @@ Sandboxed HTML pages the agent writes for the person; the decisions are in `docs
 
 - Each tool becomes `mcp_<server>_<tool>` in its server's `mcp-<server>` extension, which every conversation selects and can switch off as a whole; calls run on the host, so chat conversations have them. MCP `isError` results reach the model as failed calls. MCP tools are not gated by approvals.
 - A server that fails to connect is logged and reported `unavailable`; there is no reconnect, restart the server.
-- A server entry can `transform` results before the model sees them: `src/mcp/eglc.ts` trims El Gato y La Caja's `get_wordpress_post` (the body three times as HTML plus WordPress metadata) to the article as text and its metadata, including `id_post`, the id `get_recommendations` takes.
+- A server entry can `transform` results before the model sees them — trim a verbose payload to the fields the model needs (see `mcp.test.ts` for the shape).
 - Tests use `fakeMcpServer` (`src/testing/mcp.ts`, pi-mcp's in-memory transport).
 
 ## Web search
@@ -186,5 +186,5 @@ Agents are traced with Effect spans, exported to Langfuse over OTLP.
 
 ## Pull requests
 
-- After opening a PR, generate an explain-diff walkthrough of the branch's diff against its base (the `explain-diff` skill writes a self-contained HTML file at `/tmp/YYYY-MM-DD-explanation-<slug>.html`) and report the file's path, so the reviewer can read the explanation beside the PR.
+- After opening a PR, generate an explain-diff walkthrough of the branch's diff against its base (the `explain-diff` skill turns it into a self-contained HTML page) and report where the reviewer can read it, so the explanation sits beside the PR.
 - When the diff changes runtime behavior a static explanation can't make intuitive — lifecycles, concurrency, protocols, migrations, multi-step flows — also build a micro-world (Geoffrey Litt, "Understanding is the new bottleneck"): a throwaway interactive page or script the reviewer drives, triggering events and watching state move, saved next to the explainer. It is a review artifact, not shipped code; skip it for diffs a reader can fully get from prose.

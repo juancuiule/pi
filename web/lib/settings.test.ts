@@ -14,9 +14,9 @@ const tool = (name: string) => ({ name, description: "", approval: false });
 const capabilities: Capabilities = {
   extensions: [
     {
-      name: "calculator",
+      name: "questions",
       levels: ["none", "shell", "desktop"],
-      tools: [tool("calculate")],
+      tools: [tool("ask_user")],
       sections: [],
       hooks: 0,
       locked: false,
@@ -72,8 +72,8 @@ describe(newConversationSettings, () => {
         newConversationSettings(capabilities, "shell", NO_OVERRIDES),
       ].map(enabledOf)
     ).toStrictEqual([
-      ["calculator", "skills"],
-      ["calculator", "coding-tools", "skills"],
+      ["questions", "skills"],
+      ["questions", "coding-tools", "skills"],
     ]);
   });
 
@@ -90,7 +90,7 @@ describe(newConversationSettings, () => {
       isEmpty(overrides),
       isEmpty(NO_OVERRIDES),
     ]).toStrictEqual([
-      ["calculator", "coding-tools", "skills"],
+      ["questions", "coding-tools", "skills"],
       [
         ["read", true],
         ["bash", false],

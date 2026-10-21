@@ -1,5 +1,5 @@
 // One real search against the SearXNG at SEARXNG_URL (`pnpm searxng:up`), through the same WebSearch layer the
-// server wires. `pnpm test:integration`, like the eglc MCP test.
+// server wires. `pnpm test:integration`.
 import { Context, Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 

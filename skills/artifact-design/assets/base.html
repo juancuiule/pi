@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PAGE TITLE</title>
+    <style>
+      /*
+        The console's own tokens (web/app/globals.css), inlined — a page cannot
+        load the console's styles or fonts. Light values are the default; the
+        dark block is there when a dark page is a deliberate choice.
+      */
+      :root {
+        --bg: oklch(1 0 0);
+        --ink: oklch(0.147 0.004 49.25);
+        --ink-muted: oklch(0.54 0.013 58.071);
+        --surface: oklch(0.97 0.001 106.424);
+        --border: oklch(0.923 0.003 48.717);
+        --strong: oklch(0.216 0.006 56.043); /* near-black; buttons, emphasis */
+        --strong-ink: oklch(0.985 0.001 106.423);
+        --danger: oklch(0.45 0.245 27.325);
+        --ok: oklch(0.627 0.194 149.2);
+        --warn: oklch(0.5 0.13 65);
+        --radius: 7px;
+        --font:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          sans-serif; /* stands in for the console's IBM Plex Sans */
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+
+      /* Dark tokens, applied by adding class="dark" to <body> or a section. */
+      .dark {
+        --bg: oklch(0.147 0.004 49.25);
+        --ink: oklch(0.985 0.001 106.423);
+        --ink-muted: oklch(0.709 0.01 56.259);
+        --surface: oklch(0.216 0.006 56.043);
+        --border: oklch(1 0 0 / 15%);
+        --strong: oklch(0.985 0.001 106.423);
+        --strong-ink: oklch(0.216 0.006 56.043);
+        --danger: oklch(0.704 0.191 22.216);
+        --ok: oklch(0.723 0.219 149.6);
+        --warn: oklch(0.78 0.15 80);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 28px 24px 48px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--font);
+        font-size: 15px;
+        line-height: 1.6;
+      }
+      .page {
+        max-width: 72ch;
+        margin: 0 auto;
+      }
+
+      h1,
+      h2,
+      h3 {
+        /* Montserrat's role in the console: heavier, tighter headings */
+        line-height: 1.25;
+        letter-spacing: -0.01em;
+        margin: 0 0 0.4em;
+      }
+      h1 {
+        font-size: 22px;
+        font-weight: 700;
+      }
+      h2 {
+        font-size: 16px;
+        font-weight: 650;
+        margin-top: 2em;
+      }
+      p {
+        margin: 0 0 0.9em;
+      }
+      .lede {
+        color: var(--ink-muted);
+        font-size: 16px;
+      }
+      code,
+      kbd,
+      .num {
+        font-family: var(--mono);
+        font-size: 0.9em;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px 18px;
+        margin: 14px 0;
+      }
+      .card h3 {
+        font-size: 14px;
+        font-weight: 650;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      th {
+        text-align: left;
+        font-weight: 650;
+        color: var(--ink-muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      th,
+      td {
+        padding: 7px 10px 7px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      td.num,
+      th.num {
+        font-family: var(--mono);
+        text-align: right;
+        padding-right: 0;
+      }
+
+      .tag {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-family: var(--mono);
+        border: 1px solid var(--border);
+        background: var(--bg);
+      }
+      .tag.ok {
+        color: var(--ok);
+        border-color: var(--ok);
+      }
+      .tag.warn {
+        color: var(--warn);
+        border-color: var(--warn);
+      }
+      .tag.danger {
+        color: var(--danger);
+        border-color: var(--danger);
+      }
+
+      pre {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 12px 14px;
+        overflow-x: auto;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      pre .add {
+        color: var(--ok);
+      }
+      pre .del {
+        color: var(--danger);
+      }
+
+      a {
+        color: inherit;
+      }
+
+      /* Pele diagrams: set on the element (or a wrapper) before pele.mount. */
+      .pele {
+        --pele-bg: var(--bg);
+        --pele-fg: var(--ink);
+        --pele-muted: var(--ink-muted);
+        --pele-line: var(--ink);
+        --pele-surface: var(--surface);
+        --pele-surface-alt: var(--surface);
+        --pele-border: var(--ink-muted);
+        --pele-accent: var(--strong);
+        --pele-critical: var(--danger);
+        --pele-error: var(--danger);
+        --pele-font: var(--font);
+        --pele-font-mono: var(--mono);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <h1>PAGE TITLE</h1>
+      <p class="lede">One line on what this page is and why it exists.</p>
+
+      <section class="card">
+        <h3>A section</h3>
+        <p>Content.</p>
+      </section>
+    </main>
+  </body>
+</html>

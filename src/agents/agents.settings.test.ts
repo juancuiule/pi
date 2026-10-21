@@ -23,11 +23,16 @@ import {
 import { Agents } from "./agents.ts";
 import { SETTINGS_ENTRY } from "./settings.ts";
 
-// An empty org root: a developer's leftover skills/org/ would otherwise leak into these tests.
+// The skills these tests run against: convert and alpha, from a memory source.
 const withSkills = {
-  skills: Skills.directory(
-    "skills",
-    mkdtempSync(path.join(tmpdir(), "effect-pi-skills-org-"))
+  skills: Skills.layer.pipe(
+    Layer.provide(
+      SkillSource.memory({
+        "convert/SKILL.md":
+          "---\nname: convert\ndescription: Convert units.\n---\n",
+        "alpha/SKILL.md": "---\nname: alpha\ndescription: Alpha.\n---\n",
+      })
+    )
   ),
 };
 
@@ -66,9 +71,9 @@ describe("conversation settings", () => {
           const seat = yield* agents.open(id);
           const before = offeredIn(yield* seat.ask("What do you have?"));
           const settings = yield* agents.configure(id, {
-            extensions: { calculator: false },
+            extensions: { questions: false },
             tools: { bash: false },
-            skills: { "unit-conversion": false },
+            skills: { convert: false },
           });
           const after = offeredIn(yield* seat.ask("And now?"));
           return { before, after, settings };
@@ -77,7 +82,7 @@ describe("conversation settings", () => {
     );
 
     expect(
-      ["calculate", "bash"].map((name) => [
+      ["ask_user", "bash"].map((name) => [
         result.before.tools.includes(name),
         result.after.tools.includes(name),
       ])
@@ -87,9 +92,9 @@ describe("conversation settings", () => {
     ]);
     // The skill is gone from the skills section, and its switch is off.
     expect([
-      result.before.system.includes("unit-conversion"),
-      result.after.system.includes("unit-conversion"),
-      result.settings.skills.find((s) => s.name === "unit-conversion")?.enabled,
+      result.before.system.includes("convert"),
+      result.after.system.includes("convert"),
+      result.settings.skills.find((s) => s.name === "convert")?.enabled,
     ]).toStrictEqual([true, false, false]);
   });
 
@@ -104,7 +109,7 @@ describe("conversation settings", () => {
             level: "shell",
             settings: {
               tools: { write: false },
-              skills: { "repo-report": false },
+              skills: { alpha: false },
             },
           });
           const seat = yield* agents.open(id);
@@ -121,7 +126,7 @@ describe("conversation settings", () => {
     expect(after.offered.tools).toContain("bash");
     expect(after.offered.tools).not.toContain("write");
     expect(
-      after.settings.skills.find((s) => s.name === "repo-report")?.enabled
+      after.settings.skills.find((s) => s.name === "alpha")?.enabled
     ).toBeFalsy();
   });
 
@@ -162,7 +167,6 @@ describe("conversation settings", () => {
         .filter((each) => each.enabled)
         .map((each) => each.name)
     ).toStrictEqual([
-      "calculator",
       "workspace",
       "attachments",
       "artifacts",
@@ -216,7 +220,7 @@ describe("conversation settings", () => {
           [
             agents.configure(id, { tools: { bash: false } }),
             agents.configure(id, { tools: { write: false } }),
-            agents.configure(id, { extensions: { calculator: false } }),
+            agents.configure(id, { extensions: { questions: false } }),
           ],
           { concurrency: "unbounded" }
         );
@@ -225,7 +229,7 @@ describe("conversation settings", () => {
     );
 
     expect([
-      settings.extensions.find((e) => e.name === "calculator")?.enabled,
+      settings.extensions.find((e) => e.name === "questions")?.enabled,
       settings.extensions
         .flatMap((e) => e.tools)
         .filter((t) => !t.enabled)
@@ -247,7 +251,7 @@ describe("conversation settings", () => {
           Effect.gen(function* () {
             const seat = yield* agents.open(id);
             yield* agents.configure(id, { extensions: { skills: false } });
-            return yield* Effect.exit(seat.send("/skill:unit-conversion 3 km"));
+            return yield* Effect.exit(seat.send("/skill:convert 3 km"));
           })
         );
         const reopened = yield* Effect.scoped(
@@ -255,9 +259,7 @@ describe("conversation settings", () => {
             const seat = yield* agents.open(id);
             const settings = yield* agents.agent(id);
             return {
-              exit: yield* Effect.exit(
-                seat.send("/skill:unit-conversion 3 km")
-              ),
+              exit: yield* Effect.exit(seat.send("/skill:convert 3 km")),
               on: settings.extensions.find(
                 (extension) => extension.name === "skills"
               )?.enabled,
@@ -359,12 +361,12 @@ describe("conversation settings", () => {
           const folder = path.join(
             seat.sandbox?.id ?? "",
             ".skills",
-            "unit-conversion"
+            "convert"
           );
           const seen = [existsSync(folder)];
-          yield* agents.configure(id, { skills: { "unit-conversion": false } });
+          yield* agents.configure(id, { skills: { convert: false } });
           seen.push(existsSync(folder));
-          yield* agents.configure(id, { skills: { "unit-conversion": true } });
+          yield* agents.configure(id, { skills: { convert: true } });
           seen.push(existsSync(folder));
           return seen;
         })
@@ -387,7 +389,7 @@ describe("conversation settings", () => {
           const id = yield* create({ approvals: "ask" });
           yield* agents.configure(id, {
             approvals: "auto",
-            tools: { calculate: false },
+            tools: { ask_user: false },
           });
           const reset = yield* agents.reset(id);
           const seat = yield* agents.open(id);
@@ -416,13 +418,13 @@ describe("conversation settings", () => {
         reset: false,
         changes: [
           { type: "approvals", policy: "auto" },
-          { type: "tool", name: "calculate", on: false },
+          { type: "tool", name: "ask_user", on: false },
         ],
       },
       {
         by: "person",
         reset: true,
-        changes: [{ type: "tool", name: "calculate", on: true }],
+        changes: [{ type: "tool", name: "ask_user", on: true }],
       },
       {
         by: "agent",
@@ -448,7 +450,7 @@ describe("conversation settings", () => {
       Effect.gen(function* () {
         const agents = yield* Agents;
         const id = yield* create();
-        yield* agents.configure(id, { tools: { calculate: false } });
+        yield* agents.configure(id, { tools: { ask_user: false } });
       }).pipe(
         Effect.provide(layer),
         Effect.provideService(Tracer.Tracer, tracer)
@@ -463,7 +465,7 @@ describe("conversation settings", () => {
     ]).toStrictEqual([
       "event",
       "string",
-      JSON.stringify([{ type: "tool", name: "calculate", on: false }]),
+      JSON.stringify([{ type: "tool", name: "ask_user", on: false }]),
     ]);
   });
 
@@ -479,23 +481,23 @@ describe("conversation settings", () => {
           const folder = path.join(
             seat.sandbox?.id ?? "",
             ".skills",
-            "unit-conversion"
+            "convert"
           );
           return yield* Effect.forEach(Array.from({ length: 5 }), () =>
             Effect.gen(function* () {
               yield* Effect.all(
                 [
                   agents.configure(id, {
-                    skills: { "unit-conversion": false },
+                    skills: { convert: false },
                   }),
-                  agents.configure(id, { skills: { "unit-conversion": true } }),
+                  agents.configure(id, { skills: { convert: true } }),
                 ],
                 { concurrency: "unbounded" }
               );
               const settings = yield* agents.agent(id);
               const enabled =
-                settings.skills.find((s) => s.name === "unit-conversion")
-                  ?.enabled ?? false;
+                settings.skills.find((s) => s.name === "convert")?.enabled ??
+                false;
               return enabled === existsSync(folder);
             })
           );
@@ -518,7 +520,7 @@ describe("conversation settings", () => {
           const folder = path.join(
             seat.sandbox?.id ?? "",
             ".skills",
-            "unit-conversion"
+            "convert"
           );
           // A stale extra file, and a missing one, as after a skill changed at its source.
           writeFileSync(path.join(folder, "stale.txt"), "old");

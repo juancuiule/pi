@@ -1,6 +1,5 @@
 import {
   BookOpen,
-  Calculator,
   Camera,
   FilePen,
   FilePlus,
@@ -28,7 +27,6 @@ const ICONS: Record<string, LucideIcon> = {
   grep: Search,
   find: Search,
   skill: BookOpen,
-  calculate: Calculator,
   ask_user: MessageCircleQuestionMark,
   web_search: Globe,
   artifact_create: LayoutTemplate,

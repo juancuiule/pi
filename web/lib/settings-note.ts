@@ -48,7 +48,7 @@ const describe = (change: Change): string => {
   }
 };
 
-/** "You changed settings: bash off, calculator on"; `undefined` for data that is not a settings record. */
+/** "You changed settings: bash off, skills on"; `undefined` for data that is not a settings record. */
 export const settingsNote = (data: unknown): string | undefined => {
   if (typeof data !== "object" || data === null || !("changes" in data)) {
     return undefined;

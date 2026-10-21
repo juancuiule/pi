@@ -527,7 +527,7 @@ const showEarlier = async (
     toast.error(
       error instanceof Error
         ? error.message
-        : "Couldn't load earlier entries. Try again."
+        : "Couldn't load earlier entries. Try again.",
       { duration: Infinity }
     );
   }

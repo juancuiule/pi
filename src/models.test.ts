@@ -129,8 +129,11 @@ const toolCallReply = [
         id: "call_1",
         type: "function",
         function: {
-          name: "calculate",
-          arguments: JSON.stringify({ op: "add", a: 40, b: 2 }),
+          name: "artifact_create",
+          arguments: JSON.stringify({
+            title: "The answer",
+            html: "<p>42</p>",
+          }),
         },
       },
     ],
@@ -206,9 +209,12 @@ describe("an Ollama conversation", () => {
     const [first, second] = ollama.requests;
     // Ollama-compatible requests: no reasoning effort and no `developer` role.
     expect(JSON.stringify(first)).not.toMatch(/reasoning_effort|"developer"/u);
-    // The second request carries the calculator's result back to the model.
+    // The second request carries the tool's result back to the model.
     expect(second?.messages).toContainEqual(
-      expect.objectContaining({ role: "tool", content: "42" })
+      expect.objectContaining({
+        role: "tool",
+        content: expect.stringContaining('Created "The answer" (art_'),
+      })
     );
   });
 });

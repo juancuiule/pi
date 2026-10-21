@@ -8,9 +8,9 @@ import {
 } from "./skill-autocomplete";
 
 const skills = [
-  { name: "unit-conversion", description: "Convert units" },
-  { name: "repo-report", description: "Report on a repo" },
-  { name: "desktop-notes", description: "Notes on the desktop" },
+  { name: "convert", description: "Convert units" },
+  { name: "report", description: "Report on a repo" },
+  { name: "notes", description: "Notes on the desktop" },
 ];
 
 const query = (prompt: string, cursor?: number) =>
@@ -51,7 +51,7 @@ describe(skillQuery, () => {
   });
 
   it("stays closed for paths, finished words and ordinary text", () => {
-    expect(query("/skill:repo-report ")).toBeUndefined();
+    expect(query("/skill:report ")).toBeUndefined();
     expect(query("hello /")).toBeUndefined();
     expect(query("hello /rep")).toBeUndefined();
     expect(query("cat /usr/bin")).toBeUndefined();
@@ -70,12 +70,12 @@ describe(skillQuery, () => {
 describe(matchSkills, () => {
   it("prefix-matches names, sorted", () => {
     expect(matchSkills(skills, "").map((s) => s.name)).toStrictEqual([
-      "desktop-notes",
-      "repo-report",
-      "unit-conversion",
+      "convert",
+      "notes",
+      "report",
     ]);
     expect(matchSkills(skills, "re").map((s) => s.name)).toStrictEqual([
-      "repo-report",
+      "report",
     ]);
     expect(matchSkills(skills, "zzz")).toStrictEqual([]);
   });
@@ -88,18 +88,17 @@ describe(matchSkills, () => {
 describe(completeSkill, () => {
   it("completes to the command with a trailing space", () => {
     const prompt = "/rep";
-    expect(completeSkill(prompt, tokenAt(prompt), "repo-report")).toStrictEqual(
-      { prompt: "/skill:repo-report ", cursor: 19 }
-    );
+    expect(completeSkill(prompt, tokenAt(prompt), "report")).toStrictEqual({
+      prompt: "/skill:report ",
+      cursor: 14,
+    });
   });
 
   it("replaces a mention in the middle, keeping the rest", () => {
     const prompt = "try /sk then go";
-    expect(
-      completeSkill(prompt, tokenAt(prompt, 7), "unit-conversion")
-    ).toStrictEqual({
-      prompt: "try /skill:unit-conversion then go",
-      cursor: 27,
+    expect(completeSkill(prompt, tokenAt(prompt, 7), "convert")).toStrictEqual({
+      prompt: "try /skill:convert then go",
+      cursor: 19,
     });
   });
 });
