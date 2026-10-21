@@ -192,7 +192,7 @@ const TrustedImage = ({ src, alt }: { src?: string | Blob; alt?: string }) => {
           href={src}
           target="_blank"
           rel="noreferrer"
-          className="underline underline-offset-2"
+          className="text-link underline underline-offset-2"
         >
           {src}
         </a>
@@ -260,7 +260,7 @@ export const markdownComponents: Components = {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="underline underline-offset-2"
+      className="text-link underline underline-offset-2"
     >
       {children}
     </a>
@@ -319,7 +319,7 @@ const UntrustedLink = ({
       <button
         type="button"
         onClick={() => setAsking(true)}
-        className="inline cursor-pointer underline underline-offset-2"
+        className="text-link inline cursor-pointer underline underline-offset-2"
       >
         {children}
       </button>

@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 const OTHER = "\u0000other";
 
 const CHOICE =
-  "focus-visible:border-ring focus-visible:ring-ring data-checked:border-primary data-checked:bg-accent data-checked:ring-primary flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors duration-150 outline-none focus-visible:ring-3 data-checked:ring-1";
+  "focus-visible:border-ring focus-visible:ring-ring data-checked:border-link data-checked:bg-accent data-checked:ring-link flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors duration-150 outline-none focus-visible:ring-3 data-checked:ring-1";
 
 const Mark = ({ multiple }: { multiple: boolean }) => (
   <span
