@@ -11,3 +11,6 @@ allowBuilds:
 # Effect packages are released in lockstep; keep this one on effect's version.
 overrides:
   "@effect/platform-node-shared": 4.0.2
+
+patchedDependencies:
+  vaul@1.1.2: patches/vaul@1.1.2.patch

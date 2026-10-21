@@ -13,6 +13,10 @@ export const ATTENTION_LABEL: Record<AttentionReason, string> = {
   repeat_guard: "Stopped a repeated call",
 };
 
+/** Without a Seat, so without a Sandbox to show. */
+export const seatlessOf = (conversation: Pick<ConversationSummary, "status">) =>
+  conversation.status === "paused" || conversation.status === "archived";
+
 /**
  * `ended` marks a conversation the server no longer knows (swept or lost in a restart). `attention`
  * marks one whose last settled input ended badly — a failed run or the repeat guard's stop. `waiting`

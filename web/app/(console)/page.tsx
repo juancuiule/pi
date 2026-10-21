@@ -1,7 +1,6 @@
 "use client";
 
 import type { ConversationSummary } from "effect-pi/api";
-import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -13,10 +12,13 @@ import {
   ArtifactSheet,
 } from "@/components/console/artifact-panel";
 import { ConversationHeader } from "@/components/console/conversation-header";
-import { DesktopPanel } from "@/components/console/desktop-panel";
 import { FileResizablePanel, FileSheet } from "@/components/console/file-panel";
 import { MessageInput } from "@/components/console/message-input";
 import { NewConversation } from "@/components/console/new-conversation";
+import {
+  SandboxContent,
+  SandboxDrawer,
+} from "@/components/console/sandbox-drawer";
 import { Transcript } from "@/components/console/transcript";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,23 +44,10 @@ import { useConversationEvents } from "@/lib/use-conversation-events";
 import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
 import type { OpenFile } from "@/lib/workspace-files";
 
-// wterm loads its WASM at runtime, so the terminal never renders on the server.
-const SandboxPanel = dynamic(
-  async () => {
-    const mod = await import("@/components/console/sandbox-panel");
-    return mod.SandboxPanel;
-  },
-  { ssr: false }
-);
-
 const pageTitle = (conversation: ConversationSummary | undefined): string =>
   conversation === undefined
     ? "New conversation · effect-pi"
     : `${conversation.pendingApprovals > 0 ? "(Approval needed) " : ""}${conversation.title} · effect-pi`;
-
-/** Without a Seat, so without a Sandbox to show. */
-const seatlessOf = (conversation: ConversationSummary) =>
-  conversation.status === "paused" || conversation.status === "archived";
 
 /** Read-only when the SSE 404'd (unknown id) or the conversation is archived. */
 const readOnlyOf = (
@@ -172,6 +161,19 @@ const useFilePanel = (
   return [file, setFile];
 };
 
+/** The header's panel button reads the same in both modes: it toggles the pane on desktop, the drawer below it. */
+const sidePanelOf = (
+  conversation: ConversationSummary,
+  isDesktop: boolean | null,
+  sideCollapsed: boolean,
+  sandboxOpen: boolean,
+  toggle: () => void
+) => ({
+  label: conversation.sandbox === "desktop" ? "desktop" : "terminal",
+  collapsed: isDesktop === false ? !sandboxOpen : sideCollapsed,
+  toggle,
+});
+
 const NotFound = ({ onNew }: { onNew: () => void }) => (
   <div className="flex h-full flex-col items-center justify-center gap-2 p-6">
     <h1 className="text-base font-medium">Conversation not found</h1>
@@ -212,6 +214,8 @@ const Console = () => {
   const isDesktop = useMediaQuery(DESKTOP_MEDIA);
   const sidePanel = usePanelRef();
   const [sideCollapsed, setSideCollapsed] = useState(false);
+  // The sandbox panel is a bottom drawer below the desktop breakpoint.
+  const [sandboxOpen, setSandboxOpen] = useState(false);
 
   const state = useConversationEvents(selectedId);
   const thinkingHidden = useConversationStore(
@@ -239,6 +243,10 @@ const Console = () => {
   const [file, setFile] = useFilePanel(selectedId);
 
   const toggleSidePanel = () => {
+    if (isDesktop !== true) {
+      setSandboxOpen((open) => !open);
+      return;
+    }
     const panel = sidePanel.current;
     if (panel === null) {
       return;
@@ -266,15 +274,14 @@ const Console = () => {
               conversation={conversation}
               state={state}
               sidePanel={
-                showSandbox && isDesktop
-                  ? {
-                      label:
-                        conversation.sandbox === "desktop"
-                          ? "desktop"
-                          : "terminal",
-                      collapsed: sideCollapsed,
-                      toggle: toggleSidePanel,
-                    }
+                showSandbox
+                  ? sidePanelOf(
+                      conversation,
+                      isDesktop,
+                      sideCollapsed,
+                      sandboxOpen,
+                      toggleSidePanel
+                    )
                   : undefined
               }
             />
@@ -327,29 +334,29 @@ const Console = () => {
                   collapsible
                   onResize={(size) => setSideCollapsed(size.asPercentage === 0)}
                 >
-                  <div key={selectedId} className="h-full min-h-0">
-                    {conversation.sandbox === "desktop" ? (
-                      <DesktopPanel
-                        conversation={conversation.id}
-                        vncUrl={conversation.vncUrl}
-                        paused={seatlessOf(conversation)}
-                        resuming={resuming}
-                      />
-                    ) : (
-                      <SandboxPanel
-                        id={conversation.id}
-                        live={!seatlessOf(conversation)}
-                        state={state}
-                        resuming={resuming}
-                      />
-                    )}
-                  </div>
+                  <SandboxContent
+                    key={selectedId}
+                    conversation={conversation}
+                    state={state}
+                    resuming={resuming}
+                  />
                 </ResizablePanel>
               </>
             ) : null}
           </ResizablePanelGroup>
         ) : null}
-        {isDesktop === false ? main : null}
+        {isDesktop === false ? (
+          <>
+            {main}
+            <SandboxDrawer
+              open={sandboxOpen}
+              onOpenChange={setSandboxOpen}
+              conversation={conversation}
+              state={state}
+              resuming={resuming}
+            />
+          </>
+        ) : null}
         <ArtifactSheet
           artifact={artifact}
           conversation={selectedId}
