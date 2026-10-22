@@ -20,6 +20,7 @@ import {
   ConversationNotFound,
   EmptyMessage,
   EntryNotFound,
+  FrictionNotFound,
   InvalidDomain,
   InvalidSetting,
   InvalidSkill,
@@ -60,6 +61,7 @@ export {
   ConversationNotFound,
   EmptyMessage,
   EntryNotFound,
+  FrictionNotFound,
   InvalidDomain,
   InvalidSetting,
   InvalidSkill,
@@ -785,6 +787,45 @@ const SearchGroup = HttpApiGroup.make("search").add(
   })
 );
 
+const FrictionScope = Schema.Literals(["platform", "project"]);
+const FrictionStatus = Schema.Literals(["open", "dismissed", "resolved"]);
+
+/** One entry of the friction log: pain an agent filed while working (see src/friction/friction.ts). */
+export const FrictionEntryInfo = Schema.Struct({
+  id: Schema.String,
+  scope: FrictionScope,
+  title: Schema.String,
+  whatHappened: Schema.String,
+  expectedOrWhyItHurt: Schema.String,
+  /** The conversation that filed it. */
+  conversationId: Schema.Number,
+  createdAt: Schema.Number,
+  status: FrictionStatus,
+  notes: Schema.Array(
+    Schema.Struct({
+      text: Schema.String,
+      conversationId: Schema.Number,
+      createdAt: Schema.Number,
+    })
+  ),
+});
+export type FrictionEntryInfo = typeof FrictionEntryInfo.Type;
+
+const NoFriction = FrictionNotFound.pipe(HttpApiSchema.status(404));
+
+const FrictionGroup = HttpApiGroup.make("friction").add(
+  // Every entry across conversations, oldest first; the console sorts and filters.
+  HttpApiEndpoint.get("list", "/friction", {
+    success: Schema.Array(FrictionEntryInfo),
+  }),
+  HttpApiEndpoint.patch("triage", "/friction/:id", {
+    params: { id: Schema.String },
+    payload: Schema.Struct({ status: FrictionStatus }),
+    success: FrictionEntryInfo,
+    error: NoFriction,
+  })
+);
+
 const InfoGroup = HttpApiGroup.make("info").add(
   HttpApiEndpoint.get("get", "/info", {
     success: Schema.Struct({
@@ -814,5 +855,6 @@ export const Api = HttpApi.make("effect-pi")
   .add(SkillGroup)
   .add(FileGroup)
   .add(SearchGroup)
+  .add(FrictionGroup)
   .add(InfoGroup)
   .prefix("/api");

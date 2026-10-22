@@ -114,6 +114,12 @@ export class ArtifactNotFound extends Schema.TaggedError<ArtifactNotFound>()(
   { id: Schema.String }
 ) {}
 
+/** No entry with this id in the friction log. */
+export class FrictionNotFound extends Schema.TaggedError<FrictionNotFound>()(
+  "FrictionNotFound",
+  { id: Schema.String }
+) {}
+
 /** No readable file or directory at this path in the Conversation's Workspace, or the path escapes it. */
 export class WorkspaceFileNotFound extends Schema.TaggedError<WorkspaceFileNotFound>()(
   "WorkspaceFileNotFound",

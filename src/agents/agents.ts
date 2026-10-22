@@ -96,6 +96,7 @@ import {
   ConversationArchived,
   ConversationNotFound,
   EntryNotFound,
+  FrictionNotFound,
   InvalidSetting,
   InvalidUpgrade,
   SandboxUnavailable,
@@ -103,6 +104,12 @@ import {
   TitleGenerationFailed,
   TraceUnavailable,
 } from "../errors.ts";
+import type { FrictionEntry, FrictionStatus } from "../friction/friction.ts";
+import {
+  FrictionDoc,
+  frictionExtension,
+  triageEntry,
+} from "../friction/friction.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
 import { repeatGuardExtension } from "../repeat-guard.ts";
@@ -695,6 +702,13 @@ export class Agents extends Context.Service<
       "withdrawn" | "placed" | "settled",
       AgentError | ConversationNotFound | SubmissionNotFound
     >;
+    /** The friction log across every conversation, oldest first. */
+    readonly friction: Effect.Effect<readonly FrictionEntry[], AgentError>;
+    /** The person's triage of a friction entry; `FrictionNotFound` for an unknown id. */
+    triageFriction(
+      id: string,
+      status: FrictionStatus
+    ): Effect.Effect<FrictionEntry, AgentError | FrictionNotFound>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -853,6 +867,9 @@ export class Agents extends Context.Service<
         // `ask_user`: questions as a form in the console.
         const questionsExt = questionsExtension();
         registry.install(questionsExt);
+        // `friction`: the agent files papercuts into the log the person triages on /friction. Not locked.
+        const frictionExt = frictionExtension();
+        registry.install(frictionExt);
         // Web search, only when the layer was given a WebSearch: `web_search` on the host at every Level. Not
         // locked — a conversation can switch it off.
         const webSearch = yield* Effect.serviceOption(WebSearch);
@@ -870,6 +887,7 @@ export class Agents extends Context.Service<
           attachmentsExt,
           artifactsExt,
           questionsExt,
+          frictionExt,
           ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
           ...mcp.extensions,
@@ -881,6 +899,7 @@ export class Agents extends Context.Service<
           attachmentsExt,
           artifactsExt,
           questionsExt,
+          frictionExt,
           ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
           ...mcp.extensions,
@@ -923,6 +942,7 @@ export class Agents extends Context.Service<
             attachmentsExt,
             artifactsExt,
             questionsExt,
+            frictionExt,
             ...(webExt === undefined ? [] : [webExt]),
             skillsExt,
             ...mcp.extensions,
@@ -2935,6 +2955,25 @@ export class Agents extends Context.Service<
           return yield* get(id);
         });
 
+        const friction = attempt(() =>
+          harness.snapshot(FrictionDoc, context)
+        ).pipe(Effect.map((state) => state?.entries ?? []));
+
+        const triageFriction = (entry: string, status: FrictionStatus) =>
+          attempt(() =>
+            harness.commit(
+              async (tx) =>
+                triageEntry(await tx.doc(FrictionDoc), entry, status),
+              context
+            )
+          ).pipe(
+            Effect.flatMap((triaged) =>
+              triaged === undefined
+                ? Effect.fail(new FrictionNotFound({ id: entry }))
+                : Effect.succeed(triaged)
+            )
+          );
+
         return Agents.of({
           model: options.model,
           titleGeneration: options.titleGeneration === true,
@@ -2958,6 +2997,8 @@ export class Agents extends Context.Service<
           renameTitle,
           autoTitle,
           generateTitle,
+          friction,
+          triageFriction,
         });
       })
     );
