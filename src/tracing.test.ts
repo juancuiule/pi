@@ -127,6 +127,38 @@ describe("agent tracing", () => {
     });
   });
 
+  it("puts a subagent's work under the task call that started it", async () => {
+    const { spans, tracer } = recordingTracer();
+    const { layer } = fauxAgents([
+      callTool("task", { prompt: "Say hi." }),
+      // The subagent's turn.
+      fauxAssistantMessage([fauxText("hi")]),
+      fauxAssistantMessage([fauxText("It said hi.")]),
+    ]);
+
+    await Effect.runPromise(
+      ask("Ask a subagent to say hi.").pipe(
+        Effect.provide(layer),
+        Effect.provideService(Tracer.Tracer, tracer)
+      )
+    );
+
+    expect(tree(spans)).toStrictEqual([
+      "Seat.ask < -",
+      "generation < Seat.ask",
+      "tool task < Seat.ask",
+      "generation < tool task",
+      "generation < Seat.ask",
+    ]);
+    // The subagent's spans stay in the session of the conversation it served.
+    const sessions = new Set(
+      spans
+        .map((span) => span.attributes.get("langfuse.session.id"))
+        .filter((session) => session !== undefined)
+    );
+    expect(sessions.size).toBe(1);
+  });
+
   it("puts a send-driven run's spans on one trace, recorded for feedback", async () => {
     const { spans, tracer } = recordingTracer();
     const { layer } = fauxAgents([

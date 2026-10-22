@@ -1,6 +1,7 @@
 import type { Context } from "@earendil-works/chord";
-// Per-conversation approval policy for gated tools. Each conversation's doc holds its policy, pending
-// entries and decisions. Keys are `${conversationId}:${callId}`.
+// Per-conversation approval policy for gated tools. The root conversation's doc holds policy, pending
+// entries and decisions for the whole conversation tree; a subagent's doc only carries `root` pointing
+// at it. Keys are `${conversationId}:${callId}`, with the calling conversation's id, not the root's.
 import { defineDoc } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
@@ -45,6 +46,8 @@ export type ApprovalChoice = "approve" | "deny" | "always";
 // oxlint-disable-next-line typescript/consistent-type-definitions
 export type ApprovalState = {
   policy: ApprovalPolicy;
+  /** Set on task-owned (subagent) conversations: the top-level conversation whose doc holds the state. */
+  root?: string;
   pending: Record<string, PendingApproval>;
   decisions: Record<string, ApprovalDecision>;
   /** Answers to `ask_user` calls, by key, committed with their `approve` decision; absent in docs from before them. */
@@ -64,6 +67,22 @@ export const approvalKey = (
   conversationId: ConversationId,
   callId: string
 ): string => `${String(conversationId)}:${callId}`;
+
+/**
+ * The conversation whose ApprovalDoc `conversationId`'s gated calls consult: itself, unless it is a subagent,
+ * whose doc carries `root`. Everything that reads or writes pending entries goes through the same resolution,
+ * so a child's waiting calls are decided on its root's doc.
+ */
+export const approvalRoot = async (
+  read: Pick<ToolExecutionApi, "snapshot">,
+  conversationId: ConversationId,
+  context: Context
+): Promise<ConversationId> => {
+  const own = await read.snapshot(ApprovalDoc, conversationId, context);
+  return own?.root === undefined
+    ? conversationId
+    : (Number(own.root) as ConversationId);
+};
 
 /**
  * Whether a person still owes a decision: a pending entry without one. An entry with a committed decision
@@ -109,6 +128,8 @@ export const waitForPerson = async (
   context: Context
 ): Promise<PersonReply> => {
   const signal = context.abortSignal;
+  // A subagent's calls are decided on its root conversation's doc, which its own only points at.
+  const rootId = await approvalRoot(api, api.conversationId, context);
   // Declared before the try so the finally can always detach the listener and stop the watch.
   let watch: DocumentWatch<ApprovalState> | undefined;
   const waiting = Promise.withResolvers<PersonReply | "stop">();
@@ -119,7 +140,7 @@ export const waitForPerson = async (
   };
   const removeEntry = () =>
     api.commit(async (tx) => {
-      const doc = await tx.doc(ApprovalDoc, api.conversationId);
+      const doc = await tx.doc(ApprovalDoc, rootId);
       doc.pending = withoutKey(doc.pending, key);
       doc.decisions = withoutKey(doc.decisions, key);
       if (doc.answers !== undefined) {
@@ -137,7 +158,7 @@ export const waitForPerson = async (
   };
   try {
     await api.details({ approval: "pending", approvalKey: key }, context);
-    const opened = await api.watchDoc(ApprovalDoc, api.conversationId, context);
+    const opened = await api.watchDoc(ApprovalDoc, rootId, context);
     // Fail closed: without a watch there is no way a decision can arrive, so the tool must not run.
     if (opened === undefined) {
       throw new Error("Could not wait for approval.");
@@ -196,19 +217,20 @@ export const waitForPerson = async (
 };
 
 /**
- * Wrap a gated tool: under `policy: "ask"` its execute waits for a decision committed to its
- * conversation's ApprovalDoc before running.
+ * Wrap a gated tool: under `policy: "ask"` its execute waits for a decision committed to the root
+ * conversation's ApprovalDoc before running — a subagent's calls are decided on its root's doc.
  */
 export const withApproval = (tool: ToolRegistration): ToolRegistration => {
   const wrapped: ToolRegistration = {
     ...tool,
     execute: async (args, api, context) => {
       const key = approvalKey(api.conversationId, api.callId);
+      const rootId = await approvalRoot(api, api.conversationId, context);
       // Reading the policy and registering happen in one commit, so an "always" decision cannot land
       // between them and leave this call waiting under a policy that is already `auto`.
       let requestedAt: number | undefined;
       const gated = await api.commit(async (tx) => {
-        const doc = await tx.doc(ApprovalDoc, api.conversationId);
+        const doc = await tx.doc(ApprovalDoc, rootId);
         if (doc.policy !== "ask") {
           return false;
         }

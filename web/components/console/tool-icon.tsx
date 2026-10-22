@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Bot,
   Camera,
   FilePen,
   FilePlus,
@@ -28,6 +29,7 @@ const ICONS: Record<string, LucideIcon> = {
   find: Search,
   skill: BookOpen,
   ask_user: MessageCircleQuestionMark,
+  task: Bot,
   web_search: Globe,
   artifact_create: LayoutTemplate,
   artifact_update: LayoutTemplate,

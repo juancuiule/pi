@@ -251,6 +251,7 @@ describe("HTTP API", () => {
         "artifact_create",
         "artifact_update",
         "ask_user",
+        "task",
         "skill",
         "skill_save",
         "skill_delete",
