@@ -25,6 +25,7 @@ describe(matchCommands, () => {
     expect(labels(matchCommands(NAV_COMMANDS, ""))).toStrictEqual([
       "Go to Skills",
       "Go to Artifacts",
+      "Go to Friction",
       "Go to Capacity",
       "Go to Settings",
       "New conversation",

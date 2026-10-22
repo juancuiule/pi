@@ -28,6 +28,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Search**: Full-text search over Conversation transcripts — titles, prompts and answers, never tool calls — kept in a rebuildable index beside the durable store, updated when a Run ends. Person-facing only (`/api/search` and the console's palette); the agent has no search tool.
 
+**Friction**: Lasting pain an agent hits while working, in this platform or in the person's project, filed as an entry in one log shared by every Conversation. The person triages each entry as open, dismissed or resolved on the console's Friction page. _Avoid_: feedback (the person's rating of a message), bug report, issue
+
 ## Workspaces
 
 **Workspace**: The durable machine side of a Conversation: its Level, its Software and its files. _Avoid_: volume, environment

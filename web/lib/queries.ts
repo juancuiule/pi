@@ -9,6 +9,7 @@ import {
 import type {
   ApprovalChoice,
   ConversationSummary,
+  FrictionEntryInfo,
   QuestionAnswer,
   SandboxChoice,
   SettingsChange,
@@ -94,6 +95,31 @@ export const useRemoveDomain = () => {
       runApi((c) => c.trustedDomains.remove({ params: { domain } })),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: TRUSTED_DOMAINS }),
+  });
+};
+
+const FRICTION = ["friction"] as const;
+
+/** The friction log every conversation files into, oldest first; the /friction page sorts and filters it. */
+export const useFriction = () =>
+  useQuery({
+    queryKey: FRICTION,
+    queryFn: () => runApi((c) => c.friction.list()),
+    // An agent can file an entry between polls.
+    refetchInterval: 2000,
+  });
+
+/** The person's triage of one entry; the answer replaces it in the cached log. */
+export const useTriageFriction = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: Pick<FrictionEntryInfo, "id" | "status">) =>
+      runApi((c) => c.friction.triage({ params: { id }, payload: { status } })),
+    onSuccess: (updated) =>
+      queryClient.setQueryData<readonly FrictionEntryInfo[]>(FRICTION, (all) =>
+        all?.map((each) => (each.id === updated.id ? updated : each))
+      ),
+    onError: (error) => toast.error(error.message, { duration: Infinity }),
   });
 };
 

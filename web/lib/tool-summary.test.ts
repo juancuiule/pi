@@ -62,6 +62,32 @@ describe(toolSummary, () => {
     ).toStrictEqual(["research", "research / guide.md"]);
   });
 
+  it("summarizes friction tools", () => {
+    expect(
+      cases([
+        [
+          "friction_add",
+          {
+            scope: "platform",
+            title: "bash loses the cwd",
+            whatHappened: "x",
+            expectedOrWhyItHurt: "y",
+          },
+        ],
+        ["friction_note", { id: "f3", note: "Hit it again" }],
+        ["friction_note", { id: "f3" }],
+        ["friction_list", { scope: "project" }],
+        ["friction_list", {}],
+      ]).got
+    ).toStrictEqual([
+      "bash loses the cwd",
+      "f3: Hit it again",
+      "f3",
+      "project",
+      "",
+    ]);
+  });
+
   it("summarizes desktop tools", () => {
     expect(
       cases([
