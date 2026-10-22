@@ -29,6 +29,8 @@
   --color-status-paused: var(--status-paused);
   /* Search-result match highlight in the ⌘K palette. */
   --color-search-match: var(--warning);
+  /* Interactive affordance hue: link text and checked-state outlines; primary stays neutral. */
+  --color-link: var(--link);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -79,6 +81,7 @@
   --input: oklch(0.923 0.003 48.717);
   --ring: oklch(0.6 0.01 56.259);
   --status-paused: oklch(0.6 0.01 56.259);
+  --link: oklch(0.558 0.073 225);
   --radius: 0.45rem;
   --sidebar: oklch(0.985 0.001 106.423);
   --sidebar-foreground: oklch(0.147 0.004 49.25);
@@ -112,6 +115,7 @@
   --input: oklch(1 0 0 / 40%);
   --ring: oklch(0.553 0.013 58.071);
   --status-paused: oklch(0.65 0.01 56.259);
+  --link: oklch(0.687 0.078 220);
   --sidebar: oklch(0.216 0.006 56.043);
   --sidebar-foreground: oklch(0.985 0.001 106.423);
   --sidebar-accent: oklch(0.268 0.007 34.298);
