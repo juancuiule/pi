@@ -36,6 +36,10 @@ import { Search } from "./src/search/search.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
+import {
+  httpTracingMiddleware,
+  httpTracingReferences,
+} from "./src/server/http-tracing.ts";
 import { shellRoute } from "./src/server/shell.ts";
 import { Skills } from "./src/skills/skills.ts";
 import { convergeBuiltin, SkillSource } from "./src/skills/source.ts";
@@ -205,7 +209,8 @@ const ServerLive = HttpRouter.serve(
       apiUrl: `http://127.0.0.1:${config.server.port}`,
       tracing: config.langfuse !== undefined,
     }),
-    shellRoute
+    shellRoute,
+    httpTracingMiddleware
   )
 ).pipe(
   Layer.provide(ConversationsLive),
@@ -215,6 +220,7 @@ const ServerLive = HttpRouter.serve(
   Layer.provide(SkillsLive),
   Layer.provide(NodeHttpServerLayer),
   Layer.provide(UploadLimits),
+  Layer.provide(httpTracingReferences),
   Layer.provide(LangfuseLayer)
 );
 
