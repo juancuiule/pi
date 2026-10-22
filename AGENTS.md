@@ -136,6 +136,15 @@ Sandboxed HTML pages the agent writes for the person; the decisions are in `docs
 - Load is bounded because every search leaves from this host: a semaphore caps simultaneous searches (`WEB_SEARCH_CONCURRENCY`, 4) and identical searches inside 10 minutes are answered from a cache. An empty result is an error only when every engine went unresponsive — the message names them, so the model does not read it as "nothing exists".
 - `web` is installed at every Level, beside attachments and artifacts: the tool runs on the host. Not locked — a conversation can switch it off from the Capabilities sheet.
 
+## Friction
+
+The agent files lasting pain it hits while working into a log the person triages; the term is in `GLOSSARY.md`, the issue is #51.
+
+- `src/friction/friction.ts` has `FrictionDoc`, a session-scoped pi-durable document, so one log is shared by every conversation and survives restarts. Its pure functions `addEntry`, `noteEntry` and `triageEntry` change it. Each entry has a scope (`platform` or `project`), a title, what happened, what was expected, the filing conversation, a status (`open`, `dismissed`, `resolved`) and notes. Ids are `f1`, `f2`, ... and never reused.
+- The `friction` extension has three tools that run on the host at every Level: `friction_list`, `friction_add` and `friction_note`. They write in the run's own commit and are not gated by approvals. The filing bar is in `friction_add`'s description: durable, recurring, owned, and a reproducible gap. It is on by default and not locked, so a conversation can switch it off. Conversations created before it existed do not get it until someone turns it on.
+- The log keeps 200 entries. At the cap, adding drops the oldest triaged entry; when all 200 are open, `friction_add` fails and tells the agent to note an entry instead. An entry keeps its last 50 notes. A note on a resolved entry reopens it; a dismissed entry stays dismissed.
+- `GET /api/friction` lists the log and `PATCH /api/friction/:id` sets an entry's status (`FrictionNotFound` is a 404), through `Agents.friction` and `Agents.triageFriction`. The console's `/friction` page lists the entries and triages them.
+
 ## Models
 
 `src/models.ts` picks the model from the configuration (see `.env.schema` for defaults):

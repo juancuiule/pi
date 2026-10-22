@@ -1,5 +1,5 @@
 // One-line summaries of tool calls for the transcript headers. Argument shapes come from the tools themselves:
-// src/tools/desktop.ts, src/skills/skills.ts (skill) and pi's
+// src/tools/desktop.ts, src/skills/skills.ts (skill), src/friction/friction.ts and pi's
 // durable/coding-agent tools (bash, read, write, edit, ls, grep, find). Arguments may be missing or partial while a
 // call streams, so every read goes through helpers that never throw.
 
@@ -73,6 +73,15 @@ const askUser = (args: Args): string => {
   return questions.length > 1 ? `${first} (+${questions.length - 1})` : first;
 };
 
+const frictionNote = (args: Args): string => {
+  const id = text(args.id);
+  const note = text(args.note);
+  if (id !== undefined && note !== undefined) {
+    return `${id}: ${note}`;
+  }
+  return id ?? note ?? "";
+};
+
 const SUMMARIES: Record<string, (args: Args) => string> = {
   bash: (args) => text(args.command) ?? "",
   read: (args) => text(args.path) ?? "",
@@ -92,6 +101,9 @@ const SUMMARIES: Record<string, (args: Args) => string> = {
   web_search: (args) => text(args.query) ?? "",
   artifact_create: (args) => text(args.title) ?? "",
   artifact_update: (args) => text(args.title) ?? "",
+  friction_add: (args) => text(args.title) ?? "",
+  friction_note: frictionNote,
+  friction_list: (args) => text(args.scope) ?? "",
 };
 
 /** A compact one-line description of a call's arguments; "" when there is nothing meaningful to show. */

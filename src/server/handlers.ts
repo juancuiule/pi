@@ -703,6 +703,23 @@ const TrustedDomainsHandlers = HttpApiBuilder.group(
   })
 );
 
+const FrictionHandlers = HttpApiBuilder.group(
+  Api,
+  "friction",
+  Effect.fnUntraced(function* (handlers) {
+    const agents = yield* Agents;
+    return handlers
+      .handle("list", () =>
+        agents.friction.pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("triage", ({ params, payload }) =>
+        agents
+          .triageFriction(params.id, payload.status)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      );
+  })
+);
+
 const infoHandlers = (options: {
   readonly apiUrl: string;
   readonly tracing: boolean;
@@ -764,6 +781,7 @@ export const apiLayer = (options: {
         SkillsHandlers,
         FilesHandlers,
         SearchHandlers,
+        FrictionHandlers,
         infoHandlers(options)
       )
     ),

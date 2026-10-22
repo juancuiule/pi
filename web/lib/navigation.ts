@@ -3,6 +3,7 @@
 import type { SearchResult } from "effect-pi/api";
 import {
   BookOpen,
+  Flag,
   Gauge,
   LayoutTemplate,
   MessageSquare,
@@ -38,6 +39,12 @@ export const PAGES: readonly Page[] = [
     label: "Artifacts",
     icon: LayoutTemplate,
     keywords: ["files", "pages", "outputs"],
+  },
+  {
+    href: "/friction",
+    label: "Friction",
+    icon: Flag,
+    keywords: ["papercuts", "problems", "triage", "log"],
   },
   {
     href: "/capacity",
