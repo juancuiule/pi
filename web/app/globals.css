@@ -153,6 +153,7 @@
 /* Element selector so these win over wterm's `.wterm` defaults regardless of stylesheet order
      (the wterm CSS is bundled with the code-split terminal chunk). */
 div.console-terminal {
+  box-shadow: none;
   --term-bg: var(--background);
   --term-fg: var(--foreground);
   --term-cursor: var(--foreground);
