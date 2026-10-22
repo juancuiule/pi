@@ -21,7 +21,7 @@ const input: FrictionInput = {
   expectedOrWhyItHurt: "Only web's tests; the full run takes four minutes",
 };
 
-const empty = (): FrictionState => ({ entries: [], next: 1 });
+const empty = (): FrictionState => ({ entries: [], nextNumber: 1 });
 
 describe("the friction log", () => {
   it("never reuses an id, even after the cap drops an entry", () => {
@@ -31,7 +31,7 @@ describe("the friction log", () => {
     }
     triageEntry(state, "f2", "dismissed");
     const added = addEntry(state, input, 1, 0);
-    expect(added?.id).toBe(`f${MAX_ENTRIES + 1}`);
+    expect(added).toHaveProperty("id", `f${MAX_ENTRIES + 1}`);
     expect(state.entries).toHaveLength(MAX_ENTRIES);
     expect(state.entries.some((entry) => entry.id === "f2")).toBeFalsy();
   });
@@ -41,7 +41,7 @@ describe("the friction log", () => {
     for (let i = 0; i < MAX_ENTRIES; i += 1) {
       addEntry(state, input, 1, i);
     }
-    expect(addEntry(state, input, 1, 0)).toBeUndefined();
+    expect(addEntry(state, input, 1, 0)).toBe("full");
     expect(state.entries).toHaveLength(MAX_ENTRIES);
   });
 

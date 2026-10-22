@@ -9,9 +9,7 @@ import {
 } from "@earendil-works/pi-durable";
 import type { Extension } from "@earendil-works/pi-durable";
 
-/** How many entries the log keeps; at the cap, adding drops the oldest triaged entry. */
 export const MAX_ENTRIES = 200;
-/** How many notes an entry keeps; the oldest go first. */
 export const MAX_NOTES = 50;
 
 export type FrictionScope = "platform" | "project";
@@ -42,15 +40,15 @@ export type FrictionEntry = {
 // oxlint-disable-next-line typescript/consistent-type-definitions
 export type FrictionState = {
   entries: FrictionEntry[];
-  /** The number in the next entry's id (`f<next>`); ids are never reused. */
-  next: number;
+  /** The next entry's id is `f<nextNumber>`; ids are never reused. */
+  nextNumber: number;
 };
 
 export const FrictionDoc = defineDoc<FrictionState>({
   kind: "app.friction",
   version: 1,
   scope: "session",
-  initial: () => ({ entries: [], next: 1 }),
+  initial: () => ({ entries: [], nextNumber: 1 }),
 });
 
 export interface FrictionInput {
@@ -61,24 +59,24 @@ export interface FrictionInput {
 }
 
 /**
- * Add an entry, or `undefined` when the log is full of open entries. At the cap the oldest triaged entry makes room;
- * open ones are never dropped, so nothing the person has not seen is lost.
+ * Add an entry. At the cap the oldest triaged entry makes room; open ones are never dropped, so a log of
+ * `MAX_ENTRIES` open entries is `"full"`.
  */
 export const addEntry = (
   state: FrictionState,
   input: FrictionInput,
   conversationId: number,
   now: number
-): FrictionEntry | undefined => {
+): FrictionEntry | "full" => {
   if (state.entries.length >= MAX_ENTRIES) {
     const oldest = state.entries.findIndex((entry) => entry.status !== "open");
     if (oldest === -1) {
-      return undefined;
+      return "full";
     }
     state.entries.splice(oldest, 1);
   }
   const entry: FrictionEntry = {
-    id: `f${state.next}`,
+    id: `f${state.nextNumber}`,
     scope: input.scope,
     title: input.title.trim(),
     whatHappened: input.whatHappened.trim(),
@@ -88,15 +86,19 @@ export const addEntry = (
     status: "open",
     notes: [],
   };
-  state.next += 1;
+  state.nextNumber += 1;
   state.entries.push(entry);
   return entry;
 };
 
-/**
- * Append a note to an entry, or `undefined` when there is no such entry. A note on a resolved entry reopens it, since the
- * pain came back; a dismissed one stays dismissed.
- */
+/** An entry's status after a new note: the pain came back, so a resolved entry reopens; a dismissal stands. */
+const AFTER_NOTE: Record<FrictionStatus, FrictionStatus> = {
+  open: "open",
+  resolved: "open",
+  dismissed: "dismissed",
+};
+
+/** Append a note to an entry, or `undefined` when there is no such entry. */
 export const noteEntry = (
   state: FrictionState,
   id: string,
@@ -111,7 +113,7 @@ export const noteEntry = (
   }
   const noted: FrictionEntry = {
     ...entry,
-    status: entry.status === "resolved" ? "open" : entry.status,
+    status: AFTER_NOTE[entry.status],
     notes: [
       ...entry.notes,
       { text: text.trim(), conversationId, createdAt: now },
@@ -236,7 +238,7 @@ export const frictionExtension = (): Extension =>
               ),
             context
           );
-          if (entry === undefined) {
+          if (entry === "full") {
             throw new Error(
               `The friction log is full: ${MAX_ENTRIES} entries wait for the person. Note an existing entry instead.`
             );

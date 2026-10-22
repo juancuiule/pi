@@ -105,7 +105,6 @@ export const useFriction = () =>
   useQuery({
     queryKey: FRICTION,
     queryFn: () => runApi((c) => c.friction.list()),
-    // An agent can file an entry between polls.
     refetchInterval: 2000,
   });
 

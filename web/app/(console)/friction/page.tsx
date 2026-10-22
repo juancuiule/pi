@@ -27,7 +27,6 @@ import {
 } from "@/lib/queries";
 import { useNow } from "@/lib/use-now";
 
-// Notes past this many fold behind a toggle; the latest stay in view.
 const VISIBLE_NOTES = 3;
 
 const ConversationLink = ({
