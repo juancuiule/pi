@@ -27,8 +27,15 @@ export type SandboxInfo = {
   readonly vncUrl?: string;
 };
 
-/** The sandbox a conversation runs in. A fork gets none until assigned. */
-export const SandboxDoc = defineDoc<{ sandbox?: SandboxInfo }>({
+/**
+ * The sandbox a conversation runs in. A fork gets none until assigned. `owner` is set on task-owned
+ * conversations (subagents): they get no sandbox of their own — the owner's current sandbox serves them.
+ */
+export const SandboxDoc = defineDoc<{
+  sandbox?: SandboxInfo;
+  /** The conversation whose sandbox this one works in, as a string id. */
+  owner?: string;
+}>({
   kind: "app.sandbox",
   version: 1,
   scope: "conversation",

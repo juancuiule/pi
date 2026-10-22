@@ -6,7 +6,12 @@ import type { Static } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import type { Extension } from "@earendil-works/pi-durable";
 
-import { ApprovalDoc, approvalKey, waitForPerson } from "../approvals.ts";
+import {
+  ApprovalDoc,
+  approvalKey,
+  approvalRoot,
+  waitForPerson,
+} from "../approvals.ts";
 import type { QuestionAnswer } from "../approvals.ts";
 
 export const ASK_USER = "ask_user";
@@ -100,8 +105,10 @@ export const questionsExtension = (): Extension =>
         replay: "safe",
         execute: async ({ questions }, api, context) => {
           const key = approvalKey(api.conversationId, api.callId);
+          // A subagent's questions wait on its root conversation's doc, like its approvals.
+          const rootId = await approvalRoot(api, api.conversationId, context);
           await api.commit(async (tx) => {
-            const doc = await tx.doc(ApprovalDoc, api.conversationId);
+            const doc = await tx.doc(ApprovalDoc, rootId);
             doc.pending[key] = {
               conversationId: String(api.conversationId),
               callId: api.callId,

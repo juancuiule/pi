@@ -505,6 +505,7 @@ const CallBody = ({
   diagnostics,
   pendingKey,
   step,
+  extra,
 }: {
   readonly call: ToolCallBlock;
   readonly tool: ToolRun | undefined;
@@ -512,6 +513,8 @@ const CallBody = ({
   readonly diagnostics: readonly ToolDiagnostic[];
   readonly pendingKey: string | undefined;
   readonly step: CallState;
+  /** A call-specific extra body — a `task` call's nested subagent transcript. */
+  readonly extra?: ReactNode;
 }) => {
   const asking =
     call.name === "ask_user" && questionsOf(call.arguments).length > 0;
@@ -534,6 +537,7 @@ const CallBody = ({
           {pendingKey === undefined ? null : (
             <ApprovalActions approvalKey={pendingKey} />
           )}
+          {extra}
         </>
       )}
       {asking && step !== "failed" ? null : (
@@ -552,9 +556,12 @@ const CallBody = ({
 export const ToolCall = ({
   call,
   state,
+  extra,
 }: {
   call: ToolCallBlock;
   state: ConversationState;
+  /** A call-specific extra body — a `task` call's nested subagent transcript. */
+  extra?: ReactNode;
 }) => {
   const openFile = useOpenFile();
   const filePath = filePathOf(call.name, call.arguments);
@@ -619,6 +626,7 @@ export const ToolCall = ({
             diagnostics={diagnostics}
             pendingKey={approval.awaiting ? approval.key : undefined}
             step={step}
+            extra={extra}
           />
         </TraceCollapsibleContent>
       </TraceCollapsible>

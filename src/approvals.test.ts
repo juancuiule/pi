@@ -79,6 +79,8 @@ const fakeApi = (doc: {
 }) => ({
   conversationId: 1 as ConversationId,
   callId: "c1",
+  // No `root` on the doc: the conversation is its own approval root.
+  snapshot: () => Promise.resolve(doc),
   commit: (change: (tx: { doc: () => Promise<typeof doc> }) => unknown) =>
     Promise.resolve(change({ doc: () => Promise.resolve(doc) })),
   details: () => Promise.resolve(),

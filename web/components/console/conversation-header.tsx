@@ -2,6 +2,7 @@
 
 import type { ConversationSummary } from "effect-pi/api";
 import {
+  Bot,
   Brain,
   Download,
   ListCollapse,
@@ -44,6 +45,7 @@ import {
   useSimpleView,
   useThinkingHidden,
 } from "@/lib/store";
+import { activeSubagents } from "@/lib/subagent";
 
 import { useOpenMenu } from "./console-shell";
 import { ConversationActions } from "./conversation-actions";
@@ -253,6 +255,7 @@ export const ConversationHeader = ({
   };
 
   const hasSandbox = conversation.sandbox !== "none";
+  const subagents = activeSubagents(state);
 
   const handleTogglePanel = () => sidePanel?.toggle();
 
@@ -310,6 +313,14 @@ export const ConversationHeader = ({
                 Working
               </span>
             ) : null}
+            {subagents === 0 ? null : (
+              <span className="inline-flex items-center gap-1">
+                <Bot aria-hidden className="size-3" strokeWidth={1.5} />
+                {subagents === 1
+                  ? "1 subagent working"
+                  : `${subagents} subagents working`}
+              </span>
+            )}
             {state.queue.length > 0 ? (
               <span className="tabular-nums">{state.queue.length} queued</span>
             ) : null}
