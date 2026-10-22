@@ -13,8 +13,8 @@ import {
   CodeBlockCopyButton,
   CodeBlockLine,
 } from "@/components/ui/code-block";
+import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useHighlightedCode } from "@/hooks/use-highlighted-code";
 import { runApi } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
@@ -34,7 +34,7 @@ const Loading = () => (
 const FileSource = ({ text, language }: { text: string; language: string }) => {
   const lines = useHighlightedCode(text, language);
   return (
-    <CodeBlock size="sm" className="h-full">
+    <CodeBlock size="sm" variant="flush" className="h-full">
       <CodeBlockActions>
         <CodeBlockCopyButton value={text} />
       </CodeBlockActions>
@@ -208,8 +208,14 @@ export const FileResizablePanel = ({
   );
 };
 
-/** Below the desktop breakpoint an open file is a Sheet instead of a pane. */
-export const FileSheet = ({
+const SNAP_POINTS = [0.55, 0.95];
+
+/**
+ * Below the desktop breakpoint an open file is a bottom drawer instead of a pane. Non-modal so it can stack over
+ * the sandbox drawer it was opened from; the content is data-vaul-no-drag so it scrolls instead of dragging,
+ * and handleOnly restricts presses to the handle.
+ */
+export const FileDrawer = ({
   file,
   conversation,
   isDesktop,
@@ -220,7 +226,7 @@ export const FileSheet = ({
   isDesktop: boolean | null;
   onClose: () => void;
 }) => (
-  <Sheet
+  <Drawer
     open={
       isDesktop === false && file !== undefined && conversation !== undefined
     }
@@ -229,21 +235,22 @@ export const FileSheet = ({
         onClose();
       }
     }}
+    modal={false}
+    snapPoints={SNAP_POINTS}
+    handleOnly
   >
-    <SheetContent
-      side="right"
-      showCloseButton={false}
-      className="w-full sm:max-w-2xl"
-    >
-      <SheetTitle className="sr-only">Workspace file</SheetTitle>
-      {file === undefined || conversation === undefined ? null : (
-        <FilePanel
-          key={`${conversation}:${file.path}`}
-          file={file}
-          conversation={conversation}
-          onClose={onClose}
-        />
-      )}
-    </SheetContent>
-  </Sheet>
+    <DrawerContent>
+      <DrawerTitle className="sr-only">Workspace file</DrawerTitle>
+      <div data-vaul-no-drag className="flex min-h-0 flex-1 flex-col">
+        {file === undefined || conversation === undefined ? null : (
+          <FilePanel
+            key={`${conversation}:${file.path}`}
+            file={file}
+            conversation={conversation}
+            onClose={onClose}
+          />
+        )}
+      </div>
+    </DrawerContent>
+  </Drawer>
 );

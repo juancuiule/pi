@@ -8,8 +8,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 
 import {
+  ArtifactDrawer,
   ArtifactResizablePanel,
-  ArtifactSheet,
 } from "@/components/console/artifact-panel";
 import { PageHeader } from "@/components/console/page-header";
 import { ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
@@ -128,7 +128,7 @@ const ArtifactsPage = () => {
       <title>Artifacts · effect-pi</title>
       <PageHeader title="Artifacts" />
       {body}
-      <ArtifactSheet
+      <ArtifactDrawer
         artifact={open?.artifact}
         conversation={open?.conversation}
         isDesktop={isDesktop}

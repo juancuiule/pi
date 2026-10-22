@@ -13,8 +13,8 @@ import {
   CodeBlockCopyButton,
   CodeBlockLine,
 } from "@/components/ui/code-block";
+import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   Tooltip,
   TooltipContent,
@@ -89,7 +89,7 @@ const ArtifactFrame = ({ src, title }: { src: string; title: string }) => {
 const SourceCode = ({ html }: { html: string }) => {
   const lines = useHighlightedCode(html, "html");
   return (
-    <CodeBlock size="sm" className="h-full">
+    <CodeBlock size="sm" variant="flush" className="h-full">
       <CodeBlockActions>
         <CodeBlockCopyButton value={html} />
       </CodeBlockActions>
@@ -328,8 +328,14 @@ export const ArtifactResizablePanel = ({
   );
 };
 
-/** Below the desktop breakpoint the same panel is a Sheet instead. */
-export const ArtifactSheet = ({
+const SNAP_POINTS = [0.55, 0.95];
+
+/**
+ * Below the desktop breakpoint the same panel is a bottom drawer. Non-modal so it can stack over the sandbox
+ * drawer and the transcript stays interactive; the content is data-vaul-no-drag so it scrolls instead of
+ * dragging, and handleOnly restricts presses to the handle.
+ */
+export const ArtifactDrawer = ({
   artifact,
   conversation,
   isDesktop,
@@ -340,7 +346,7 @@ export const ArtifactSheet = ({
   isDesktop: boolean | null;
   onClose: () => void;
 }) => (
-  <Sheet
+  <Drawer
     open={
       isDesktop === false &&
       artifact !== undefined &&
@@ -351,21 +357,22 @@ export const ArtifactSheet = ({
         onClose();
       }
     }}
+    modal={false}
+    snapPoints={SNAP_POINTS}
+    handleOnly
   >
-    <SheetContent
-      side="right"
-      showCloseButton={false}
-      className="w-full sm:max-w-2xl"
-    >
-      <SheetTitle className="sr-only">Artifact page</SheetTitle>
-      {artifact === undefined || conversation === undefined ? null : (
-        <ArtifactPanel
-          key={`${conversation}:${artifact.id}`}
-          artifact={artifact}
-          conversation={conversation}
-          onClose={onClose}
-        />
-      )}
-    </SheetContent>
-  </Sheet>
+    <DrawerContent>
+      <DrawerTitle className="sr-only">Artifact page</DrawerTitle>
+      <div data-vaul-no-drag className="flex min-h-0 flex-1 flex-col">
+        {artifact === undefined || conversation === undefined ? null : (
+          <ArtifactPanel
+            key={`${conversation}:${artifact.id}`}
+            artifact={artifact}
+            conversation={conversation}
+            onClose={onClose}
+          />
+        )}
+      </div>
+    </DrawerContent>
+  </Drawer>
 );

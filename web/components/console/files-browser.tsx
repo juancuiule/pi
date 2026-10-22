@@ -250,7 +250,7 @@ export const FilesBrowser = ({ id, live }: { id: number; live: boolean }) => {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col pt-4">
       <div className="min-h-0 flex-1">
         <Tree
           paths={paths}

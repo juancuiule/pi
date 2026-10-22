@@ -16,6 +16,8 @@ const codeBlockVariants = cva(
           "border-input text-foreground has-[>[data-slot=code-block-content]:focus-visible]:border-ring dark:bg-input/30 border",
         destructive:
           "border-destructive/30 text-destructive dark:border-destructive/40 border",
+        // Fills a pane edge-to-edge (file and artifact viewers); the pane is the container, so no card chrome.
+        flush: "text-foreground rounded-none",
       },
     },
     defaultVariants: {
