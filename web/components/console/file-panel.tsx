@@ -34,7 +34,7 @@ const Loading = () => (
 const FileSource = ({ text, language }: { text: string; language: string }) => {
   const lines = useHighlightedCode(text, language);
   return (
-    <CodeBlock size="sm" className="h-full">
+    <CodeBlock size="sm" variant="flush" className="h-full">
       <CodeBlockActions>
         <CodeBlockCopyButton value={text} />
       </CodeBlockActions>

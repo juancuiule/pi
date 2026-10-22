@@ -89,7 +89,7 @@ const ArtifactFrame = ({ src, title }: { src: string; title: string }) => {
 const SourceCode = ({ html }: { html: string }) => {
   const lines = useHighlightedCode(html, "html");
   return (
-    <CodeBlock size="sm" className="h-full">
+    <CodeBlock size="sm" variant="flush" className="h-full">
       <CodeBlockActions>
         <CodeBlockCopyButton value={html} />
       </CodeBlockActions>

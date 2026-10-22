@@ -38,7 +38,7 @@ function DrawerContent({
       <DrawerPrimitive.Content
         data-slot="drawer-content"
         className={cn(
-          "bg-popover text-popover-foreground fixed inset-x-0 bottom-0 z-50 flex h-dvh flex-col rounded-t-xl border-t text-sm shadow-lg outline-none",
+          "bg-popover text-popover-foreground fixed inset-x-0 bottom-0 z-50 flex h-dvh flex-col border-t text-sm outline-none",
           className
         )}
         {...props}
