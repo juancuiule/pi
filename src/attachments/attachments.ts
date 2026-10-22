@@ -584,11 +584,17 @@ export class Attachments extends Context.Service<
               Effect.promise(() => blobs.removeAll(id)).pipe(Effect.ignore),
             { discard: true }
           );
+          if (expired.length > 0) {
+            yield* Effect.logInfo(
+              `Removed ${expired.length} expired unsent attachments`
+            );
+          }
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Could not sweep unsent attachments", cause)
           ),
-          Effect.withSpan("Attachments.sweep")
+          // Housekeeping every minute, not agent work: a span would be a trace of its own in Langfuse each time.
+          Effect.withTracerEnabled(false)
         );
         yield* sweep.pipe(
           Effect.repeat(Schedule.spaced(options.sweepEveryMs ?? 60_000)),
