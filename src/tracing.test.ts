@@ -163,15 +163,86 @@ describe("agent tracing", () => {
     );
 
     const run = spans.filter(
-      (span) => span.name === "generation" || span.name.startsWith("tool ")
+      (span) =>
+        span.name === "turn" ||
+        span.name === "generation" ||
+        span.name.startsWith("tool ")
     );
-    expect(run).toHaveLength(3);
+    expect(
+      run.map((span) => `${span.name} < ${parentName(span) ?? "-"}`)
+    ).toStrictEqual([
+      "turn < -",
+      "generation < turn",
+      "tool artifact_create < turn",
+      "generation < turn",
+    ]);
     expect(new Set(run.map((span) => span.traceId)).size).toBe(1);
     expect(traced).toBe(run[0]?.traceId);
     // The send's own span ends at admission; it must never parent the run — feedback scores the run's trace.
     const sent = spans.find((span) => span.name === "Seat.send");
-    expect(sent).toBeDefined();
-    expect(sent?.traceId).not.toBe(run[0]?.traceId);
+    expect({
+      sent: sent !== undefined,
+      sameTrace: sent?.traceId === run[0]?.traceId,
+      type: sent?.attributes.get("langfuse.observation.type"),
+    }).toStrictEqual({ sent: true, sameTrace: false, type: undefined });
+
+    const [turn, , toolCall] = run;
+    expect({
+      status: turn?.status._tag,
+      type: turn?.attributes.get("langfuse.observation.type"),
+      name: turn?.attributes.get("langfuse.trace.name"),
+      input: turn?.attributes.get("langfuse.observation.input"),
+      output: turn?.attributes.get("langfuse.observation.output"),
+      tags: turn?.attributes.get("langfuse.trace.tags"),
+      level: turn?.attributes.get("langfuse.trace.metadata.level"),
+      model: turn?.attributes.get("langfuse.trace.metadata.model"),
+      toolTags: toolCall?.attributes.get("langfuse.trace.tags"),
+    }).toStrictEqual({
+      status: "Ended",
+      type: "agent",
+      name: "turn",
+      input: "What is 6 times 7?",
+      output: "42",
+      tags: ["level:none", "approvals:auto"],
+      level: "none",
+      model: expect.stringContaining("faux-1"),
+      toolTags: ["level:none", "approvals:auto"],
+    });
+  });
+
+  it("ends a run's turn as failed when its model request fails", async () => {
+    const { spans, tracer } = recordingTracer();
+    const { layer } = fauxAgents([
+      fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage: "The provider is down",
+      }),
+    ]);
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat();
+          yield* seat.send("Hello?");
+          yield* waitUntil(
+            seat.running.pipe(Effect.map((running) => !running))
+          );
+        })
+      ).pipe(
+        Effect.provide(layer),
+        Effect.provideService(Tracer.Tracer, tracer)
+      )
+    );
+
+    const turn = spans.find((span) => span.name === "turn");
+    expect({
+      status: turn?.status._tag,
+      level: turn?.attributes.get("langfuse.observation.level"),
+      message: turn?.attributes.get("langfuse.observation.status_message"),
+    }).toStrictEqual({
+      status: "Ended",
+      level: "ERROR",
+      message: "The provider is down",
+    });
   });
 
   it("starts a fresh trace for the next run of the same conversation", async () => {
@@ -204,6 +275,11 @@ describe("agent tracing", () => {
     expect(runs).toHaveLength(3);
     expect(runs[0]?.traceId).toBe(runs[1]?.traceId);
     expect(runs[0]?.traceId).not.toBe(runs[2]?.traceId);
+    expect(
+      spans
+        .filter((span) => span.name === "turn")
+        .map((span) => span.attributes.get("langfuse.observation.input"))
+    ).toStrictEqual(["What is 6 times 7?", "And again?"]);
   });
 
   it("keeps separate runs in separate sessions, though conversation ids restart", async () => {

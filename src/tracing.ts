@@ -1,7 +1,8 @@
 // Tracing for agents: every model request and tool call becomes an Effect span, nested under the `ask` that caused
-// it, with the attributes Langfuse reads (https://langfuse.com/integrations/native/opentelemetry). pi-durable runs
-// generations and tools in its own scheduler, outside any Effect fiber, so its hooks open and close the spans, and the
-// parent comes from the conversation: an `ask` registers its span for its conversation.
+// it or under the `turn` root of its Run, with the attributes Langfuse reads
+// (https://langfuse.com/integrations/native/opentelemetry). pi-durable runs generations and tools in its own
+// scheduler, outside any Effect fiber, so its hooks open and close the spans, and the parent comes from the
+// conversation: an `ask` registers its span for its conversation, and a send-driven Run opens its own root.
 import type { Context as ChordContext } from "@earendil-works/chord";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
@@ -18,8 +19,8 @@ import type {
   HookApi,
   TaskId,
 } from "@earendil-works/pi-durable";
-import { Clock, Effect, Exit, Tracer } from "effect";
-import type { Context } from "effect";
+import { Clock, Effect, Exit } from "effect";
+import type { Context, Tracer } from "effect";
 
 /** Base64 payloads longer than this are replaced by their size, so screenshots do not bloat the traces. */
 const MAX_INLINE_DATA = 256;
@@ -157,6 +158,55 @@ export const generationAttributes = (
       }),
 });
 
+/** A message's text, without images or other blocks. */
+const textOf = (
+  content:
+    | string
+    | readonly { readonly type: string; readonly text?: unknown }[]
+): string =>
+  typeof content === "string"
+    ? content
+    : content
+        .flatMap((block) =>
+          block.type === "text" && typeof block.text === "string"
+            ? [block.text]
+            : []
+        )
+        .join("\n");
+
+/** What a Run's trace is filtered by in Langfuse: put on every span of the Run, as Langfuse asks. */
+export interface RunDescription {
+  readonly tags: readonly string[];
+  readonly metadata: Readonly<Record<string, string>>;
+}
+
+const runAttributes = (description: RunDescription | undefined) =>
+  description === undefined
+    ? {}
+    : {
+        "langfuse.trace.tags": description.tags,
+        ...Object.fromEntries(
+          Object.entries(description.metadata).map(([key, value]) => [
+            `langfuse.trace.metadata.${key}`,
+            value,
+          ])
+        ),
+      };
+
+/** What tracing needs from the harness, which is built after it. */
+export interface TraceHooks {
+  record?: (
+    conversationId: ConversationId,
+    taskId: TaskId,
+    traceId: string,
+    context: ChordContext
+  ) => Promise<void>;
+  describe?: (
+    conversationId: ConversationId,
+    context: ChordContext
+  ) => Promise<RunDescription>;
+}
+
 export interface AgentTracing {
   /** Hooks that trace model requests and tool calls; selected by every conversation. */
   readonly extension: Extension;
@@ -179,17 +229,10 @@ export const makeAgentTracing = (
     /** Keep the text of attachments in traces; left out (only its size) by default. */
     readonly attachmentText?: boolean;
     /**
-     * How a generation task's trace is committed to TraceDoc: filled in by the caller once the harness exists,
-     * since this tracing is built before it. Errors thrown here are caught by the hook that awaits it.
+     * How a generation task's trace is committed to TraceDoc, and how a Run is described: filled in by the caller
+     * once the harness exists, since this tracing is built before it. Errors thrown here are caught by the hooks.
      */
-    readonly traceWrites?: {
-      record?: (
-        conversationId: ConversationId,
-        taskId: TaskId,
-        traceId: string,
-        context: ChordContext
-      ) => Promise<void>;
-    };
+    readonly traceHooks?: TraceHooks;
   } = {}
 ): AgentTracing => {
   const forTrace = (messages: readonly Message[]) =>
@@ -211,14 +254,15 @@ export const makeAgentTracing = (
             : block
         )
       : content;
+  // A Run's input for its root: what the person sent last, attachments left out unless kept.
+  const lastUserText = (messages: readonly Message[]) => {
+    const user = forTrace(messages).findLast(
+      (message) => message.role === "user"
+    );
+    return user === undefined ? undefined : textOf(user.content);
+  };
   const run = Effect.runSyncWith(services);
   const parents = new Map<ConversationId, Tracer.AnySpan>();
-  // A send's Run has no asking span: the first span of each Run adopts the root role instead, kept as its ids
-  // (the root ends before the Run's later spans start, so they hold an ExternalSpan to it, not the span).
-  const runs = new Map<
-    ConversationId,
-    { key: string; traceId: string; spanId: string }
-  >();
   // The Run a conversation is in, named by its first input — stable across handOver and mid-Run pushes.
   // Under `ask` the asking span parents everything anyway, so `parents` skips the read entirely.
   const runKeyOf = async (api: HookApi, context: ChordContext) => {
@@ -254,34 +298,101 @@ export const makeAgentTracing = (
     span.end(run(Clock.currentTimeNanos), ok ? Exit.void : Exit.fail("failed"));
   };
 
+  // A send's Run has no asking span, so its first span opens a `turn` root for the Run: the person's message in,
+  // the answer out, ended at the first answer. A follow-up in the same Run nests under it after it ended.
+  const runs = new Map<
+    ConversationId,
+    {
+      readonly key: string;
+      readonly span: Tracer.Span;
+      readonly attributes: Promise<Record<string, unknown>>;
+    }
+  >();
+  const endRun = (
+    conversationId: ConversationId,
+    attributes: Record<string, unknown>,
+    ok: boolean
+  ) => {
+    const root = runs.get(conversationId);
+    if (root === undefined || root.span.status._tag === "Ended") {
+      return;
+    }
+    for (const [key, value] of Object.entries(attributes)) {
+      root.span.attribute(key, value);
+    }
+    root.span.end(
+      run(Clock.currentTimeNanos),
+      ok ? Exit.void : Exit.fail("failed")
+    );
+  };
+  const describe = async (
+    conversationId: ConversationId,
+    context: ChordContext
+  ) => {
+    try {
+      return await options.traceHooks?.describe?.(conversationId, context);
+    } catch {
+      // An undescribed Run still traces; it only lacks its tags.
+    }
+  };
+  // The Run a span belongs to, opening its root when it is the Run's first span. Under `ask` the asking span
+  // parents everything instead.
+  const runOf = async (api: HookApi, context: ChordContext, input?: string) => {
+    const runKey = await runKeyOf(api, context);
+    if (runKey === undefined) {
+      return;
+    }
+    const current = runs.get(api.conversationId);
+    if (current !== undefined && current.key === runKey) {
+      return { span: current.span, attributes: await current.attributes };
+    }
+    // A Run that never answered (stopped, failed) ends when the next one starts.
+    endRun(api.conversationId, {}, false);
+    const span = run(
+      Effect.makeSpan("turn", {
+        attributes: {
+          "langfuse.observation.type": "agent",
+          ...(input === undefined
+            ? {}
+            : { "langfuse.observation.input": input }),
+        },
+        kind: "internal",
+      })
+    );
+    // Claimed before `describe` is awaited, so spans starting together share one root.
+    const attributes = (async () => {
+      const all = {
+        "langfuse.session.id": sessionOf(api.conversationId),
+        "langfuse.trace.name": "turn",
+        ...runAttributes(await describe(api.conversationId, context)),
+      };
+      for (const [key, value] of Object.entries(all)) {
+        span.attribute(key, value);
+      }
+      return all;
+    })();
+    runs.set(api.conversationId, { key: runKey, span, attributes });
+    return { span, attributes: await attributes };
+  };
   const start = (
     taskId: TaskId,
     conversationId: ConversationId,
     name: string,
     attributes: Record<string, unknown>,
-    runKey: string | undefined
+    runRoot:
+      | {
+          readonly span: Tracer.Span;
+          readonly attributes: Record<string, unknown>;
+        }
+      | undefined
   ) => {
     // A request retried after recovery opens again; the abandoned attempt ends here.
     end(taskId, {}, false);
-    let parent = parents.get(conversationId);
-    // No asking span (a send-driven Run): the Run's first span becomes its trace's root; its other spans
-    // adopt that root through `runKey`, which names the Run by its first input — stable across handOver
-    // and mid-Run pushes. A different `runKey` is a new Run, and its first span replaces the root.
-    let adoptKey: string | undefined;
-    if (parent === undefined && runKey !== undefined) {
-      const root = runs.get(conversationId);
-      if (root !== undefined && root.key === runKey) {
-        parent = Tracer.externalSpan({
-          traceId: root.traceId,
-          spanId: root.spanId,
-        });
-      } else {
-        adoptKey = runKey;
-      }
-    }
+    const parent = parents.get(conversationId) ?? runRoot?.span;
     const span = run(
       Effect.makeSpan(name, {
         attributes: {
+          ...runRoot?.attributes,
           ...attributes,
           "langfuse.session.id": sessionOf(conversationId),
         },
@@ -289,13 +400,6 @@ export const makeAgentTracing = (
         ...(parent === undefined ? {} : { parent }),
       })
     );
-    if (adoptKey !== undefined) {
-      runs.set(conversationId, {
-        key: adoptKey,
-        traceId: span.traceId,
-        spanId: span.spanId,
-      });
-    }
     open.set(taskId, span);
     return span;
   };
@@ -319,14 +423,14 @@ export const makeAgentTracing = (
                 forTrace(request.messages)
               ),
             },
-            await runKeyOf(api, context)
+            await runOf(api, context, lastUserText(request.messages))
           );
           // Once per generation task — the task that produced a message's run — record its trace so feedback
           // finds it. A failed write must not break the request (hooks.each reports and swallows it anyway).
           if (!recorded.has(api.taskId)) {
             recorded.add(api.taskId);
             try {
-              await options.traceWrites?.record?.(
+              await options.traceHooks?.record?.(
                 api.conversationId,
                 api.taskId,
                 span.traceId,
@@ -344,6 +448,24 @@ export const makeAgentTracing = (
             generationAttributes(message),
             message.stopReason !== "error"
           );
+          if (message.stopReason === "error") {
+            endRun(
+              api.conversationId,
+              {
+                "langfuse.observation.level": "ERROR",
+                "langfuse.observation.status_message":
+                  message.errorMessage ?? "The model request failed",
+              },
+              false
+            );
+          }
+        },
+        onYield: (answer, api) => {
+          endRun(
+            api.conversationId,
+            { "langfuse.observation.output": textOf(answer.content) },
+            true
+          );
         },
       }),
       hook(ToolTask, {
@@ -359,7 +481,7 @@ export const makeAgentTracing = (
                 forTraceArgs(call.name, call.arguments)
               ),
             },
-            await runKeyOf(api, context)
+            await runOf(api, context)
           );
         },
         afterTool: (call, result, api) => {
