@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { shellClosedReason, shellUrl } from "./shell";
+import { shellControlOf, shellOpenTargetOf, shellUrl } from "./shell";
+import { WORKSPACE_ROOT, workspaceIndexOf } from "./workspace-links";
 
 describe(shellUrl, () => {
   it("points at the server's own URL with the ws scheme and the PTY size", () => {
@@ -31,27 +32,94 @@ describe(shellUrl, () => {
   });
 });
 
-describe(shellClosedReason, () => {
+describe(shellControlOf, () => {
   it("reads the reason of a closed frame", () => {
-    expect(shellClosedReason('{"type":"closed","reason":"sandbox"}')).toBe(
-      "sandbox"
-    );
-    expect(shellClosedReason('{"type":"closed","reason":"exited"}')).toBe(
-      "exited"
-    );
-  });
-
-  it("ignores other frames and non-JSON text", () => {
     expect(
-      shellClosedReason('{"type":"resize","columns":10,"rows":5}')
-    ).toBeUndefined();
-    expect(shellClosedReason("not json")).toBeUndefined();
-    expect(shellClosedReason('{"type":"closed"}')).toBeUndefined();
+      shellControlOf('{"type":"closed","reason":"sandbox"}')
+    ).toStrictEqual({ type: "closed", reason: "sandbox" });
+    expect(shellControlOf('{"type":"closed","reason":"exited"}')).toStrictEqual(
+      { type: "closed", reason: "exited" }
+    );
   });
 
   it("maps a reason it does not know to unavailable", () => {
-    expect(shellClosedReason('{"type":"closed","reason":"bogus"}')).toBe(
-      "unavailable"
+    expect(shellControlOf('{"type":"closed","reason":"bogus"}')).toStrictEqual({
+      type: "closed",
+      reason: "unavailable",
+    });
+  });
+
+  it("reads an open frame", () => {
+    expect(
+      shellControlOf('{"type":"open","path":"/workspace/a.md","kind":"file"}')
+    ).toStrictEqual({
+      type: "open",
+      open: { path: "/workspace/a.md", kind: "file" },
+    });
+  });
+
+  it("ignores other frames, malformed ones and non-JSON text", () => {
+    const texts = [
+      '{"type":"resize","columns":10,"rows":5}',
+      "not json",
+      "null",
+      '{"type":"closed"}',
+      '{"type":"open","path":"/workspace/a.md","kind":"link"}',
+      '{"type":"open","path":7,"kind":"file"}',
+      '{"type":"open","kind":"file"}',
+    ];
+    expect(texts.map((text) => [text, shellControlOf(text)])).toStrictEqual(
+      texts.map((text) => [text, undefined])
+    );
+  });
+});
+
+describe(shellOpenTargetOf, () => {
+  const index = workspaceIndexOf(
+    ["docs/", "docs/readme.md", "node_modules/", "src/", "src/x.ts"],
+    { directories: true }
+  );
+  const target = (path: string, kind: "file" | "directory") =>
+    shellOpenTargetOf({ path, kind }, index);
+
+  it("opens the workspace root as the Files tab", () => {
+    expect(target("/workspace", "directory")).toStrictEqual(WORKSPACE_ROOT);
+  });
+
+  it("opens a file, listed or not", () => {
+    expect(target("/workspace/docs/readme.md", "file")).toStrictEqual({
+      path: "docs/readme.md",
+      kind: "file",
+    });
+    expect(
+      target("/workspace/node_modules/react/index.js", "file")
+    ).toStrictEqual({ path: "node_modules/react/index.js", kind: "file" });
+  });
+
+  it("reveals a listed folder, else its nearest listed ancestor, else the root", () => {
+    expect(target("/workspace/src", "directory")).toStrictEqual({
+      path: "src",
+      kind: "directory",
+    });
+    expect(
+      target("/workspace/node_modules/react/lib", "directory")
+    ).toStrictEqual({ path: "node_modules", kind: "directory" });
+    expect(target("/workspace/build/out", "directory")).toStrictEqual(
+      WORKSPACE_ROOT
+    );
+  });
+
+  it("refuses anything outside the workspace or not absolute", () => {
+    const paths = [
+      "/etc/passwd",
+      "docs/readme.md",
+      "/workspace/../etc/passwd",
+      "/workspacefoo/a.md",
+      "/workspace/",
+      "",
+    ];
+    expect(paths.map((path) => [path, target(path, "file")])).toStrictEqual(
+      paths.map((path) => [path, undefined])
     );
   });
 });

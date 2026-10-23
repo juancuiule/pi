@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
 import type { Socket } from "node:net";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import {
@@ -28,6 +29,15 @@ import type { SoftwareId } from "./software.ts";
 const execFileAsync = promisify(execFile);
 
 export const DAEMON_PATH = "/usr/local/bin/pi-env";
+/**
+ * The Shell tab's `open` command, copied in at start like the daemon: cached software images get it
+ * without a rebuild, and desktop containers (FROM the shell image) never do, since `open` means
+ * something else in XFCE.
+ */
+export const OPEN_PATH = "/usr/local/bin/open";
+const OPEN_SCRIPT = fileURLToPath(
+  new URL("../../docker/sandbox/open", import.meta.url)
+);
 export const WORKSPACE = "/workspace";
 export const DISPLAY = ":99";
 const NOVNC_PORT = "6080/tcp";
@@ -341,6 +351,8 @@ export const layer = (
           yield* docker(["cp", daemonBinary(), `${name}:${DAEMON_PATH}`]);
           yield* docker(["exec", name, "chmod", "+x", DAEMON_PATH]);
           if (kind === "shell") {
+            // `docker cp` keeps the script's committed 755 mode.
+            yield* docker(["cp", OPEN_SCRIPT, `${name}:${OPEN_PATH}`]);
             return { kind, id: name } satisfies SandboxInfo;
           }
           yield* waitForDesktop(name);

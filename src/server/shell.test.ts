@@ -55,7 +55,12 @@ const until = (f: () => boolean) =>
 
 interface TestSocket {
   output: string;
-  readonly controls: { readonly type: string; readonly reason?: string }[];
+  readonly controls: {
+    readonly type: string;
+    readonly reason?: string;
+    readonly path?: string;
+    readonly kind?: string;
+  }[];
   readonly done: Promise<{ readonly code: number }>;
   readonly send: (bytes: Uint8Array | string) => void;
   readonly close: () => void;
@@ -246,6 +251,52 @@ describe("the shell socket", () => {
     );
 
     expect(result).toStrictEqual({ closed: true, echoed: true });
+  });
+
+  it("sends an `open` the shell prints live, and never on a reconnect's replay", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "shell", prompt: "hi" },
+        });
+        const port = yield* portOf;
+        const first = yield* open(shellUrl(port, created.id));
+        first.send(
+          ascii.encode(
+            `printf '\\033]7701;open;file;%s\\007' "${Buffer.from("/workspace/a.md").toString("base64")}"\n`
+          )
+        );
+        const opened = yield* until(() =>
+          first.controls.some((control) => control.type === "open")
+        );
+        first.close();
+
+        const second = yield* open(shellUrl(port, created.id));
+        second.send(ascii.encode("echo AFTER-$((1+1))\n"));
+        const replayed = yield* until(
+          () =>
+            second.output.includes("\u001B]7701;open;") &&
+            second.output.includes("AFTER-2")
+        );
+        second.close();
+        return {
+          opens: first.controls.filter((control) => control.type === "open"),
+          opened,
+          replayed,
+          reopened: second.controls.filter(
+            (control) => control.type === "open"
+          ),
+        };
+      }).pipe(Effect.provide(server(ok)))
+    );
+
+    expect(result).toStrictEqual({
+      opens: [{ type: "open", path: "/workspace/a.md", kind: "file" }],
+      opened: true,
+      replayed: true,
+      reopened: [],
+    });
   });
 
   // Each failed `until` below waits up to ~10s, so a regression takes longer than the default 5s.

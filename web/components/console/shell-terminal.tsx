@@ -8,7 +8,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { useInfo } from "@/lib/queries";
 import type { Shell } from "@/lib/shell";
-import { connectShell } from "@/lib/shell";
+import { connectShell, shellOpenTargetOf } from "@/lib/shell";
+import { useWorkspace } from "@/lib/workspace-context";
 
 const encoder = new TextEncoder();
 
@@ -43,6 +44,12 @@ export const ShellTerminal = ({
   const [wt, setWt] = useState<WTerm | null>(null);
   const { data: info } = useInfo();
   const apiUrl = info?.apiUrl;
+  const current = useWorkspace();
+  // Read through a ref, so a new index or open action does not reconnect the socket.
+  const workspace = useRef(current);
+  useEffect(() => {
+    workspace.current = current;
+  }, [current]);
 
   useEffect(() => {
     if (wt === null || apiUrl === undefined || !live) {
@@ -61,6 +68,12 @@ export const ShellTerminal = ({
         // A shell that produces output works: later `sandbox` closes may reconnect again.
         reconnects.current = 0;
         term.current?.write(bytes);
+      });
+      client.onOpen((open) => {
+        const target = shellOpenTargetOf(open, workspace.current.index);
+        if (target !== undefined) {
+          workspace.current.open(target);
+        }
       });
       client.onClosed((reason) => {
         shell.current = null;

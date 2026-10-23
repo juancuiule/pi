@@ -3,8 +3,10 @@
 // `{"type":"resize","columns":n,"rows":n}` resizes it, and the server sends `{"type":"closed","reason":...}`
 // before its CloseEvent when the shell session ends or the Sandbox goes away. The PTY is a session owned by
 // the Sandbox's lifetime (Seat.shell), so a socket dropping detaches this client without killing the shell —
-// a reconnect lands back in it with scrollback replayed. The upgrade request is an ordinary request first,
-// so the `loopbackOnly` middleware merged into the same router answers 403 before this runs.
+// a reconnect lands back in it with scrollback replayed. The shell's `open` command, run while this socket is
+// attached, sends `{"type":"open","path":"/workspace/...","kind":"file"|"directory"}`; a replay never does.
+// The upgrade request is an ordinary request first, so the `loopbackOnly` middleware merged into the same
+// router answers 403 before this runs.
 import { Deferred, Effect, Exit, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Socket } from "effect/socket";
@@ -120,6 +122,9 @@ const session = Effect.gen(function* () {
         ),
         Effect.forkChild
       );
+      yield* Stream.runForEach(shell.opens, (open) =>
+        writer.write(JSON.stringify({ type: "open", ...open }))
+      ).pipe(onEnd("exited", "the sandbox shell's opens"), Effect.forkChild);
 
       // Sandbox replaced (Upgrade) or removed (Pause): the watch's first
       // emission is the current one, so every later one ends the session.
