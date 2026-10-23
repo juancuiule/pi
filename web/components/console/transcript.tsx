@@ -52,12 +52,17 @@ import { hasPendingApproval } from "@/lib/approval";
 import { boundaryNote } from "@/lib/boundary-note";
 import type { BoundaryNote } from "@/lib/boundary-note";
 import type { ConversationState, PendingInput } from "@/lib/conversation-state";
-import { finalResponse, groupSimple } from "@/lib/conversation-state";
+import {
+  finalResponse,
+  groupSimple,
+  toolResultOf,
+} from "@/lib/conversation-state";
 import { messageTime } from "@/lib/format";
 import { useInfo, useWithdrawMessage } from "@/lib/queries";
 import { settingsNote } from "@/lib/settings-note";
 import { skillMentionParts } from "@/lib/skill-message";
 import { useConversationStore } from "@/lib/store";
+import { subagentIdFor } from "@/lib/subagent";
 import { displayParts, isNearBottom, userParts } from "@/lib/transcript";
 import { unansweredNote } from "@/lib/unanswered-note";
 import { useNow } from "@/lib/use-now";
@@ -66,6 +71,7 @@ import { ArtifactCard } from "./artifact-card";
 import { SentChip } from "./attachment-chip";
 import { FeedbackActions } from "./feedback-actions";
 import { Markdown } from "./markdown";
+import { SubagentStream } from "./subagent";
 import { ToolCall } from "./tool-call";
 
 const Caret = () => (
@@ -281,15 +287,46 @@ const segmentsOf = (
   return segments;
 };
 
+/** A `task` call's child transcript: live steps inside the call's card, subscribed while its panel is open. */
+const subagentExtra = (
+  call: Extract<ContentBlock, { type: "toolCall" }>,
+  state: ConversationState,
+  showThinking: boolean
+) => {
+  const id = subagentIdFor(state, call.id);
+  if (id === undefined) {
+    return;
+  }
+  const tool = state.tools[call.id];
+  return (
+    <SubagentStream
+      id={id}
+      running={
+        tool?.status !== "done" && toolResultOf(state, call.id) === undefined
+      }
+      render={(child) => (
+        // oxlint-disable-next-line no-use-before-define -- the recursion is bounded: children get no `task` tool
+        <NestedTranscript
+          state={child}
+          conversation={id}
+          showThinking={showThinking}
+        />
+      )}
+    />
+  );
+};
+
 /** One line inside a message's Trace: thinking or a tool call. */
 const Step = ({
   block,
   streaming,
   state,
+  showThinking,
 }: {
   block: ContentBlock;
   streaming: boolean;
   state: ConversationState;
+  showThinking: boolean;
 }) => {
   if (block.type === "thinking") {
     return <Thinking thinking={block.thinking} streaming={streaming} />;
@@ -298,7 +335,15 @@ const Step = ({
     return block.name.startsWith("artifact_") ? (
       <ArtifactCard call={block} state={state} />
     ) : (
-      <ToolCall call={block} state={state} />
+      <ToolCall
+        call={block}
+        state={state}
+        extra={
+          block.name === "task"
+            ? subagentExtra(block, state, showThinking)
+            : undefined
+        }
+      />
     );
   }
   return null;
@@ -343,6 +388,7 @@ const AssistantBlocks = ({
                 block={block}
                 streaming={caret === true && index === lastIndex}
                 state={state}
+                showThinking={showThinking}
               />
             ))}
           </Trace>
@@ -1038,6 +1084,31 @@ const Body = ({
     </>
   );
 };
+
+/**
+ * A subagent's transcript inside its `task` call's card: the same Body, without the scroll area, auto-scroll or
+ * queued-sends chrome — a child has no composer behind it.
+ */
+const NestedTranscript = ({
+  state,
+  conversation,
+  showThinking,
+}: {
+  state: ConversationState;
+  /** The child's own id, so its artifacts' and attachments' links scope correctly. */
+  conversation: number;
+  showThinking: boolean;
+}) => (
+  <div className="border-border flex flex-col gap-3 border-l-2 py-1 pl-4">
+    <Body
+      state={state}
+      resuming={false}
+      showThinking={showThinking}
+      simple={false}
+      conversation={conversation}
+    />
+  </div>
+);
 
 export const Transcript = ({
   state,

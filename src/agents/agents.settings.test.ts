@@ -171,6 +171,7 @@ describe("conversation settings", () => {
       "attachments",
       "artifacts",
       "questions",
+      "subagent",
       "skills",
       "repeat-guard",
       "tracing",

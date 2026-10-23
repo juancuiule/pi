@@ -11,9 +11,13 @@ import type { ConversationId, Extension } from "@earendil-works/pi-durable";
 
 import { withApproval } from "../approvals.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
+import { SandboxDoc } from "../sandbox/sandbox.ts";
 import { SOFTWARE } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
 import { WorkspaceDoc } from "../workspaces/workspaces.ts";
+
+/** The `upgrade_workspace` tool's name; a subagent's agent has it removed so it cannot swap the shared sandbox. */
+export const UPGRADE_WORKSPACE = "upgrade_workspace";
 
 const levelSection = (level: SandboxChoice): string => {
   switch (level) {
@@ -64,9 +68,18 @@ export const workspaceExtension = (upgrade: UpgradeWorkspace): Extension =>
     name: "workspace",
     sections: [
       section("workspace", async (input, context) => {
+        // A task-owned conversation works in its owner's machine: its own WorkspaceDoc stays "none".
+        const sandbox = await input.read.snapshot(
+          SandboxDoc,
+          input.conversationId,
+          context
+        );
+        const owner = sandbox?.owner;
         const doc = await input.read.snapshot(
           WorkspaceDoc,
-          input.conversationId,
+          owner === undefined
+            ? input.conversationId
+            : (Number(owner) as ConversationId),
           context
         );
         return workspaceSection(doc?.level ?? "none", doc?.software);
@@ -75,7 +88,7 @@ export const workspaceExtension = (upgrade: UpgradeWorkspace): Extension =>
     tools: [
       withApproval(
         defineTool({
-          name: "upgrade_workspace",
+          name: UPGRADE_WORKSPACE,
           description:
             "Get a bigger machine for this conversation: `shell` adds a Linux shell with file tools, `desktop` adds a graphical desktop on top. Your files in /workspace carry over, and so does the software the person picked; what you installed yourself does not. Use it only when the task needs it, and say why.",
           parameters: Type.Object({

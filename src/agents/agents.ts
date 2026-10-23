@@ -59,6 +59,7 @@ import type {
 } from "../approvals.ts";
 import {
   ApprovalDoc,
+  approvalRoot,
   clearApprovals,
   isGated,
   stopWaitingCalls,
@@ -126,6 +127,7 @@ import type { SkillRemoveOutcome, SkillSaveOutcome } from "../skills/skills.ts";
 import { CodingTools } from "../tools/bash.ts";
 import { desktopExtension } from "../tools/desktop.ts";
 import { questionsExtension } from "../tools/questions.ts";
+import { Subagent } from "../tools/subagent.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
 import {
   generationAttributes,
@@ -856,6 +858,8 @@ export class Agents extends Context.Service<
         if (webExt !== undefined) {
           registry.install(webExt);
         }
+        // `task`: delegation to a subagent conversation; children have it removed.
+        registry.install(Subagent);
         // Every installed extension, for the console; and those every conversation selects, whatever its Level.
         const installed = [
           ...extensionsFor("desktop", desktop),
@@ -863,6 +867,7 @@ export class Agents extends Context.Service<
           attachmentsExt,
           artifactsExt,
           questionsExt,
+          Subagent,
           ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
           ...mcp.extensions,
@@ -874,6 +879,7 @@ export class Agents extends Context.Service<
           attachmentsExt,
           artifactsExt,
           questionsExt,
+          Subagent,
           ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
           ...mcp.extensions,
@@ -916,6 +922,7 @@ export class Agents extends Context.Service<
             attachmentsExt,
             artifactsExt,
             questionsExt,
+            Subagent,
             ...(webExt === undefined ? [] : [webExt]),
             skillsExt,
             ...mcp.extensions,
@@ -957,14 +964,52 @@ export class Agents extends Context.Service<
                 // Every tool call runs in the Sandbox of its conversation's Seat; without one there is no
                 // environment, and the file, shell and desktop tools fail with an error result.
                 env: async ({ conversationId, read }, envContext) => {
-                  const doc = await read.snapshot(
+                  let doc = await read.snapshot(
                     SandboxDoc,
                     conversationId,
                     envContext
                   );
+                  // A task-owned conversation owns no Sandbox: it works in its owner's, read fresh so an
+                  // Upgrade replacing the parent's is picked up on the child's next call.
+                  if (doc?.sandbox === undefined && doc?.owner !== undefined) {
+                    doc = await read.snapshot(
+                      SandboxDoc,
+                      Number(doc.owner) as ConversationId,
+                      envContext
+                    );
+                  }
                   return doc?.sandbox === undefined
                     ? undefined
                     : workspaces.env(doc.sandbox);
+                },
+                // A task-owned conversation (a `task` subagent) takes the shape of the conversation it
+                // serves: its current sandbox is followed by `env`, its skills are copied, and its gated
+                // calls are decided on the root conversation's ApprovalDoc.
+                conversationCreated: async (tx, conversation) => {
+                  if (conversation.owner === undefined) {
+                    return;
+                  }
+                  tracing.childConversation(
+                    conversation.id,
+                    conversation.owner
+                  );
+                  const ownerId = conversation.owner.conversationId;
+                  const child = await tx.doc(SandboxDoc, conversation.id);
+                  child.owner = String(ownerId);
+                  const ownerSkills = await tx.doc(SkillsDoc, ownerId);
+                  if (ownerSkills.skills !== undefined) {
+                    const childSkills = await tx.doc(
+                      SkillsDoc,
+                      conversation.id
+                    );
+                    childSkills.skills = ownerSkills.skills;
+                  }
+                  const ownerApprovals = await tx.doc(ApprovalDoc, ownerId);
+                  const childApprovals = await tx.doc(
+                    ApprovalDoc,
+                    conversation.id
+                  );
+                  childApprovals.root = ownerApprovals.root ?? String(ownerId);
                 },
               },
               context
@@ -2062,9 +2107,12 @@ export class Agents extends Context.Service<
             }
           });
 
-          const pendingApprovals = attempt(() =>
-            harness.snapshot(ApprovalDoc, id, context)
-          ).pipe(Effect.map((doc) => Object.keys(doc?.pending ?? {}).length));
+          // The pending entries of a subagent's calls live on its root conversation's doc.
+          const pendingApprovals = attempt(async () => {
+            const rootId = await approvalRoot(harness, id, context);
+            const doc = await harness.snapshot(ApprovalDoc, rootId, context);
+            return Object.keys(doc?.pending ?? {}).length;
+          });
 
           const running = attempt(() =>
             harness.snapshot(LiveDoc, id, context)

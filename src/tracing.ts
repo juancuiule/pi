@@ -2,7 +2,8 @@
 // it or under the `turn` root of its Run, with the attributes Langfuse reads
 // (https://langfuse.com/integrations/native/opentelemetry). pi-durable runs generations and tools in its own
 // scheduler, outside any Effect fiber, so its hooks open and close the spans, and the parent comes from the
-// conversation: an `ask` registers its span for its conversation, and a send-driven Run opens its own root.
+// conversation: an `ask` registers its span for its conversation, a subagent's conversation takes the span of the tool
+// call that created it, and a send-driven Run opens its own root.
 import type { Context as ChordContext } from "@earendil-works/chord";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
@@ -217,6 +218,11 @@ export interface AgentTracing {
   ): Effect.Effect<A, E, R>;
   /** The Langfuse session of a conversation: unique per process, since conversation ids restart with each run. */
   sessionOf(conversationId: ConversationId): string;
+  /** A subagent's conversation: its spans go under the tool call that created it, in its owner's session. */
+  childConversation(
+    conversationId: ConversationId,
+    owner: { readonly conversationId: ConversationId; readonly taskId: TaskId }
+  ): void;
 }
 
 /**
@@ -274,11 +280,12 @@ export const makeAgentTracing = (
   };
   // Generation tasks whose trace was already committed to TraceDoc, so only their first request writes.
   const recorded = new Set<TaskId>();
-  // Langfuse session per conversation. Conversation ids restart with every process (MemoryStorage), so a
-  // per-process prefix keeps runs apart.
+  // Langfuse session per conversation: a subagent's conversation joins the session of the conversation it serves.
+  // Conversation ids restart with every process (MemoryStorage), so a per-process prefix keeps runs apart.
   const runId = crypto.randomUUID().slice(0, 8);
+  const sessions = new Map<ConversationId, string>();
   const sessionOf = (conversationId: ConversationId) =>
-    `${runId}-${conversationId}`;
+    sessions.get(conversationId) ?? `${runId}-${conversationId}`;
   // One open span per task: a generation task makes one request at a time, a tool task is one call.
   const open = new Map<TaskId, Tracer.Span>();
 
@@ -528,5 +535,12 @@ export const makeAgentTracing = (
           Effect.ensuring(Effect.sync(() => parents.delete(conversationId)))
         );
       }),
+    childConversation: (conversationId, owner) => {
+      sessions.set(conversationId, sessionOf(owner.conversationId));
+      const parent = open.get(owner.taskId);
+      if (parent !== undefined) {
+        parents.set(conversationId, parent);
+      }
+    },
   };
 };
