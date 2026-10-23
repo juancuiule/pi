@@ -51,6 +51,7 @@ import {
   Semaphore,
   Stream,
 } from "effect";
+import type { Tracer } from "effect";
 
 import type {
   AnswerInput,
@@ -1024,6 +1025,11 @@ export class Agents extends Context.Service<
             const doc = await tx.doc(TraceDoc, conversationId);
             doc.traces[String(taskId)] ??= traceId;
           }, commitContext);
+        // A Run ends when its inputs settle, all at once; the first one stands for the Run.
+        traceHooks.settled = async (submissionId) => {
+          const submission = await harness.submission(submissionId, context);
+          return submission?.wait(context);
+        };
         // The Level, approval policy and model a Run's trace is filtered by.
         traceHooks.describe = async (conversationId, readContext) => {
           const [workspace, approvals, agent] = await Promise.all([
@@ -1212,11 +1218,15 @@ export class Agents extends Context.Service<
 
         // A one-shot completion outside the transcript, traced as a generation in the
         // conversation's Langfuse session. It resolves on provider errors, so the caller
-        // reads `stopReason`.
+        // reads `stopReason`. `placement` puts it under a turn, or in a trace of its own.
         const completeTitle = (
           id: ConversationId,
           model: Model<Api>,
-          messages: Message[]
+          messages: Message[],
+          placement: {
+            readonly parent?: Tracer.Span;
+            readonly root?: true;
+          } = {}
         ) =>
           attempt(() =>
             options.models.completeSimple(
@@ -1229,6 +1239,7 @@ export class Agents extends Context.Service<
               Effect.annotateCurrentSpan(generationAttributes(message))
             ),
             Effect.withSpan("conversation title", {
+              ...placement,
               attributes: {
                 "langfuse.observation.type": "generation",
                 "langfuse.session.id": tracing.sessionOf(id),
@@ -1860,12 +1871,11 @@ export class Agents extends Context.Service<
           // A settings change between the Sandbox's copy and this registration found no Sandbox to update.
           yield* locked(id, reconcileSkills(id, { refresh: [], removed: [] }));
 
-          // Only an ask's span is the agent observation; a send-driven Run gets its own `turn` root (tracing.ts).
-          const annotate = (prompt: string, type?: "agent") =>
+          // Only an ask's span is the agent observation; a send-driven Run gets its own `turn` root (tracing.ts),
+          // which carries the message, so the send's span stays out of the session.
+          const annotate = (prompt: string) =>
             Effect.annotateCurrentSpan({
-              ...(type === undefined
-                ? {}
-                : { "langfuse.observation.type": type }),
+              "langfuse.observation.type": "agent",
               "langfuse.observation.input": prompt,
               "langfuse.session.id": tracing.sessionOf(id),
             });
@@ -1998,7 +2008,6 @@ export class Agents extends Context.Service<
           ) {
             // Skills read only what the person typed, never a file's text.
             const expanded = yield* expand(prompt, id);
-            yield* annotate(expanded);
             // Admitted without waiting: a busy conversation queues it, steering the run when it waits on a person
             // and as a follow-up while it works, and the answer arrives as events. No `tracing.traced`: the send
             // span ends at admission, before the run's task hooks — its spans adopt their own run root instead.
@@ -2015,7 +2024,7 @@ export class Agents extends Context.Service<
             prompt: string,
             attachmentIds: readonly string[] = []
           ) {
-            yield* annotate(prompt, "agent");
+            yield* annotate(prompt);
             const answer = yield* tracing.traced(
               id,
               admit(prompt, attachmentIds).pipe(
@@ -2914,7 +2923,14 @@ export class Agents extends Context.Service<
             firstUser: first.user,
             firstAnswer: first.answer,
           });
-          const message = yield* completeTitle(id, model, messages);
+          // Earned by an answered turn, so its cost counts in that turn's trace; a session stays a list of turns.
+          const turn = tracing.lastTurn(id);
+          const message = yield* completeTitle(
+            id,
+            model,
+            messages,
+            turn === undefined ? { root: true } : { parent: turn }
+          );
           const title =
             message.stopReason === "stop" ? titleText(message) : undefined;
           if (title === undefined) {
