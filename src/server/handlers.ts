@@ -856,6 +856,8 @@ const SearchHandlers = HttpApiBuilder.group(Api, "search", (handlers) =>
 export const apiLayer = (options: {
   readonly apiUrl: string;
   readonly tracing: boolean;
+  /** The ports a browser page may call from: the console's and this server's. Unset, any loopback port. */
+  readonly pagePorts?: readonly number[] | undefined;
 }) =>
   HttpApiBuilder.layer(Api).pipe(
     Layer.provide(
@@ -873,5 +875,5 @@ export const apiLayer = (options: {
       )
     ),
     Layer.provide(AuthenticationLive),
-    Layer.merge(loopbackOnly)
+    Layer.merge(loopbackOnly({ pagePorts: options.pagePorts }))
   );

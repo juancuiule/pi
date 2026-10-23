@@ -208,6 +208,7 @@ const ServerLive = HttpRouter.serve(
     apiLayer({
       apiUrl: `http://127.0.0.1:${config.server.port}`,
       tracing: config.langfuse !== undefined,
+      pagePorts: [config.server.webPort, config.server.port],
     }),
     shellRoute
   )

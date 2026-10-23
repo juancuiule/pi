@@ -33,6 +33,8 @@ export const model: ModelConfig = {
 /** The HTTP server and its conversations; durations are milliseconds (varlock's `duration` type). */
 export const server = {
   port: ENV.SERVER_PORT,
+  /** The console's port: browser pages may call the API only from it or from this server's own. */
+  webPort: ENV.WEB_PORT,
   idleTimeoutMs: ENV.CONVERSATION_IDLE_TIMEOUT,
   sweepEveryMs: ENV.CONVERSATION_SWEEP_INTERVAL,
   shutdownTimeoutMs: ENV.SHUTDOWN_TIMEOUT,
