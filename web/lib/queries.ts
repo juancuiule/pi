@@ -2,6 +2,7 @@
 
 import {
   keepPreviousData,
+  skipToken,
   useMutation,
   useQuery,
   useQueryClient,
@@ -14,6 +15,7 @@ import type {
   SettingsChange,
   SoftwareId,
 } from "effect-pi/api";
+import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
 import { runApi } from "./api";
@@ -39,6 +41,34 @@ export const useArtifacts = () =>
     // A run can write a page between polls of the conversation list.
     refetchInterval: 2000,
   });
+
+/**
+ * One conversation's artifacts, its subagents' included, most recently updated first. Polled while it runs (a
+ * running parent covers its subagents' writes), and fetched once more when a run ends, since its last page can
+ * land after the last poll.
+ */
+export const useConversationArtifacts = (
+  conversation: number | undefined,
+  running: boolean
+) => {
+  const query = useQuery({
+    queryKey: ["artifacts", conversation],
+    queryFn:
+      conversation === undefined
+        ? skipToken
+        : () => runApi((c) => c.artifacts.list({ query: { conversation } })),
+    refetchInterval: running ? 2000 : false,
+  });
+  const { refetch } = query;
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running && conversation !== undefined) {
+      void refetch();
+    }
+    wasRunning.current = running;
+  }, [conversation, running, refetch]);
+  return query;
+};
 
 /** Full-text over Conversation titles and messages, for the ⌘K palette; fetched while it is open. */
 export const useSearch = (q: string, enabled: boolean) =>

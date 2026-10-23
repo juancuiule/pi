@@ -1,7 +1,14 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, LayoutTemplate, LoaderCircle, X } from "lucide-react";
+import type { ArtifactInfo } from "effect-pi/api";
+import {
+  ArrowLeft,
+  ExternalLink,
+  LayoutTemplate,
+  LoaderCircle,
+  X,
+} from "lucide-react";
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -15,6 +22,7 @@ import {
 } from "@/components/ui/code-block";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
   TooltipContent,
@@ -23,7 +31,8 @@ import {
 import { useHighlightedCode } from "@/hooks/use-highlighted-code";
 import { runApi } from "@/lib/api";
 import type { OpenArtifact } from "@/lib/artifacts";
-import { artifactRenderUrl } from "@/lib/artifacts";
+import { artifactRenderUrl, artifactRowDetail } from "@/lib/artifacts";
+import { useNow } from "@/lib/use-now";
 
 const Loading = () => (
   <p className="text-muted-foreground flex items-center gap-2 p-4 text-sm">
@@ -161,18 +170,87 @@ const TabSwitch = ({
   </div>
 );
 
+const CloseButton = ({
+  label,
+  onClose,
+}: {
+  label: string;
+  onClose: () => void;
+}) => (
+  <Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClose}>
+    <X />
+  </Button>
+);
+
+/** A conversation's artifacts, as the panel lists them before one is opened. */
+export const ArtifactList = ({
+  artifacts,
+  onOpen,
+  onClose,
+}: {
+  artifacts: readonly ArtifactInfo[] | undefined;
+  onOpen: (artifact: OpenArtifact) => void;
+  onClose: () => void;
+}) => {
+  const now = useNow();
+  let body: ReactNode = <Loading />;
+  if (artifacts !== undefined && artifacts.length === 0) {
+    body = (
+      <p className="text-muted-foreground p-4 text-sm">No artifacts yet</p>
+    );
+  } else if (artifacts !== undefined) {
+    body = (
+      <ScrollArea className="h-full">
+        <ul className="flex flex-col gap-0.5 p-1.5">
+          {artifacts.map((artifact) => (
+            <li key={artifact.id}>
+              <button
+                type="button"
+                onClick={() => onOpen({ id: artifact.id })}
+                className="hover:bg-muted focus-visible:ring-ring flex w-full min-w-0 flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2"
+              >
+                <span className="truncate text-sm" title={artifact.title}>
+                  {artifact.title}
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  {artifactRowDetail(artifact, now)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </ScrollArea>
+    );
+  }
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
+        <LayoutTemplate className="text-muted-foreground size-4 shrink-0" />
+        <span className="text-ui min-w-0 flex-1 truncate font-medium">
+          Artifacts
+        </span>
+        <CloseButton label="Close artifacts" onClose={onClose} />
+      </div>
+      <div className="min-h-0 flex-1">{body}</div>
+    </div>
+  );
+};
+
 /**
  * An open artifact beside the chat: the rendered page in a sandboxed iframe, a version picker, the page's source,
  * and an open-in-new-tab link. The view is refetched while open so the agent's updates reach the picker; the
- * frame follows the newest version unless the person picked an older one.
+ * frame follows the newest version unless the person picked an older one. `onBack` adds a control that returns
+ * to the conversation's list.
  */
 export const ArtifactPanel = ({
   artifact,
   conversation,
+  onBack,
   onClose,
 }: {
   artifact: OpenArtifact;
   conversation: number;
+  onBack?: (() => void) | undefined;
   onClose: () => void;
 }) => {
   const { data, error } = useQuery({
@@ -231,7 +309,25 @@ export const ArtifactPanel = ({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
-        <LayoutTemplate className="text-muted-foreground size-4 shrink-0" />
+        {onBack === undefined ? (
+          <LayoutTemplate className="text-muted-foreground size-4 shrink-0" />
+        ) : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Back to artifacts"
+                  onClick={onBack}
+                >
+                  <ArrowLeft />
+                </Button>
+              }
+            />
+            <TooltipContent>Back to artifacts</TooltipContent>
+          </Tooltip>
+        )}
         <span
           className="text-ui min-w-0 flex-1 truncate font-medium"
           title={pageTitle}
@@ -277,34 +373,24 @@ export const ArtifactPanel = ({
             <TooltipContent>Open in new tab</TooltipContent>
           </Tooltip>
         )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Close the page"
-          onClick={onClose}
-        >
-          <X />
-        </Button>
+        <CloseButton label="Close the page" onClose={onClose} />
       </div>
       <div className="min-h-0 flex-1">{body}</div>
     </div>
   );
 };
 
-/** On desktop an artifact is a pane after the list or chat; dragging it shut closes it. */
+/** On desktop the panel is a pane after the list or chat; dragging it shut closes it. */
 export const ArtifactResizablePanel = ({
-  artifact,
-  conversation,
+  open,
   onClose,
+  children,
 }: {
-  artifact: OpenArtifact | undefined;
-  conversation: number | undefined;
+  open: boolean;
   onClose: () => void;
-}) => {
-  if (artifact === undefined || conversation === undefined) {
-    return null;
-  }
-  return (
+  children: ReactNode;
+}) =>
+  open ? (
     <>
       <ResizableHandle />
       <ResizablePanel
@@ -317,16 +403,10 @@ export const ArtifactResizablePanel = ({
           }
         }}
       >
-        <ArtifactPanel
-          key={`${conversation}:${artifact.id}`}
-          artifact={artifact}
-          conversation={conversation}
-          onClose={onClose}
-        />
+        {children}
       </ResizablePanel>
     </>
-  );
-};
+  ) : null;
 
 const SNAP_POINTS = [0.55, 0.95];
 
@@ -336,24 +416,20 @@ const SNAP_POINTS = [0.55, 0.95];
  * dragging, and handleOnly restricts presses to the handle.
  */
 export const ArtifactDrawer = ({
-  artifact,
-  conversation,
+  open,
   isDesktop,
   onClose,
+  children,
 }: {
-  artifact: OpenArtifact | undefined;
-  conversation: number | undefined;
+  open: boolean;
   isDesktop: boolean | null;
   onClose: () => void;
+  children: ReactNode;
 }) => (
   <Drawer
-    open={
-      isDesktop === false &&
-      artifact !== undefined &&
-      conversation !== undefined
-    }
-    onOpenChange={(open) => {
-      if (!open) {
+    open={isDesktop === false && open}
+    onOpenChange={(next) => {
+      if (!next) {
         onClose();
       }
     }}
@@ -362,16 +438,9 @@ export const ArtifactDrawer = ({
     handleOnly
   >
     <DrawerContent>
-      <DrawerTitle className="sr-only">Artifact page</DrawerTitle>
+      <DrawerTitle className="sr-only">Artifacts</DrawerTitle>
       <div data-vaul-no-drag className="flex min-h-0 flex-1 flex-col">
-        {artifact === undefined || conversation === undefined ? null : (
-          <ArtifactPanel
-            key={`${conversation}:${artifact.id}`}
-            artifact={artifact}
-            conversation={conversation}
-            onClose={onClose}
-          />
-        )}
+        {open ? children : null}
       </div>
     </DrawerContent>
   </Drawer>

@@ -5,6 +5,7 @@ import {
   Bot,
   Brain,
   Download,
+  LayoutTemplate,
   ListCollapse,
   LoaderCircle,
   Menu,
@@ -227,13 +228,54 @@ const ViewToggles = ({ id }: { id: number }) => {
   );
 };
 
+/** Opens the artifact panel on the conversation's list, or closes it; disabled until there is one to list. */
+const ArtifactsToggle = ({
+  available,
+  open,
+  toggle,
+}: {
+  available: boolean;
+  open: boolean;
+  toggle: () => void;
+}) => {
+  let label = "No artifacts yet";
+  if (available) {
+    label = open ? "Hide artifacts" : "Show artifacts";
+  }
+  return (
+    <Tooltip>
+      {/* The trigger wraps the button: a disabled button takes no pointer events, so it could not show why. */}
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button
+          variant={open ? "secondary" : "ghost"}
+          size="icon-sm"
+          aria-label={label}
+          aria-pressed={open}
+          disabled={!available}
+          onClick={toggle}
+        >
+          <LayoutTemplate />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+};
+
 export const ConversationHeader = ({
   conversation,
   state,
+  artifacts,
   sidePanel,
 }: {
   conversation: ConversationSummary;
   state: ConversationState;
+  /** The artifact panel's button: whether there is anything to list, and whether the panel is open. */
+  artifacts: {
+    available: boolean;
+    open: boolean;
+    toggle: () => void;
+  };
   /** Present when a sandbox side panel can be shown. */
   sidePanel?: {
     label: string;
@@ -360,6 +402,7 @@ export const ConversationHeader = ({
         {/* One cluster, so the whole row wraps under the title instead of overflowing over the side panel. */}
         <div className="ml-auto flex items-center gap-1">
           <ViewToggles id={conversation.id} />
+          <ArtifactsToggle {...artifacts} />
           {hasSandbox && sidePanel !== undefined ? (
             <Button
               variant={sidePanel.collapsed ? "ghost" : "secondary"}

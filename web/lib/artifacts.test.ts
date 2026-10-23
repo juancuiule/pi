@@ -4,11 +4,14 @@ import { describe, expect, it } from "vitest";
 import {
   artifactOf,
   artifactRenderUrl,
+  artifactRowDetail,
   artifactUrl,
   conversationTitleOf,
   latestArtifactCall,
+  nextArtifactPanel,
   openArtifactOf,
 } from "./artifacts";
+import type { ArtifactPanelAction, ArtifactPanelState } from "./artifacts";
 
 const toolResult = (
   callId: string,
@@ -201,5 +204,62 @@ describe(conversationTitleOf, () => {
     expect(conversationTitleOf(conversations, 7)).toBe("Chart");
     expect(conversationTitleOf(conversations, 4)).toBe("#4");
     expect(conversationTitleOf(undefined, 4)).toBe("#4");
+  });
+});
+
+describe(nextArtifactPanel, () => {
+  const page = { id: "art_a", version: 2 };
+  const other = { id: "art_b" };
+  const closed: ArtifactPanelState = { kind: "closed" };
+  const list: ArtifactPanelState = { kind: "list" };
+  const open: ArtifactPanelState = { kind: "artifact", artifact: page };
+
+  it.each<
+    [string, ArtifactPanelState, ArtifactPanelAction, ArtifactPanelState]
+  >([
+    ["the button opens the list", closed, { type: "toggle" }, list],
+    ["the button closes the list", list, { type: "toggle" }, closed],
+    ["the button closes an open artifact", open, { type: "toggle" }, closed],
+    [
+      "a row opens its artifact over the list",
+      list,
+      { type: "open", artifact: page },
+      open,
+    ],
+    [
+      "a new page opens a closed panel on it",
+      closed,
+      { type: "open", artifact: page },
+      open,
+    ],
+    [
+      "a new page replaces the open one",
+      open,
+      { type: "open", artifact: other },
+      { kind: "artifact", artifact: other },
+    ],
+    ["back returns to the list", open, { type: "back" }, list],
+    ["back on the list stays", list, { type: "back" }, list],
+    ["back on a closed panel stays closed", closed, { type: "back" }, closed],
+    ["close closes an artifact", open, { type: "close" }, closed],
+    ["close closes the list", list, { type: "close" }, closed],
+  ])("%s", (_, state, action, next) => {
+    expect(nextArtifactPanel(state, action)).toStrictEqual(next);
+  });
+});
+
+describe(artifactRowDetail, () => {
+  const now = Date.UTC(2026, 0, 10, 12);
+
+  it("counts versions and says when the page last changed", () => {
+    expect(
+      artifactRowDetail({ versions: [1], updatedAt: now - 10_000 }, now)
+    ).toBe("1 version · just now");
+    expect(
+      artifactRowDetail(
+        { versions: [1, 2, 3], updatedAt: now - 2 * 3_600_000 },
+        now
+      )
+    ).toBe("3 versions · 2h ago");
   });
 });

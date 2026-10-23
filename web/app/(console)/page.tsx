@@ -1,14 +1,16 @@
 "use client";
 
-import type { ConversationSummary } from "effect-pi/api";
+import type { ArtifactInfo, ConversationSummary } from "effect-pi/api";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { toast } from "sonner";
 
 import {
   ArtifactDrawer,
+  ArtifactList,
+  ArtifactPanel,
   ArtifactResizablePanel,
 } from "@/components/console/artifact-panel";
 import { ConversationHeader } from "@/components/console/conversation-header";
@@ -31,13 +33,22 @@ import {
 } from "@/components/ui/resizable";
 import { AnswersContext, ApprovalContext } from "@/lib/approval-context";
 import { OpenArtifactContext } from "@/lib/artifact-context";
-import { latestArtifactCall } from "@/lib/artifacts";
-import type { OpenArtifact } from "@/lib/artifacts";
+import {
+  ARTIFACT_PANEL_CLOSED,
+  latestArtifactCall,
+  nextArtifactPanel,
+} from "@/lib/artifacts";
+import type {
+  ArtifactPanelAction,
+  ArtifactPanelState,
+  OpenArtifact,
+} from "@/lib/artifacts";
 import { parseConversationId } from "@/lib/conversation-id";
 import type { ConversationState } from "@/lib/conversation-state";
 import { OpenFileContext } from "@/lib/file-context";
 import {
   useConversationAction,
+  useConversationArtifacts,
   useConversations,
   useAnswerQuestions,
   useDecideApproval,
@@ -115,19 +126,23 @@ const Composer = ({
   );
 
 /**
- * The artifact open beside the chat, independent of the sandbox panel (a Level-none conversation has pages but
- * no machine). A just-committed `artifact_*` result opens it on its own; the calls already committed when the
- * first snapshot landed are the baseline, so a reload never pops the panel.
+ * The artifact panel beside the chat, independent of the sandbox panel (a Level-none conversation has pages but
+ * no machine): closed, the conversation's list, or one artifact. A just-committed `artifact_*` result opens it
+ * on its own; the calls already committed when the first snapshot landed are the baseline, so a reload never
+ * pops the panel. Switching conversation closes it.
  */
 const useArtifactPanel = (
   selectedId: number | undefined,
   state: ConversationState
-): [OpenArtifact | undefined, (artifact: OpenArtifact | undefined) => void] => {
-  const [artifact, setArtifact] = useState<OpenArtifact | undefined>();
+): [ArtifactPanelState, (action: ArtifactPanelAction) => void] => {
+  const [panel, dispatch] = useReducer(
+    nextArtifactPanel,
+    ARTIFACT_PANEL_CLOSED
+  );
   const [artifactConversation, setArtifactConversation] = useState(selectedId);
   if (artifactConversation !== selectedId) {
     setArtifactConversation(selectedId);
-    setArtifact(undefined);
+    dispatch({ type: "close" });
   }
   const seen = useRef<{ conversation?: number; callId?: string }>({});
   useEffect(() => {
@@ -145,10 +160,41 @@ const useArtifactPanel = (
     const latest = latestArtifactCall(state.entries);
     if (latest !== undefined && latest.callId !== seen.current.callId) {
       seen.current.callId = latest.callId;
-      setArtifact({ id: latest.id, version: latest.version });
+      dispatch({
+        type: "open",
+        artifact: { id: latest.id, version: latest.version },
+      });
     }
   }, [selectedId, state]);
-  return [artifact, setArtifact];
+  return [panel, dispatch];
+};
+
+/** What the artifact panel shows for the conversation, or null while it is closed. */
+const artifactPanelContent = (
+  panel: ArtifactPanelState,
+  conversation: number | undefined,
+  artifacts: readonly ArtifactInfo[] | undefined,
+  dispatch: (action: ArtifactPanelAction) => void
+): ReactNode => {
+  if (conversation === undefined || panel.kind === "closed") {
+    return null;
+  }
+  const close = () => dispatch({ type: "close" });
+  return panel.kind === "list" ? (
+    <ArtifactList
+      artifacts={artifacts}
+      onOpen={(artifact) => dispatch({ type: "open", artifact })}
+      onClose={close}
+    />
+  ) : (
+    <ArtifactPanel
+      key={`${conversation}:${panel.artifact.id}`}
+      artifact={panel.artifact}
+      conversation={conversation}
+      onBack={() => dispatch({ type: "back" })}
+      onClose={close}
+    />
+  );
 };
 
 /** The workspace file open beside the chat; tool calls and the Files tab open it, switching a conversation closes it. */
@@ -242,7 +288,26 @@ const Console = () => {
     conversation === undefined &&
     !(readOnly && state.entries.length > 0);
 
-  const [artifact, setArtifact] = useArtifactPanel(selectedId, state);
+  const [artifactPanel, dispatchArtifactPanel] = useArtifactPanel(
+    selectedId,
+    state
+  );
+  const { data: artifacts } = useConversationArtifacts(
+    selectedId,
+    state.running
+  );
+  const openArtifact = useCallback(
+    (artifact: OpenArtifact) =>
+      dispatchArtifactPanel({ type: "open", artifact }),
+    [dispatchArtifactPanel]
+  );
+  const closeArtifactPanel = () => dispatchArtifactPanel({ type: "close" });
+  const artifactContent = artifactPanelContent(
+    artifactPanel,
+    selectedId,
+    artifacts,
+    dispatchArtifactPanel
+  );
   const [file, setFile] = useFilePanel(selectedId);
 
   const toggleSidePanel = () => {
@@ -276,6 +341,11 @@ const Console = () => {
             <ConversationHeader
               conversation={conversation}
               state={state}
+              artifacts={{
+                available: artifacts !== undefined && artifacts.length > 0,
+                open: artifactPanel.kind !== "closed",
+                toggle: () => dispatchArtifactPanel({ type: "toggle" }),
+              }}
               sidePanel={
                 showSandbox
                   ? sidePanelOf(
@@ -310,7 +380,7 @@ const Console = () => {
   }
 
   return (
-    <OpenArtifactContext.Provider value={setArtifact}>
+    <OpenArtifactContext.Provider value={openArtifact}>
       <OpenFileContext.Provider value={setFile}>
         <title>{pageTitle(conversation)}</title>
         {isDesktop === true ? (
@@ -318,10 +388,11 @@ const Console = () => {
           <ResizablePanelGroup orientation="horizontal" className="h-full">
             <ResizablePanel minSize="30%">{main}</ResizablePanel>
             <ArtifactResizablePanel
-              artifact={artifact}
-              conversation={selectedId}
-              onClose={() => setArtifact(undefined)}
-            />
+              open={artifactContent !== null}
+              onClose={closeArtifactPanel}
+            >
+              {artifactContent}
+            </ArtifactResizablePanel>
             <FileResizablePanel
               file={file}
               conversation={selectedId}
@@ -361,11 +432,12 @@ const Console = () => {
           </>
         ) : null}
         <ArtifactDrawer
-          artifact={artifact}
-          conversation={selectedId}
+          open={artifactContent !== null}
           isDesktop={isDesktop}
-          onClose={() => setArtifact(undefined)}
-        />
+          onClose={closeArtifactPanel}
+        >
+          {artifactContent}
+        </ArtifactDrawer>
         <FileDrawer
           file={file}
           conversation={selectedId}
