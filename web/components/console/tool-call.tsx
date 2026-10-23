@@ -37,7 +37,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace";
 import { useHighlightedCode } from "@/hooks/use-highlighted-code";
-import { approvalOf, approvalWaitMsOf } from "@/lib/approval";
+import { approvalOf, approvalWaitMsOf, awaitingKey } from "@/lib/approval";
 import { useApproval } from "@/lib/approval-context";
 import { toolResultEntryOf, toolResultOf } from "@/lib/conversation-state";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
@@ -210,15 +210,13 @@ const useToolCallOpen = (initial: boolean, pending: boolean) => {
   return [open, setOpen] as const;
 };
 
-/** The call's approval state, if the server put one in details; `awaiting` only while no result exists. */
+/** How the person settled the call, if the server put it in details; whether it still waits is `awaitingKey`'s. */
 const approvalFor = (
   toolResult: Extract<Message, { role: "toolResult" }> | undefined,
   tool: ToolRun | undefined
 ) => {
   const approval = approvalOf(toolResult?.details) ?? approvalOf(tool?.details);
   return {
-    key: approval?.state === "pending" ? approval.key : undefined,
-    awaiting: approval?.state === "pending" && toolResult === undefined,
     denied: approval?.state === "denied",
     stopped: approval?.state === "stopped",
     skipped: approval?.state === "skipped",
@@ -238,6 +236,7 @@ type CallState =
 
 const callState = (
   approval: ReturnType<typeof approvalFor>,
+  awaiting: boolean,
   isError: boolean,
   finished: boolean,
   running: boolean
@@ -251,7 +250,7 @@ const callState = (
   if (approval.stopped) {
     return "stopped";
   }
-  if (approval.awaiting) {
+  if (awaiting) {
     return "awaiting";
   }
   if (isError) {
@@ -573,8 +572,14 @@ export const ToolCall = ({
   const isError = toolResult?.isError ?? false;
   const summary = toolSummary(call.name, call.arguments);
   const Icon = toolIcon(call.name);
-  const approval = approvalFor(toolResult, tool);
-  const step = callState(approval, isError, finished, state.running);
+  const pendingKey = awaitingKey(state, call.id);
+  const step = callState(
+    approvalFor(toolResult, tool),
+    pendingKey !== undefined,
+    isError,
+    finished,
+    state.running
+  );
   const label =
     call.name === "ask_user" && step === "awaiting"
       ? "Needs answers"
@@ -584,7 +589,7 @@ export const ToolCall = ({
 
   const [open, setOpen] = useToolCallOpen(
     isError || !finished,
-    approval.awaiting
+    pendingKey !== undefined
   );
 
   const elapsed = elapsedOf(step, toolResult);
@@ -624,7 +629,7 @@ export const ToolCall = ({
             tool={tool}
             toolResult={toolResult}
             diagnostics={diagnostics}
-            pendingKey={approval.awaiting ? approval.key : undefined}
+            pendingKey={pendingKey}
             step={step}
             extra={extra}
           />

@@ -136,16 +136,26 @@ function TraceCollapsibleContent({
       className="h-(--collapsible-panel-height) min-w-0 overflow-hidden transition-[height] duration-200 data-ending-style:h-0 data-starting-style:h-0"
       {...props}
     >
-      <div
+      <TraceNest
         data-slot="trace-collapsible-content-inner"
-        className={cn(
-          "text-muted-foreground mt-2 mb-1 ml-[calc(--spacing(2)-1px)] min-w-0 border-l pr-1 pl-4 leading-relaxed wrap-break-word",
-          className
-        )}
+        className={cn(className)}
       >
         {children}
-      </div>
+      </TraceNest>
     </CollapsibleContent>
+  );
+}
+
+function TraceNest({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="trace-nest"
+      className={cn(
+        "text-muted-foreground mt-2 mb-1 ml-[calc(--spacing(2)-1px)] min-w-0 border-l pr-1 pl-4 leading-relaxed wrap-break-word",
+        className
+      )}
+      {...props}
+    />
   );
 }
 
@@ -158,4 +168,5 @@ export {
   TraceCollapsible,
   TraceCollapsibleTrigger,
   TraceCollapsibleContent,
+  TraceNest,
 };
