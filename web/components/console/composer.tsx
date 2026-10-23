@@ -1,7 +1,13 @@
 "use client";
 
-import { ArrowUp, BookOpen, Paperclip } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import {
+  ArrowUp,
+  BookOpen,
+  FileIcon,
+  FolderIcon,
+  Paperclip,
+} from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ClipboardEvent,
   DragEvent,
@@ -13,15 +19,14 @@ import type {
 import { Button } from "@/components/ui/button";
 import { ACCEPTED_FILES, canSend } from "@/lib/attachments";
 import type { DraftAttachment } from "@/lib/attachments";
+import { complete, moveSelection } from "@/lib/autocomplete";
+import type { Suggestion } from "@/lib/autocomplete";
 import { useCapabilities } from "@/lib/queries";
-import {
-  completeSkill,
-  matchSkills,
-  moveSelection,
-  skillQuery,
-} from "@/lib/skill-autocomplete";
+import { skillSuggestions } from "@/lib/skill-autocomplete";
 import { shouldSubmit } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
+import { useWorkspace } from "@/lib/workspace-context";
+import { mentionQuery, pathSuggestions } from "@/lib/workspace-mentions";
 
 import { DraftChip } from "./attachment-chip";
 
@@ -58,6 +63,12 @@ const useFileDrop = (attachments: ComposerAttachments | undefined) => {
     },
   };
 };
+
+const ICONS = {
+  skill: BookOpen,
+  file: FileIcon,
+  directory: FolderIcon,
+} as const;
 
 const sendable = (
   prompt: string,
@@ -158,10 +169,12 @@ export const Composer = ({
 }) => {
   const { dragging, ...dropHandlers } = useFileDrop(attachments);
   const { data } = useCapabilities();
+  // Empty without a live Sandbox, and in the New conversation form, so `@` is just a character there.
+  const { index, refresh } = useWorkspace();
   const [selected, setSelected] = useState(0);
   // The prompt the list was dismissed for (Esc); it reopens once the prompt changes.
   const [dismissed, setDismissed] = useState<string>();
-  // The caret, so a `/skill:` mention can be completed anywhere in the prompt. Unknown until the user types or
+  // The caret, so a `/skill:` or `@` mention can be completed anywhere in the prompt. Unknown until the user types or
   // moves it, or stale after the prompt is set from outside: then the end of the prompt.
   const [cursor, setCursor] = useState<number>();
   const ownTextarea = useRef<HTMLTextAreaElement>(null);
@@ -175,21 +188,28 @@ export const Composer = ({
       caretAfterRender.current = null;
     }
   });
-  const token = skillQuery(
-    prompt,
-    cursor === undefined || cursor > prompt.length ? prompt.length : cursor
-  );
-  const options =
-    token === undefined || dismissed === prompt
-      ? []
-      : matchSkills(data?.skills ?? [], token.query);
+  const at =
+    cursor === undefined || cursor > prompt.length ? prompt.length : cursor;
+  const suggestions =
+    dismissed === prompt
+      ? undefined
+      : (skillSuggestions(prompt, at, data?.skills ?? []) ??
+        pathSuggestions(prompt, at, index));
+  const options: readonly Suggestion[] = suggestions?.options ?? [];
   const active = options[Math.min(selected, options.length - 1)];
 
-  const complete = (name: string) => {
-    if (token === undefined) {
+  const mentioning = mentionQuery(prompt, at) !== undefined;
+  useEffect(() => {
+    if (mentioning) {
+      refresh();
+    }
+  }, [mentioning, refresh]);
+
+  const pick = (option: Suggestion) => {
+    if (suggestions === undefined) {
       return;
     }
-    const next = completeSkill(prompt, token, name);
+    const next = complete(prompt, suggestions, option);
     onPrompt(next.prompt);
     setCursor(next.cursor);
     caretAfterRender.current = next.cursor;
@@ -198,12 +218,12 @@ export const Composer = ({
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (active !== undefined) {
-      const index = options.indexOf(active);
+      const position = options.indexOf(active);
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         setSelected(
           moveSelection(
-            index,
+            position,
             event.key === "ArrowDown" ? 1 : -1,
             options.length
           )
@@ -212,7 +232,7 @@ export const Composer = ({
       }
       if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
         event.preventDefault();
-        complete(active.name);
+        pick(active);
         return;
       }
       if (event.key === "Escape") {
@@ -233,45 +253,50 @@ export const Composer = ({
     <div className="relative flex flex-col gap-2">
       {active === undefined ? null : (
         <div className="bg-popover text-popover-foreground absolute inset-x-0 bottom-full z-10 mb-2 flex max-h-64 flex-col overflow-y-auto rounded-xl border p-1 shadow-md">
-          {options.map((option) => (
-            <button
-              key={option.name}
-              type="button"
-              // Arrow keys in the textarea move through the list; it is not a tab stop of its own.
-              tabIndex={-1}
-              onMouseDown={(event) => {
-                // Keeps focus in the textarea.
-                event.preventDefault();
-                complete(option.name);
-              }}
-              onMouseEnter={() => setSelected(options.indexOf(option))}
-              className={cn(
-                "flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left",
-                option === active && "bg-accent text-accent-foreground"
-              )}
-            >
-              <span className="flex items-center gap-1.5 font-mono text-sm">
-                <BookOpen
-                  aria-hidden
-                  className="text-muted-foreground size-3.5"
-                  strokeWidth={1.5}
-                />
-                /skill:{option.name}
-              </span>
-              <span
-                className="text-muted-foreground line-clamp-2 text-xs leading-normal"
-                title={option.description}
+          {options.map((option) => {
+            const Icon = ICONS[option.icon];
+            return (
+              <button
+                key={option.key}
+                type="button"
+                // Arrow keys in the textarea move through the list; it is not a tab stop of its own.
+                tabIndex={-1}
+                onMouseDown={(event) => {
+                  // Keeps focus in the textarea.
+                  event.preventDefault();
+                  pick(option);
+                }}
+                onMouseEnter={() => setSelected(options.indexOf(option))}
+                className={cn(
+                  "flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left",
+                  option === active && "bg-accent text-accent-foreground"
+                )}
               >
-                {option.description}
-              </span>
-            </button>
-          ))}
+                <span className="flex items-center gap-1.5 font-mono text-sm">
+                  <Icon
+                    aria-hidden
+                    className="text-muted-foreground size-3.5 shrink-0"
+                    strokeWidth={1.5}
+                  />
+                  <span className="truncate">{option.label}</span>
+                </span>
+                {option.detail === undefined ? null : (
+                  <span
+                    className="text-muted-foreground line-clamp-2 text-xs leading-normal"
+                    title={option.detail}
+                  >
+                    {option.detail}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
       <span aria-live="polite" className="sr-only">
         {active === undefined
           ? ""
-          : `/skill:${active.name}, ${options.indexOf(active) + 1} of ${options.length}. Enter or Tab to complete, Escape to close.`}
+          : `${active.label}, ${options.indexOf(active) + 1} of ${options.length}. Enter or Tab to complete, Escape to close.`}
       </span>
       <div
         {...dropHandlers}

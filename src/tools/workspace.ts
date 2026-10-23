@@ -41,6 +41,10 @@ const levelSection = (level: SandboxChoice): string => {
   }
 };
 
+// The console's composer writes `@path` mentions (web/lib/workspace-mentions.ts); the text reaches the model as typed.
+const MENTIONS =
+  'In the person\'s messages, `@path` names a path under /workspace (`@"path"` when it contains spaces); only the path is sent, so read the file yourself when you need it.';
+
 /** What the agent is told about its machine, by its Workspace's Level and Software. */
 export const workspaceSection = (
   level: SandboxChoice,
@@ -48,6 +52,7 @@ export const workspaceSection = (
 ): string =>
   [
     levelSection(level),
+    ...(level === "none" ? [] : [MENTIONS]),
     ...(software.length === 0
       ? []
       : [

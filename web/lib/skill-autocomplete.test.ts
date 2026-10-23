@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { complete } from "./autocomplete";
 import {
-  completeSkill,
   matchSkills,
-  moveSelection,
   skillQuery,
+  skillSuggestions,
 } from "./skill-autocomplete";
 
 const skills = [
@@ -16,12 +16,13 @@ const skills = [
 const query = (prompt: string, cursor?: number) =>
   skillQuery(prompt, cursor)?.query;
 
-const tokenAt = (prompt: string, cursor?: number) => {
-  const token = skillQuery(prompt, cursor);
-  if (token === undefined) {
-    throw new Error(`no token in ${prompt}`);
+/** The prompt after picking the first suggestion at `cursor`. */
+const pickFirst = (prompt: string, cursor = prompt.length) => {
+  const suggestions = skillSuggestions(prompt, cursor, skills);
+  if (suggestions === undefined) {
+    throw new Error(`no suggestions in ${prompt}`);
   }
-  return token;
+  return complete(prompt, suggestions, suggestions.options[0]);
 };
 
 describe(skillQuery, () => {
@@ -85,28 +86,22 @@ describe(matchSkills, () => {
   });
 });
 
-describe(completeSkill, () => {
+describe(skillSuggestions, () => {
   it("completes to the command with a trailing space", () => {
-    const prompt = "/rep";
-    expect(completeSkill(prompt, tokenAt(prompt), "report")).toStrictEqual({
+    expect(pickFirst("/rep")).toStrictEqual({
       prompt: "/skill:report ",
       cursor: 14,
     });
   });
 
   it("replaces a mention in the middle, keeping the rest", () => {
-    const prompt = "try /sk then go";
-    expect(completeSkill(prompt, tokenAt(prompt, 7), "convert")).toStrictEqual({
+    expect(pickFirst("try /sk then go", 7)).toStrictEqual({
       prompt: "try /skill:convert then go",
       cursor: 19,
     });
   });
-});
 
-describe(moveSelection, () => {
-  it("wraps around", () => {
-    expect(moveSelection(0, -1, 3)).toBe(2);
-    expect(moveSelection(2, 1, 3)).toBe(0);
-    expect(moveSelection(0, 1, 0)).toBe(0);
+  it("offers nothing when no skill matches", () => {
+    expect(skillSuggestions("/zzz", 4, skills)).toBeUndefined();
   });
 });

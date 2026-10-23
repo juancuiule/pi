@@ -11,11 +11,11 @@ import type { KeyboardEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { moveSelection } from "@/lib/autocomplete";
 import { paletteSections } from "@/lib/navigation";
 import type { PaletteItem, PaletteSection } from "@/lib/navigation";
 import { useSearch } from "@/lib/queries";
 import { isSearchShortcut, useDebouncedValue } from "@/lib/search";
-import { moveSelection } from "@/lib/skill-autocomplete";
 import { cn } from "@/lib/utils";
 
 const LISTBOX_ID = "search-palette-results";
