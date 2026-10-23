@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
 import { fauxAgents, offered, offeredIn } from "../testing/faux.ts";
+import { alice } from "../testing/users.ts";
 
 const MENTIONS = "`@path` names a path under /workspace";
 
@@ -15,6 +16,7 @@ describe("the workspace section", () => {
         Effect.gen(function* () {
           const agents = yield* Agents;
           const id = yield* agents.create({
+            owner: alice.id,
             prompt: "",
             title: "",
             level: "none",

@@ -16,6 +16,17 @@ const row = (
 ) => ({ entryId, role, text, createdAt, conversationId });
 
 describe(sqliteIndex, () => {
+  it("finds rows only among the conversations it is given", () => {
+    const index = sqliteIndex(":memory:");
+    index.putPage(1, 4, [row(4, "the numbat eats termites")]);
+    index.putPage(2, 4, [row(4, "a numbat of my own", "user", 4, 2)]);
+    expect(
+      index.query('"numbat"*', 10, [2]).map((hit) => hit.conversationId)
+    ).toStrictEqual([2]);
+    expect(index.query('"numbat"*', 10, [])).toStrictEqual([]);
+    index.close();
+  });
+
   it("reports a cursor of 0 before any page", () => {
     const index = sqliteIndex(":memory:");
     expect(index.cursorOf(1)).toBe(0);
@@ -28,7 +39,7 @@ describe(sqliteIndex, () => {
       row(4, "the echidna lays eggs", "user"),
       row(9, "monotremes are odd", "assistant"),
     ]);
-    const hits = index.query('"echidna"*', 10);
+    const hits = index.query('"echidna"*', 10, [1, 2]);
     expect(hits).toHaveLength(1);
     expect(hits[0]).toMatchObject({
       conversationId: 1,
@@ -48,7 +59,7 @@ describe(sqliteIndex, () => {
   it("indexes the title under a row without an entry", () => {
     const index = sqliteIndex(":memory:");
     index.putTitle(2, "quokka notes", 50);
-    const hits = index.query('"quokka"*', 10);
+    const hits = index.query('"quokka"*', 10, [1, 2]);
     expect(hits).toHaveLength(1);
     expect(hits[0]).toMatchObject({
       conversationId: 2,
@@ -73,7 +84,7 @@ describe(sqliteIndex, () => {
     // A fork's scan returns ancestor entries; their rows belong to the parent.
     index.putPage(2, 10, [row(5, "inherited words", "user", 5, 9)]);
     expect(index.cursorOf(2)).toBe(10);
-    const hits = index.query('"inherited"*', 10);
+    const hits = index.query('"inherited"*', 10, [9]);
     expect(hits).toHaveLength(1);
     expect(hits[0]?.conversationId).toBe(9);
     index.close();
@@ -83,7 +94,7 @@ describe(sqliteIndex, () => {
     const index = sqliteIndex(":memory:");
     index.putPage(1, 5, [row(4, "same words")]);
     index.putPage(1, 5, [row(4, "same words")]);
-    expect(index.query('"words"*', 10)).toHaveLength(1);
+    expect(index.query('"words"*', 10, [1, 2])).toHaveLength(1);
     expect(index.cursorOf(1)).toBe(5);
     index.close();
   });
@@ -91,8 +102,10 @@ describe(sqliteIndex, () => {
   it("requires every query term", () => {
     const index = sqliteIndex(":memory:");
     index.putPage(1, 2, [row(1, "only alpha appears")]);
-    expect(index.query(matchQuery("alpha beta") ?? "", 10)).toHaveLength(0);
-    expect(index.query(matchQuery("alpha") ?? "", 10)).toHaveLength(1);
+    expect(
+      index.query(matchQuery("alpha beta") ?? "", 10, [1, 2])
+    ).toHaveLength(0);
+    expect(index.query(matchQuery("alpha") ?? "", 10, [1, 2])).toHaveLength(1);
     index.close();
   });
 
@@ -105,7 +118,7 @@ describe(sqliteIndex, () => {
       first.close();
       const second = sqliteIndex(file);
       expect(second.cursorOf(7)).toBe(42);
-      expect(second.query('"persistent"*', 10)).toHaveLength(1);
+      expect(second.query('"persistent"*', 10, [1, 2])).toHaveLength(1);
       second.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

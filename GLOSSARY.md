@@ -28,6 +28,14 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Search**: Full-text search over Conversation transcripts — titles, prompts and answers, never tool calls — kept in a rebuildable index beside the durable store, updated when a Run ends. Person-facing only (`/api/search` and the console's palette); the agent has no search tool.
 
+## Accounts
+
+**User**: A person with an account: a name and a password. Everyone signs in; the first account is created from the console's setup screen, later ones with `pnpm user add`. _Avoid_: member, login
+
+**Session**: A User signed in on one browser, kept by a cookie for 30 days or until Sign out. _Avoid_: token, login
+
+**Owner**: The User a Conversation belongs to, and with it its Workspace, Artifacts, Attachments and Search results; a subagent's is its parent's. Other Users cannot see or reach any of it. Trusted domains are per User too; org skills are shared. _Avoid_: author, creator
+
 ## Workspaces
 
 **Workspace**: The durable machine side of a Conversation: its Level, its Software and its files. _Avoid_: volume, environment

@@ -6,12 +6,17 @@
 // a reconnect lands back in it with scrollback replayed. The shell's `open` command, run while this socket is
 // attached, sends `{"type":"open","path":"/workspace/...","kind":"file"|"directory"}`; a replay never does.
 // The upgrade request is an ordinary request first, so the `loopbackOnly` middleware merged into the same
-// router answers 403 before this runs.
-import { Deferred, Effect, Exit, Stream } from "effect";
+// router answers 403 before this runs. It is outside the HttpApi, so it runs `Authentication`'s checks itself:
+// a session cookie (401 without one) and a Conversation of the caller's own (404 otherwise).
+import { Deferred, Effect, Exit, Option, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Socket } from "effect/socket";
 
+import { SESSION_COOKIE } from "../auth/user.ts";
+import { authorize } from "./auth.ts";
 import { Conversations } from "./conversations.ts";
+
+const SHELL_ROUTE = "/api/conversations/:id/shell";
 
 /** The terminal size the console opens with, from `?cols=&rows=`; anything unusable falls back to 80x24. */
 const sizeOf = (request: HttpServerRequest.HttpServerRequest) => {
@@ -53,6 +58,25 @@ const session = Effect.gen(function* () {
   const id = Number(params.id);
   if (!Number.isInteger(id) || id < 0) {
     return HttpServerResponse.text("Unknown conversation", { status: 404 });
+  }
+  const refusal = yield* authorize(
+    request.cookies[SESSION_COOKIE] ?? "",
+    SHELL_ROUTE
+  ).pipe(
+    Effect.as(Option.none<HttpServerResponse.HttpServerResponse>()),
+    Effect.catchTags({
+      Unauthorized: () =>
+        Effect.succeedSome(
+          HttpServerResponse.text("Sign in first", { status: 401 })
+        ),
+      ConversationNotFound: () =>
+        Effect.succeedSome(
+          HttpServerResponse.text("Unknown conversation", { status: 404 })
+        ),
+    })
+  );
+  if (Option.isSome(refusal)) {
+    return refusal.value;
   }
   // A paused or archived Conversation has no Seat: nothing runs to shell into.
   const seat = yield* conversations.seat(id);
@@ -175,8 +199,4 @@ const session = Effect.gen(function* () {
 });
 
 /** The shell's WebSocket route, merged into the router `apiLayer` serves. */
-export const shellRoute = HttpRouter.add(
-  "GET",
-  "/api/conversations/:id/shell",
-  session
-);
+export const shellRoute = HttpRouter.add("GET", SHELL_ROUTE, session);

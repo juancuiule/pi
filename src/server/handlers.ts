@@ -25,10 +25,12 @@ import { Artifacts } from "../artifacts/artifacts.ts";
 import type { ArtifactView } from "../artifacts/artifacts.ts";
 import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments, infoOf } from "../attachments/attachments.ts";
+import type { User, UserId } from "../auth/user.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
 import type { ConversationNotFound } from "../errors.ts";
 import {
   ArtifactNotFound,
+  CapacityExhausted,
   ConversationArchived,
   EmptyMessage,
   SandboxUnavailable,
@@ -37,7 +39,8 @@ import {
 } from "../errors.ts";
 import { Search } from "../search/search.ts";
 import { Skills } from "../skills/skills.ts";
-import { Api } from "./api.ts";
+import { Api, CurrentUser } from "./api.ts";
+import { AuthHandlers, AuthenticationLive, requireOwner } from "./auth.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";
 
@@ -74,6 +77,45 @@ const message = (payload: {
     : Effect.succeed({ prompt, attachments });
 };
 
+/** Run `f` with the request's signed-in User. */
+const withUser = <A, E, R>(f: (user: User) => Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    return yield* f(yield* CurrentUser);
+  });
+
+/** Of `ids`, the ones `owner` owns, in order. */
+const ownedOf = (ids: readonly number[], owner: UserId) =>
+  Effect.gen(function* () {
+    const agents = yield* Agents;
+    const owned: number[] = [];
+    for (const id of ids) {
+      if ((yield* agents.ownerOf(id as ConversationId)) === owner) {
+        owned.push(id);
+      }
+    }
+    return owned;
+  }).pipe(Effect.catchTag("AgentError", Effect.die));
+
+/**
+ * Capacity is shared by every User, but a CapacityExhausted names only the caller's own holders: other people's
+ * Conversations are not theirs to see or pause. Empty means the limit is held by others alone.
+ */
+const ownHolders = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.catchIf(
+    effect,
+    (error): error is E & CapacityExhausted =>
+      error instanceof CapacityExhausted,
+    (full) =>
+      Effect.gen(function* () {
+        const user = yield* CurrentUser;
+        return yield* new CapacityExhausted({
+          resource: full.resource,
+          limit: full.limit,
+          holders: yield* ownedOf(full.holders, user.id),
+        });
+      })
+  );
+
 const ConversationsHandlers = HttpApiBuilder.group(
   Api,
   "conversations",
@@ -81,13 +123,23 @@ const ConversationsHandlers = HttpApiBuilder.group(
     const conversations = yield* Conversations;
     return handlers
       .handle("list", () =>
-        conversations.list.pipe(Effect.catchTag("AgentError", Effect.die))
+        withUser((user) => conversations.list(user.id)).pipe(
+          Effect.catchTag("AgentError", Effect.die)
+        )
       )
       .handle("create", ({ payload }) =>
         message(payload).pipe(
           Effect.flatMap(({ prompt, attachments }) =>
-            conversations.create({ ...payload, prompt, attachments })
+            withUser((user) =>
+              conversations.create({
+                ...payload,
+                prompt,
+                attachments,
+                owner: user.id,
+              })
+            )
           ),
+          ownHolders,
           Effect.map(({ submission, ...summary }) => ({
             ...summary,
             submission: ackOf(submission),
@@ -111,6 +163,7 @@ const ConversationsHandlers = HttpApiBuilder.group(
               payload.requestId
             )
           ),
+          ownHolders,
           Effect.map(ackOf),
           Effect.catchTags({
             AgentError: Effect.die,
@@ -126,6 +179,7 @@ const ConversationsHandlers = HttpApiBuilder.group(
       )
       .handle("resume", ({ params }) =>
         conversations.resume(params.id).pipe(
+          ownHolders,
           Effect.catchTags({
             AgentError: Effect.die,
             SandboxError: Effect.die,
@@ -144,6 +198,7 @@ const ConversationsHandlers = HttpApiBuilder.group(
       )
       .handle("upgrade", ({ params, payload }) =>
         conversations.upgrade(params.id, payload).pipe(
+          ownHolders,
           Effect.catchTags({
             AgentError: Effect.die,
             SandboxError: Effect.die,
@@ -247,6 +302,8 @@ const AttachmentsHandlers = HttpApiBuilder.group(
       .handle("upload", ({ payload }) =>
         Effect.gen(function* () {
           if (payload.conversation !== undefined) {
+            // A multipart field, which `Authentication` cannot see in the URL: checked here instead.
+            yield* requireOwner(payload.conversation, (yield* CurrentUser).id);
             const stored = yield* agents.get(
               payload.conversation as ConversationId
             );
@@ -288,7 +345,16 @@ const AttachmentsHandlers = HttpApiBuilder.group(
             prepared,
           }))
         )
-      )
+      );
+  })
+);
+
+const AttachmentImagesHandlers = HttpApiBuilder.group(
+  Api,
+  "attachmentImages",
+  Effect.fnUntraced(function* (handlers) {
+    const attachments = yield* Attachments;
+    return handlers
       .handle("page", ({ params, query }) =>
         attachments.pageImage(params.id, query.conversation, params.page).pipe(
           Effect.map((bytes) =>
@@ -359,10 +425,21 @@ const ArtifactsHandlers = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const artifacts = yield* Artifacts;
     const domains = yield* TrustedDomains;
+    const agents = yield* Agents;
     return handlers
       .handle("list", ({ query }) =>
         (query.conversation === undefined
-          ? artifacts.listAll()
+          ? Effect.gen(function* () {
+              const user = yield* CurrentUser;
+              const stored = yield* agents.list.pipe(
+                Effect.catchTag("AgentError", Effect.die)
+              );
+              return yield* artifacts.listIn(
+                stored.flatMap((each) =>
+                  each.meta.owner === user.id ? [Number(each.id)] : []
+                )
+              );
+            })
           : artifacts.list(query.conversation)
         ).pipe(Effect.map((views) => views.map(artifactInfoOf)))
       )
@@ -375,15 +452,18 @@ const ArtifactsHandlers = HttpApiBuilder.group(
         Effect.flatMap(
           artifacts.html(query.conversation, params.id, query.v),
           ({ html }) =>
-            Effect.map(domains.list(), (trusted) =>
-              HttpServerResponse.text(html, {
-                contentType: "text/html",
-                headers: {
-                  "content-security-policy": artifactCsp(trusted),
-                  "x-content-type-options": "nosniff",
-                  "cache-control": "no-store",
-                },
-              })
+            // `Authentication` checked the conversation is the caller's, so their list is its owner's.
+            Effect.map(
+              withUser((user) => domains.list(user.id)),
+              (trusted) =>
+                HttpServerResponse.text(html, {
+                  contentType: "text/html",
+                  headers: {
+                    "content-security-policy": artifactCsp(trusted),
+                    "x-content-type-options": "nosniff",
+                    "cache-control": "no-store",
+                  },
+                })
             )
         )
       )
@@ -693,12 +773,18 @@ const TrustedDomainsHandlers = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const domains = yield* TrustedDomains;
     return handlers
-      .handle("list", () => domains.list())
+      .handle("list", () => withUser((user) => domains.list(user.id)))
       .handle("add", ({ payload }) =>
-        Effect.map(domains.add(payload.domain), (domain) => ({ domain }))
+        withUser((user) =>
+          Effect.map(domains.add(user.id, payload.domain), (domain) => ({
+            domain,
+          }))
+        )
       )
       .handle("remove", ({ params }) =>
-        Effect.asVoid(domains.remove(params.domain))
+        withUser((user) =>
+          Effect.asVoid(domains.remove(user.id, params.domain))
+        )
       );
   })
 );
@@ -718,17 +804,34 @@ const infoHandlers = (options: {
       } = yield* Agents;
       const { capacity } = yield* Conversations;
       const model = `${provider}/${modelId}`;
-      return handlers
-        .handle("get", () =>
-          Effect.succeed({
-            model,
-            apiUrl: options.apiUrl,
-            tracing: options.tracing,
-            titleGeneration,
-          })
-        )
-        .handle("capabilities", () => capabilities)
-        .handle("capacity", () => capacity);
+      return (
+        handlers
+          .handle("get", () =>
+            Effect.succeed({
+              model,
+              apiUrl: options.apiUrl,
+              tracing: options.tracing,
+              titleGeneration,
+            })
+          )
+          .handle("capabilities", () => capabilities)
+          // Limits are shared; holders and waiters are the caller's own only, like a CapacityExhausted's.
+          .handle("capacity", () =>
+            Effect.gen(function* () {
+              const user = yield* CurrentUser;
+              const own = [];
+              for (const each of yield* capacity) {
+                own.push({
+                  ...each,
+                  inUse: each.holders.length,
+                  holders: yield* ownedOf(each.holders, user.id),
+                  waiting: yield* ownedOf(each.waiting, user.id),
+                });
+              }
+              return own;
+            })
+          )
+      );
     })
   );
 
@@ -736,7 +839,7 @@ const SearchHandlers = HttpApiBuilder.group(Api, "search", (handlers) =>
   Effect.gen(function* () {
     const search = yield* Search;
     return handlers.handle("query", ({ query }) =>
-      search.query(query.q).pipe(
+      withUser((user) => search.query(query.q, user.id)).pipe(
         Effect.catchTags({
           AgentError: Effect.die,
           SearchError: Effect.die,
@@ -753,19 +856,24 @@ const SearchHandlers = HttpApiBuilder.group(Api, "search", (handlers) =>
 export const apiLayer = (options: {
   readonly apiUrl: string;
   readonly tracing: boolean;
+  /** The ports a browser page may call from: the console's and this server's. Unset, any loopback port. */
+  readonly pagePorts?: readonly number[] | undefined;
 }) =>
   HttpApiBuilder.layer(Api).pipe(
     Layer.provide(
       Layer.mergeAll(
         ConversationsHandlers,
         AttachmentsHandlers,
+        AttachmentImagesHandlers,
         ArtifactsHandlers,
         TrustedDomainsHandlers,
         SkillsHandlers,
         FilesHandlers,
         SearchHandlers,
-        infoHandlers(options)
+        infoHandlers(options),
+        AuthHandlers
       )
     ),
-    Layer.merge(loopbackOnly)
+    Layer.provide(AuthenticationLive),
+    Layer.merge(loopbackOnly({ pagePorts: options.pagePorts }))
   );

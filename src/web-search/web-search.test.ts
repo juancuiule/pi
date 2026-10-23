@@ -15,6 +15,7 @@ import {
   offeredIn,
   openSeat,
 } from "../testing/faux.ts";
+import { alice } from "../testing/users.ts";
 import type { RawResponse } from "./format.ts";
 import type { WebSearchError } from "./searxng.ts";
 import { WebSearch } from "./web-search.ts";
@@ -374,6 +375,7 @@ describe("the web extension", () => {
         Effect.gen(function* () {
           const agents = yield* Agents;
           const id = yield* agents.create({
+            owner: alice.id,
             prompt: "",
             title: "",
             level: "none",

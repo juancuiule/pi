@@ -14,6 +14,7 @@ import type {
   SandboxChoice,
   SettingsChange,
   SoftwareId,
+  User,
 } from "effect-pi/api";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
@@ -22,6 +23,8 @@ import { runApi } from "./api";
 import type { CapacityGuard } from "./capacity-context";
 import { useCapacityGuard } from "./capacity-context";
 import { seatlessOf } from "./conversation-status";
+import { leaveConsole } from "./session";
+import type { SignInMode } from "./sign-in";
 import { useConversationStore } from "./store";
 import { linkIndexOf } from "./workspace-links";
 import type { WorkspaceIndex } from "./workspace-links";
@@ -83,6 +86,49 @@ export const useSearch = (q: string, enabled: boolean) =>
     retry: false,
     // The previous list stays while the next keystroke's query loads.
     placeholderData: keepPreviousData,
+  });
+
+export const AUTH = ["auth"] as const;
+
+/** Who the session cookie signs in, and whether the first account is still to be created. */
+export interface AuthState {
+  readonly user?: User;
+  readonly setup: boolean;
+}
+
+export const useAuthState = () =>
+  useQuery({
+    queryKey: AUTH,
+    queryFn: (): Promise<AuthState> => runApi((c) => c.auth.state()),
+  });
+
+/** Sign in, or create the first account (which signs it in); the session cookie comes back with the answer. */
+export const useSignIn = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      mode,
+      name,
+      password,
+    }: {
+      mode: SignInMode;
+      name: string;
+      password: string;
+    }) =>
+      runApi((c) =>
+        mode === "setup"
+          ? c.auth.setup({ payload: { name, password } })
+          : c.auth.login({ payload: { name, password } })
+      ),
+    onSuccess: (user) =>
+      queryClient.setQueryData<AuthState>(AUTH, { user, setup: false }),
+  });
+};
+
+export const useSignOut = () =>
+  useMutation({
+    mutationFn: () => runApi((c) => c.auth.logout()),
+    onSuccess: () => leaveConsole("/login"),
   });
 
 export const useInfo = () =>

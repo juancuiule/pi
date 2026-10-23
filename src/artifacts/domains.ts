@@ -1,10 +1,11 @@
-// The hosts an artifact page may load images from, managed under Settings → Trusted domains and kept in a
-// `trusted_domains` table of the EFFECT_PI_DB file like `artifacts`. The render endpoint puts them in the page's
+// The hosts an artifact page may load images from, one list per User, managed under Settings → Trusted domains and
+// kept in a `trusted_domains` table of the EFFECT_PI_DB file like `artifacts`. The render endpoint puts them in the page's
 // img-src CSP; artifact_create/artifact_update refuse a page whose images come from anywhere else (refs.ts).
 import { DatabaseSync } from "node:sqlite";
 
 import { Clock, Context, Effect, Layer } from "effect";
 
+import type { UserId } from "../auth/user.ts";
 import { InvalidDomain } from "../errors.ts";
 
 const HOST =
@@ -77,62 +78,123 @@ export const isTrusted = (host: string, domains: readonly string[]): boolean =>
         host !== domain.slice(2))
   );
 
-/** The stored form of the trusted list. */
+/** The stored form of each User's trusted list. */
 interface DomainRecords {
-  /** Every entry, in the order added. */
-  all(): readonly string[];
+  /** Every entry of `owner`'s list, in the order added. */
+  all(owner: UserId): readonly string[];
   /** Record an entry; an existing one is a no-op. */
-  add(domain: string, at: number): void;
+  add(owner: UserId, domain: string, at: number): void;
   /** Drop an entry; false when it was not there. */
-  remove(domain: string): boolean;
+  remove(owner: UserId, domain: string): boolean;
+  /** Give the entries that predate accounts to `owner`, merged into its list. */
+  adopt(owner: UserId): void;
 }
 
-/** The `trusted_domains` table in a SQLite file (`:memory:` for tests), created if missing. */
+/**
+ * The `trusted_domains` table in a SQLite file (`:memory:` for tests), created if missing. A table from before
+ * accounts (one list, no `owner`) is rebuilt with its rows unowned, for the first account to adopt.
+ */
 const sqliteDomains = (file: string): DomainRecords & { close(): void } => {
   const db = new DatabaseSync(file);
-  db.exec(`
-    PRAGMA busy_timeout = 5000;
-    CREATE TABLE IF NOT EXISTS trusted_domains (
-      domain TEXT PRIMARY KEY,
-      created_at INTEGER NOT NULL
-    );
-  `);
+  db.exec("PRAGMA busy_timeout = 5000;");
+  const columns = db
+    .prepare("SELECT name FROM pragma_table_info('trusted_domains')")
+    .all() as unknown as { name: string }[];
+  const legacy =
+    columns.length > 0 && !columns.some((column) => column.name === "owner");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (legacy) {
+      db.exec("ALTER TABLE trusted_domains RENAME TO trusted_domains_legacy");
+    }
+    // `owner` is NULL only on rows that predate accounts; `adopt` gives them away.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS trusted_domains (
+        owner TEXT,
+        domain TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (owner, domain)
+      );
+    `);
+    if (legacy) {
+      db.exec(`
+        INSERT INTO trusted_domains (owner, domain, created_at)
+          SELECT NULL, domain, created_at FROM trusted_domains_legacy;
+        DROP TABLE trusted_domains_legacy;
+      `);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
   return {
-    all: () =>
+    all: (owner) =>
       (
         db
-          .prepare("SELECT domain FROM trusted_domains ORDER BY created_at")
-          .all() as unknown as { domain: string }[]
+          .prepare(
+            "SELECT domain FROM trusted_domains WHERE owner = ? ORDER BY created_at, rowid"
+          )
+          .all(owner) as unknown as { domain: string }[]
       ).map((row) => row.domain),
-    add: (domain, at) => {
+    add: (owner, domain, at) => {
       db.prepare(
-        "INSERT OR IGNORE INTO trusted_domains (domain, created_at) VALUES (?, ?)"
-      ).run(domain, at);
+        "INSERT OR IGNORE INTO trusted_domains (owner, domain, created_at) VALUES (?, ?, ?)"
+      ).run(owner, domain, at);
     },
-    remove: (domain) =>
-      db.prepare("DELETE FROM trusted_domains WHERE domain = ?").run(domain)
-        .changes > 0,
+    remove: (owner, domain) =>
+      db
+        .prepare("DELETE FROM trusted_domains WHERE owner = ? AND domain = ?")
+        .run(owner, domain).changes > 0,
+    adopt: (owner) => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.prepare(
+          `INSERT OR IGNORE INTO trusted_domains (owner, domain, created_at)
+             SELECT ?, domain, created_at FROM trusted_domains WHERE owner IS NULL`
+        ).run(owner);
+        db.exec("DELETE FROM trusted_domains WHERE owner IS NULL");
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
     close: () => db.close(),
   };
 };
 
-/** An in-memory list, for tests and preset lists. */
+/** In memory, for tests: every User's list starts as `preset`. */
 const memoryDomains = (preset: readonly string[]): DomainRecords => {
-  const all = [...preset];
+  const lists = new Map<UserId, string[]>();
+  const listOf = (owner: UserId) => {
+    let list = lists.get(owner);
+    if (list === undefined) {
+      list = [...preset];
+      lists.set(owner, list);
+    }
+    return list;
+  };
   return {
-    all: () => [...all],
-    add: (domain) => {
-      if (!all.includes(domain)) {
-        all.push(domain);
+    all: (owner) => [...listOf(owner)],
+    add: (owner, domain) => {
+      const list = listOf(owner);
+      if (!list.includes(domain)) {
+        list.push(domain);
       }
     },
-    remove: (domain) => {
-      const at = all.indexOf(domain);
+    remove: (owner, domain) => {
+      const list = listOf(owner);
+      const at = list.indexOf(domain);
       if (at === -1) {
         return false;
       }
-      all.splice(at, 1);
+      list.splice(at, 1);
       return true;
+    },
+    // Nothing in memory predates accounts; the owner's list starts from the preset as usual.
+    adopt: (owner) => {
+      listOf(owner);
     },
   };
 };
@@ -140,15 +202,18 @@ const memoryDomains = (preset: readonly string[]): DomainRecords => {
 export class TrustedDomains extends Context.Service<
   TrustedDomains,
   {
-    /** Every trusted domain, in the order added. */
-    list(): Effect.Effect<readonly string[]>;
+    /** Every domain `owner` trusts, in the order added. */
+    list(owner: UserId): Effect.Effect<readonly string[]>;
     /**
-     * Trust a domain: a hostname (`cdn.example.com`), a wildcard (`*.example.com`), each optionally with a port, or
-     * an http(s) URL reduced to its host. Returns the stored (normalized) entry; a repeat adds nothing.
+     * Trust a domain for `owner`'s artifacts: a hostname (`cdn.example.com`), a wildcard (`*.example.com`), each
+     * optionally with a port, or an http(s) URL reduced to its host. Returns the stored (normalized) entry; a repeat
+     * adds nothing.
      */
-    add(input: string): Effect.Effect<string, InvalidDomain>;
+    add(owner: UserId, input: string): Effect.Effect<string, InvalidDomain>;
     /** Stop trusting a domain; false when it was not trusted. */
-    remove(domain: string): Effect.Effect<boolean>;
+    remove(owner: UserId, domain: string): Effect.Effect<boolean>;
+    /** Give the entries that predate accounts to `owner`; idempotent. */
+    adopt(owner: UserId): Effect.Effect<void>;
   }
 >()("effect-pi/TrustedDomains") {
   static readonly layer = (options: { readonly records: DomainRecords }) =>
@@ -157,8 +222,8 @@ export class TrustedDomains extends Context.Service<
       Effect.sync(() => {
         const { records } = options;
         return TrustedDomains.of({
-          list: () => Effect.sync(() => records.all()),
-          add: (input) => {
+          list: (owner) => Effect.sync(() => records.all(owner)),
+          add: (owner, input) => {
             const domain = normalizeDomain(input);
             return domain === undefined
               ? Effect.fail(
@@ -170,12 +235,14 @@ export class TrustedDomains extends Context.Service<
                 )
               : Clock.currentTimeMillis.pipe(
                   Effect.map((at) => {
-                    records.add(domain, at);
+                    records.add(owner, domain, at);
                     return domain;
                   })
                 );
           },
-          remove: (domain) => Effect.sync(() => records.remove(domain)),
+          remove: (owner, domain) =>
+            Effect.sync(() => records.remove(owner, domain)),
+          adopt: (owner) => Effect.sync(() => records.adopt(owner)),
         });
       })
     );
@@ -193,7 +260,7 @@ export class TrustedDomains extends Context.Service<
   static readonly temporary = () =>
     TrustedDomains.local({ database: ":memory:" });
 
-  /** A preset list in memory, writable; for tests. */
+  /** A preset list in memory for every User, writable; for tests. */
   static readonly memory = (domains: readonly string[]) =>
     TrustedDomains.layer({ records: memoryDomains(domains) });
 }

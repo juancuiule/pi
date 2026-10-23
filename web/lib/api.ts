@@ -5,6 +5,8 @@ import { Api } from "effect-pi/api";
 import { FetchHttpClient } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 
+import { sessionLost } from "./session";
+
 const makeClient = Effect.suspend(() =>
   HttpApiClient.make(Api, { baseUrl: window.location.origin })
 );
@@ -52,6 +54,14 @@ const uploadError = (error: object & { _tag: unknown }): string | undefined => {
 
 /** A message for a CapacityExhausted failure. */
 const capacityError = (error: object): string => {
+  // Holders are only the caller's own Conversations: none means other people hold the whole limit.
+  if (
+    "holders" in error &&
+    Array.isArray(error.holders) &&
+    error.holders.length === 0
+  ) {
+    return "The server is busy with other people's conversations. Try again later.";
+  }
   const limit = "limit" in error ? String(error.limit) : "a few";
   const resource =
     "resource" in error && error.resource !== "seat"
@@ -90,6 +100,19 @@ const plainError: Record<string, string> = {
   EntryNotFound: "That message can't be rated.",
   SubmissionNotFound: "That message is no longer queued.",
   TraceUnavailable: "Scoring isn't available for that message.",
+  Unauthorized: "You're signed out. Sign in again.",
+  InvalidCredentials: "Wrong name or password.",
+  SetupClosed: "An account exists already. Sign in instead.",
+};
+
+/** A message for a TooManyAttempts failure, with the wait rounded up to whole seconds. */
+const attemptsError = (error: object): string => {
+  const ms =
+    "retryAfterMs" in error && typeof error.retryAfterMs === "number"
+      ? error.retryAfterMs
+      : 0;
+  const seconds = Math.max(1, Math.ceil(ms / 1000));
+  return `Too many failed attempts. Try again in ${seconds} ${seconds === 1 ? "second" : "seconds"}.`;
 };
 
 /** A message for a failure from the API, for toasts and inline errors. */
@@ -108,6 +131,10 @@ export const apiError = (error: unknown): string => {
       case "TitleGenerationFailed": {
         return titleError(error);
       }
+      case "TooManyAttempts": {
+        return attemptsError(error);
+      }
+      case "InvalidAccount":
       case "InvalidUpgrade":
       case "InvalidSetting":
       case "InvalidDomain": {
@@ -182,5 +209,14 @@ export const runApi = async <A>(
   if (Exit.isSuccess(exit)) {
     return exit.value;
   }
-  throw new ApiFailureError(Cause.squash(exit.cause));
+  const failure = Cause.squash(exit.cause);
+  if (
+    typeof failure === "object" &&
+    failure !== null &&
+    "_tag" in failure &&
+    failure._tag === "Unauthorized"
+  ) {
+    sessionLost();
+  }
+  throw new ApiFailureError(failure);
 };

@@ -54,6 +54,18 @@ const waitUntilPaused = async (
   return waitUntilPaused(id, cancelled);
 };
 
+const descriptionOf = (
+  othersHoldAll: boolean,
+  waitingFor: Holder | undefined
+) => {
+  if (othersHoldAll) {
+    return "Other people's conversations hold them, so there is nothing for you to pause. Try again later.";
+  }
+  return waitingFor === undefined
+    ? "Paused conversations keep their files and can be resumed later."
+    : `Waiting for “${waitingFor.title}” to pause, then this continues.`;
+};
+
 interface Request {
   readonly shortage: CapacityShortage;
   /** True to run the call again, false to give up; absent when nothing here waits to retry. */
@@ -132,6 +144,31 @@ export const CapacityGuardProvider = ({
     request === undefined
       ? []
       : holdersOf(request.shortage, conversations ?? []);
+  // Holders are only this User's Conversations: none means other people hold the whole limit.
+  const othersHoldAll = request?.shortage.holders.length === 0;
+  let choices: ReactNode = null;
+  if (holders.length > 0) {
+    choices = (
+      <ul className="flex min-h-0 flex-col gap-2 overflow-y-auto">
+        {holders.map((holder) => (
+          <HolderRow
+            key={holder.id}
+            holder={holder}
+            disabled={waitingFor !== undefined}
+            onPause={(stopFirst) => {
+              void pause(holder, stopFirst);
+            }}
+          />
+        ))}
+      </ul>
+    );
+  } else if (!othersHoldAll) {
+    choices = (
+      <p className="text-muted-foreground text-sm">
+        Nothing can be paused right now. Try again in a moment.
+      </p>
+    );
+  }
 
   return (
     <CapacityContext.Provider value={value}>
@@ -147,35 +184,20 @@ export const CapacityGuardProvider = ({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Pause a conversation to continue
+              {othersHoldAll
+                ? "The server is busy"
+                : "Pause a conversation to continue"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {request === undefined ? null : shortageText(request.shortage)}{" "}
-              {waitingFor === undefined
-                ? "Paused conversations keep their files and can be resumed later."
-                : `Waiting for “${waitingFor.title}” to pause, then this continues.`}
+              {descriptionOf(othersHoldAll, waitingFor)}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {holders.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              Nothing can be paused right now. Try again in a moment.
-            </p>
-          ) : (
-            <ul className="flex min-h-0 flex-col gap-2 overflow-y-auto">
-              {holders.map((holder) => (
-                <HolderRow
-                  key={holder.id}
-                  holder={holder}
-                  disabled={waitingFor !== undefined}
-                  onPause={(stopFirst) => {
-                    void pause(holder, stopFirst);
-                  }}
-                />
-              ))}
-            </ul>
-          )}
+          {choices}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>
+              {othersHoldAll ? "Close" : "Cancel"}
+            </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -54,7 +54,12 @@ export interface SearchIndex {
     })[]
   ): void;
   /** The best `limit` rows matching a sanitized FTS5 expression, best rank first. */
-  query(match: string, limit: number): QueryRow[];
+  /** The best `limit` rows matching `match` among `conversations`' rows only. */
+  query(
+    match: string,
+    limit: number,
+    conversations: readonly number[]
+  ): QueryRow[];
   close(): void;
 }
 
@@ -107,6 +112,7 @@ export const sqliteIndex = (file: string): SearchIndex => {
             bm25(search_fts) AS rank
      FROM search_fts
      WHERE search_fts MATCH ?
+       AND conversation_id IN (SELECT value FROM json_each(?))
      ORDER BY rank
      LIMIT ?`
   );
@@ -138,9 +144,15 @@ export const sqliteIndex = (file: string): SearchIndex => {
         }
         advance.run(conversationId, upTo);
       }),
-    query: (match, limit) =>
+    query: (match, limit, conversations) =>
       (
-        search.all(MATCH_OPEN, MATCH_CLOSE, match, limit) as unknown as FtsRow[]
+        search.all(
+          MATCH_OPEN,
+          MATCH_CLOSE,
+          match,
+          JSON.stringify(conversations),
+          limit
+        ) as unknown as FtsRow[]
       ).map((row) => ({
         conversationId: row.conversation_id,
         entryId: row.entry_id ?? undefined,

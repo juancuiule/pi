@@ -24,6 +24,7 @@ import {
   fauxAgents,
   openSeat,
 } from "./testing/faux.ts";
+import { alice } from "./testing/users.ts";
 
 const answer = (text: string) => fauxAssistantMessage([fauxText(text)]);
 
@@ -421,13 +422,14 @@ describe("tool approvals", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "touch a file",
           approvals: "ask",
         });
-        const firstOf = conversations.list.pipe(
-          Effect.map((all) => all.find((c) => c.id === created.id))
-        );
+        const firstOf = conversations
+          .list(alice.id)
+          .pipe(Effect.map((all) => all.find((c) => c.id === created.id)));
         yield* waitUntil(
           firstOf.pipe(Effect.map((c) => c?.pendingApprovals === 1))
         );

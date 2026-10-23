@@ -19,9 +19,11 @@ import { HttpApiClient } from "effect/http-api";
 import type * as NetAddress from "effect/net/NetAddress";
 import { describe, expect, it } from "vitest";
 
+import { Auth } from "../auth/auth.ts";
 import { Search } from "../search/search.ts";
 import { Skills } from "../skills/skills.ts";
 import { SkillSource } from "../skills/source.ts";
+import { SessionCookie, signedIn } from "../testing/auth.ts";
 import { fauxAgents } from "../testing/faux.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
@@ -42,7 +44,9 @@ const server = (responses: FauxResponseStep[]) =>
     Layer.provide(Search.none),
     Layer.provide(fauxAgents(responses).layer),
     Layer.provide(Skills.layer.pipe(Layer.provide(SkillSource.memory({})))),
-    Layer.provideMerge(NodeHttpServer.layerTest)
+    Layer.provideMerge(NodeHttpServer.layerTest),
+    Layer.provideMerge(Auth.temporary()),
+    (served) => signedIn().pipe(Layer.provideMerge(served))
   );
 
 const ok = [fauxAssistantMessage([fauxText("ok")])];
@@ -66,9 +70,12 @@ interface TestSocket {
   readonly close: () => void;
 }
 
-const open = (url: string) =>
+const openWith = (url: string, cookie: string | undefined) =>
   Effect.callback<TestSocket, Error>((resume) => {
-    const ws = new NodeWS.WebSocket(url);
+    const ws = new NodeWS.WebSocket(
+      url,
+      cookie === undefined ? {} : { headers: { cookie } }
+    );
     const utf8 = new TextDecoder();
     const closed = Promise.withResolvers<{ code: number }>();
     const socket: TestSocket = {
@@ -88,6 +95,12 @@ const open = (url: string) =>
     ws.on("close", (code: number) => closed.resolve({ code }));
     ws.on("open", () => resume(Effect.succeed(socket)));
     ws.on("error", (error: Error) => resume(Effect.fail(error)));
+  });
+
+/** A socket signed in as the test client's user. */
+const open = (url: string) =>
+  Effect.gen(function* () {
+    return yield* openWith(url, yield* SessionCookie);
   });
 
 const ascii = new TextEncoder();

@@ -30,6 +30,7 @@ import type { SettingsChange } from "../agents/settings.ts";
 import type { AnswerInput, ApprovalChoice } from "../approvals.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import type { Attention } from "../attention.ts";
+import type { UserId } from "../auth/user.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
 import type { ConversationEvent, HistoryPage } from "../conversation-events.ts";
@@ -157,6 +158,8 @@ export class Conversations extends Context.Service<
      * comes back with the summary.
      */
     create(input: {
+      /** The User it belongs to. */
+      readonly owner: UserId;
       readonly sandbox: SandboxChoice;
       readonly software?: readonly SoftwareId[] | undefined;
       readonly prompt: string;
@@ -168,7 +171,10 @@ export class Conversations extends Context.Service<
       ConversationSummary & { readonly submission: SubmissionRecord },
       SeatError | SkillNotFound | InvalidSetting | AttachmentError
     >;
-    readonly list: Effect.Effect<readonly ConversationSummary[], AgentError>;
+    /** `owner`'s Conversations, newest first. */
+    list(
+      owner: UserId
+    ): Effect.Effect<readonly ConversationSummary[], AgentError>;
     /**
      * Send a prompt with the Conversation's unsent uploads in `attachments`, resuming a paused Conversation first; a
      * pending Pause is cancelled. `requestId` deduplicates the submission, whose record comes back.
@@ -646,6 +652,7 @@ export class Conversations extends Context.Service<
         });
 
         const create = Effect.fn("Conversations.create")(function* (input: {
+          readonly owner: UserId;
           readonly sandbox: SandboxChoice;
           readonly software?: readonly SoftwareId[] | undefined;
           readonly prompt: string;
@@ -681,6 +688,7 @@ export class Conversations extends Context.Service<
                 level: input.sandbox,
                 software: input.software,
                 createdAt: yield* Clock.currentTimeMillis,
+                owner: input.owner,
                 approvals: input.approvals,
                 settings: input.settings,
               });
@@ -878,10 +886,13 @@ export class Conversations extends Context.Service<
           yield* score(id, { ...input, name: "report", value: 1 });
         });
 
-        const list = Effect.gen(function* () {
+        const list = Effect.fn("Conversations.list")(function* (owner: UserId) {
           const stored = yield* agents.list;
           const listed: ConversationSummary[] = [];
           for (const each of stored) {
+            if (each.meta.owner !== owner) {
+              continue;
+            }
             const entry = live.get(Number(each.id));
             const pending =
               entry === undefined ? 0 : yield* entry.seat.pendingApprovals;

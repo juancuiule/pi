@@ -161,3 +161,33 @@ export class TitleGenerationFailed extends Schema.TaggedError<TitleGenerationFai
     message: Schema.optionalKey(Schema.String),
   }
 ) {}
+
+/** The request carries no valid session: signed out, expired, or never signed in. */
+export class Unauthorized extends Schema.TaggedError<Unauthorized>()(
+  "Unauthorized",
+  {}
+) {}
+
+/** A sign-in with an unknown name or a wrong password; which one is never said. */
+export class InvalidCredentials extends Schema.TaggedError<InvalidCredentials>()(
+  "InvalidCredentials",
+  {}
+) {}
+
+/** Too many failed sign-ins for this name; try again after `retryAfterMs`. */
+export class TooManyAttempts extends Schema.TaggedError<TooManyAttempts>()(
+  "TooManyAttempts",
+  { retryAfterMs: Schema.Number }
+) {}
+
+/** First-run setup is only open while no account exists. */
+export class SetupClosed extends Schema.TaggedError<SetupClosed>()(
+  "SetupClosed",
+  {}
+) {}
+
+/** An account's name is taken, or its name or password breaks the rules in `reason`. */
+export class InvalidAccount extends Schema.TaggedError<InvalidAccount>()(
+  "InvalidAccount",
+  { reason: Schema.String }
+) {}

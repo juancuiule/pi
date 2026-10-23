@@ -15,6 +15,7 @@ import type { ConversationEvent } from "./conversation-events.ts";
 import { Search } from "./search/search.ts";
 import { Conversations } from "./server/conversations.ts";
 import { fauxAgents } from "./testing/faux.ts";
+import { alice } from "./testing/users.ts";
 
 const defaults = { idleTimeoutMs: 60_000, sweepEveryMs: 60_000 };
 
@@ -39,11 +40,14 @@ const waitUntil = (check: Effect.Effect<boolean, unknown>, timeoutMs = 5000) =>
 const ranConversation = Effect.gen(function* () {
   const conversations = yield* Conversations;
   const created = yield* conversations.create({
+    owner: alice.id,
     sandbox: "none",
     prompt: "Say hi",
   });
   yield* waitUntil(
-    conversations.list.pipe(Effect.map((all) => all[0]?.status === "idle"))
+    conversations
+      .list(alice.id)
+      .pipe(Effect.map((all) => all[0]?.status === "idle"))
   );
   const snapshot = yield* conversations
     .events(created.id)

@@ -24,6 +24,7 @@ import { Artifacts } from "./src/artifacts/artifacts.ts";
 import { TrustedDomains } from "./src/artifacts/domains.ts";
 import { Attachments } from "./src/attachments/attachments.ts";
 import { s3Blobs } from "./src/attachments/store.ts";
+import { Auth } from "./src/auth/auth.ts";
 import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
@@ -180,9 +181,12 @@ const ConversationsLive = Conversations.layer({
   Layer.provide(SearchLive)
 );
 
+// Accounts and sessions are two tables of their own in the same SQLite file.
+const AuthLive = Auth.local({ database: config.paths.db });
+
 const NodeHttpServerLayer = NodeHttpServer.layer(createServer, {
   port: config.server.port,
-  // Loopback only, on purpose: the API has no auth (see src/server/loopback.ts).
+  // Loopback only, on purpose: sessions travel over plain http (see src/server/loopback.ts).
   host: "127.0.0.1",
   // SSE connections never close on their own; do not wait for them long (the default is 20s) before removing sandboxes.
   gracefulShutdownTimeout: Duration.millis(config.server.shutdownTimeoutMs),
@@ -204,6 +208,7 @@ const ServerLive = HttpRouter.serve(
     apiLayer({
       apiUrl: `http://127.0.0.1:${config.server.port}`,
       tracing: config.langfuse !== undefined,
+      pagePorts: [config.server.webPort, config.server.port],
     }),
     shellRoute
   )
@@ -213,6 +218,7 @@ const ServerLive = HttpRouter.serve(
   Layer.provide(SearchLive),
   // The skills group reads and writes through the same Skills the Agents layer uses.
   Layer.provide(SkillsLive),
+  Layer.provide(AuthLive),
   Layer.provide(NodeHttpServerLayer),
   Layer.provide(UploadLimits),
   Layer.provide(LangfuseLayer)
