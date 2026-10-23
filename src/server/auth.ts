@@ -3,7 +3,7 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
 import { Effect, Layer, Redacted } from "effect";
 import type { Cookies } from "effect/http";
-import { HttpServerRequest } from "effect/http";
+import { HttpRouter, HttpServerRequest } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 
 import { Agents } from "../agents/agents.ts";
@@ -13,35 +13,36 @@ import type { User, UserId } from "../auth/user.ts";
 import { ConversationNotFound } from "../errors.ts";
 import { Api, Authentication, CurrentUser } from "./api.ts";
 
-/** A segment or query value as the router could read it: a number when `Number` makes one of it. */
-const asNumber = (raw: string): number | undefined => {
-  let value: string;
-  try {
-    value = decodeURIComponent(raw);
-  } catch {
-    return undefined;
-  }
+/** A param or query value as an endpoint's schema could read it: a number when `Number` makes one of it. */
+const asNumber = (value: string | undefined): number | undefined => {
   const number = Number(value);
-  return value.trim() === "" || !Number.isFinite(number) ? undefined : number;
+  return value === undefined || value.trim() === "" || !Number.isFinite(number)
+    ? undefined
+    : number;
 };
 
+/** A route template addressed by a Conversation: `/api/conversations/:id` and everything under it. */
+const BY_CONVERSATION = /\/conversations\/:id(?:\/|$)/u;
+
 /**
- * Every Conversation id a request URL names: the segment after any `conversations` segment, and every
- * `conversation` query value. Read loosely on purpose — `+1`, `%31` or `1.0` may decode to Conversation 1 in an
- * endpoint's params, so anything that reads as a number is checked as that number.
+ * Every Conversation id a matched request names: its `:id` param when the route's template sits under
+ * `conversations/:id`, and every `conversation` search param. Read from what the router matched and decoded, never
+ * from the raw URL: the router also matches `/api/Conversations/2`, `/api/%63onversations/2` and
+ * `/api/conversations//2`, and a URL reader that missed one of them would wave the request through. Values are read
+ * loosely (`+1`, `1.0`), so anything an endpoint could decode as a number is checked as that number.
  */
-export const conversationsNamed = (url: string): readonly number[] => {
-  const parsed = new URL(url, "http://localhost");
-  const segments = parsed.pathname.split("/");
+export const conversationsNamed = (route: {
+  readonly template: string;
+  readonly params: Readonly<Record<string, string | undefined>>;
+  readonly search: Readonly<Record<string, string | readonly string[]>>;
+}): readonly number[] => {
   const named: number[] = [];
-  for (const [at, segment] of segments.entries()) {
-    const next = segments[at + 1];
-    const id = next === undefined ? undefined : asNumber(next);
-    if (segment === "conversations" && id !== undefined) {
-      named.push(id);
-    }
+  if (BY_CONVERSATION.test(route.template)) {
+    // An id the endpoint cannot decode is refused by its params schema; one it can, is checked here.
+    named.push(asNumber(route.params.id) ?? Number.NaN);
   }
-  for (const value of parsed.searchParams.getAll("conversation")) {
+  const query = route.search.conversation;
+  for (const value of typeof query === "string" ? [query] : (query ?? [])) {
     const id = asNumber(value);
     if (id !== undefined) {
       named.push(id);
@@ -65,13 +66,21 @@ export const requireOwner = (id: number, owner: UserId) =>
     }
   }).pipe(Effect.catchTag("AgentError", Effect.die));
 
-/** The User of a request and its URL's Conversations checked against them; the shell route's whole gate. */
-export const authorize = (token: string, url: string) =>
+/**
+ * The User of a matched request, with the Conversations its route names checked against them: `Authentication`'s
+ * whole check, and the shell route's.
+ */
+export const authorize = (token: string, template: string) =>
   Effect.gen(function* () {
     const user = yield* (yield* Auth).authenticate(token);
-    yield* Effect.forEach(conversationsNamed(url), (id) =>
-      requireOwner(id, user.id)
-    );
+    const named = conversationsNamed({
+      template,
+      params: yield* HttpRouter.params,
+      search: yield* HttpServerRequest.ParsedSearchParams,
+    });
+    for (const id of named) {
+      yield* requireOwner(id, user.id);
+    }
     return user;
   });
 
@@ -81,12 +90,11 @@ export const AuthenticationLive = Layer.effect(
     const auth = yield* Auth;
     const agents = yield* Agents;
     return Authentication.of({
-      session: (httpEffect, { credential }) =>
+      session: (httpEffect, { credential, endpoint }) =>
         Effect.gen(function* () {
-          const request = yield* HttpServerRequest.HttpServerRequest;
           const user = yield* authorize(
             Redacted.value(credential),
-            request.url
+            endpoint.path
           ).pipe(
             Effect.provideService(Auth, auth),
             Effect.provideService(Agents, agents)

@@ -16,6 +16,8 @@ import { SESSION_COOKIE } from "../auth/user.ts";
 import { authorize } from "./auth.ts";
 import { Conversations } from "./conversations.ts";
 
+const SHELL_ROUTE = "/api/conversations/:id/shell";
+
 /** The terminal size the console opens with, from `?cols=&rows=`; anything unusable falls back to 80x24. */
 const sizeOf = (request: HttpServerRequest.HttpServerRequest) => {
   const url = new URL(request.url, "http://localhost");
@@ -59,7 +61,7 @@ const session = Effect.gen(function* () {
   }
   const refusal = yield* authorize(
     request.cookies[SESSION_COOKIE] ?? "",
-    request.url
+    SHELL_ROUTE
   ).pipe(
     Effect.as(Option.none<HttpServerResponse.HttpServerResponse>()),
     Effect.catchTags({
@@ -197,8 +199,4 @@ const session = Effect.gen(function* () {
 });
 
 /** The shell's WebSocket route, merged into the router `apiLayer` serves. */
-export const shellRoute = HttpRouter.add(
-  "GET",
-  "/api/conversations/:id/shell",
-  session
-);
+export const shellRoute = HttpRouter.add("GET", SHELL_ROUTE, session);

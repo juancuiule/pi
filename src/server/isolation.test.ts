@@ -106,6 +106,30 @@ const urlOf = (route: Route, conversation: number) => {
     : filled;
 };
 
+/**
+ * Spellings of `url` the router still matches, from the review that found the first guard reading the raw URL:
+ * a capitalized or percent-encoded static segment, an empty segment before the id, an encoded or signed query id.
+ */
+const variantsOf = (url: string): readonly string[] => {
+  const first = /^\/api\/(?<first>[a-z-]+)/u.exec(url)?.groups?.first ?? "";
+  const rest = url.slice(`/api/${first}`.length);
+  return [
+    `/api/${first.charAt(0).toUpperCase()}${first.slice(1)}${rest}`,
+    `/api/%${(first.codePointAt(0) ?? 0).toString(16)}${first.slice(1)}${rest}`,
+    `/api/${first}/${rest}`,
+    `/API/${first}${rest}`,
+    ...(url.includes("?conversation=")
+      ? [
+          url.replace(
+            /conversation=(?<id>\d+)/u,
+            (_match, id: string) =>
+              `conversation=${encodeURIComponent(` +${id}`)}`
+          ),
+        ]
+      : []),
+  ];
+};
+
 const send = (client: HttpClient.HttpClient, route: Route, url: string) =>
   client
     .execute(
@@ -276,6 +300,28 @@ describe("isolation between Users", () => {
           );
           scoped.push({ route: route.name, ...response });
         }
+        const variants: { url: string; status: number; body: string }[] = [];
+        for (const route of routes.filter(
+          (each) => scopedBy(each) && each.name !== "conversations.events"
+        )) {
+          for (const url of variantsOf(urlOf(route, created.id))) {
+            variants.push({ url, ...(yield* send(bob.client, route, url)) });
+          }
+        }
+        const historyRoute = routes.find(
+          (route) => route.name === "conversations.history"
+        );
+        const aliceVariants: number[] = [];
+        for (const url of variantsOf(
+          `/api/conversations/${created.id}/history`
+        )) {
+          if (historyRoute !== undefined) {
+            aliceVariants.push(
+              (yield* send(yield* HttpClient.HttpClient, historyRoute, url))
+                .status
+            );
+          }
+        }
         const uploadData = new FormData();
         uploadData.append(
           "file",
@@ -334,6 +380,8 @@ describe("isolation between Users", () => {
             ]),
           },
           scoped,
+          variants,
+          aliceVariants,
           upload,
           shell,
         };
@@ -368,5 +416,15 @@ describe("isolation between Users", () => {
       upload: result.upload,
       shell: result.shell,
     }).toStrictEqual({ notRefused: [], leaked: [], upload: 404, shell: 404 });
+    // The router serves these spellings (Alice reaches her own history through some), and none gets Bob past the
+    // guard: every one is refused, as missing or as malformed, and none carries her data.
+    expect({
+      aliceReached: result.aliceVariants.some((status) => status === 200),
+      bobPassed: result.variants.filter(
+        (response) =>
+          ![400, 404].includes(response.status) ||
+          response.body.includes(SECRET)
+      ),
+    }).toStrictEqual({ aliceReached: true, bobPassed: [] });
   }, 60_000);
 });
