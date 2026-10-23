@@ -1,3 +1,5 @@
+import type { EntryRecord } from "effect-pi/api";
+
 import { toolResultOf } from "./conversation-state";
 import type { ConversationState } from "./conversation-state";
 
@@ -23,3 +25,20 @@ export const activeSubagents = (state: ConversationState): number =>
   Object.values(state.tools).filter(
     (tool) => tool.name === "task" && tool.status !== "done"
   ).length;
+
+/** Child ids of the `task` calls among `entries` still in flight: their children may be waiting on the person. */
+export const subagentsInFlight = (
+  entries: readonly EntryRecord[],
+  state: ConversationState
+): readonly number[] =>
+  entries
+    .flatMap((entry) => entry.model ?? [])
+    .flatMap((message) => (message.role === "assistant" ? message.content : []))
+    .flatMap((block) =>
+      block.type === "toolCall" &&
+      block.name === "task" &&
+      state.tools[block.id]?.status !== "done" &&
+      toolResultOf(state, block.id) === undefined
+        ? (subagentIdFor(state, block.id) ?? [])
+        : []
+    );

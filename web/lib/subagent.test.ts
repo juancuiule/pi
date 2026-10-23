@@ -1,8 +1,14 @@
+import type { EntryRecord } from "effect-pi/api";
 import { describe, expect, it } from "vitest";
 
 import { initialState } from "./conversation-state";
 import type { ConversationState } from "./conversation-state";
-import { activeSubagents, subagentIdFor, subagentIdOf } from "./subagent";
+import {
+  activeSubagents,
+  subagentIdFor,
+  subagentIdOf,
+  subagentsInFlight,
+} from "./subagent";
 
 describe(subagentIdOf, () => {
   it("reads a numeric conversationId", () => {
@@ -76,5 +82,50 @@ describe(activeSubagents, () => {
 
   it("is zero with no task calls", () => {
     expect(activeSubagents(initialState)).toBe(0);
+  });
+});
+
+describe(subagentsInFlight, () => {
+  const calls = {
+    id: 1,
+    conversationId: 1,
+    kind: "message",
+    model: [
+      {
+        role: "assistant",
+        content: ["running", "finished", "starting", "shell"].map((id) => ({
+          type: "toolCall",
+          id,
+          name: id === "shell" ? "bash" : "task",
+          arguments: {},
+        })),
+      },
+    ],
+  } as unknown as EntryRecord;
+  const state = {
+    ...initialState,
+    entries: [calls],
+    tools: {
+      running: {
+        name: "task",
+        status: "running",
+        details: { conversationId: 7 },
+      },
+      finished: {
+        name: "task",
+        status: "done",
+        details: { conversationId: 8 },
+      },
+      starting: { name: "task", status: "running", details: undefined },
+      shell: {
+        name: "bash",
+        status: "running",
+        details: { conversationId: 9 },
+      },
+    },
+  } as unknown as ConversationState;
+
+  it("lists the child of each running task call, dropping finished ones and those without an id yet", () => {
+    expect(subagentsInFlight([calls], state)).toStrictEqual([7]);
   });
 });

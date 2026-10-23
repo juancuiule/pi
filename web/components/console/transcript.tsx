@@ -45,10 +45,11 @@ import {
   TraceCollapsibleTrigger,
   TraceIcon,
   TraceLine,
+  TraceNest,
   TraceTitle,
 } from "@/components/ui/trace";
 import { runApi } from "@/lib/api";
-import { hasPendingApproval } from "@/lib/approval";
+import { hasPendingApproval, waitingCalls } from "@/lib/approval";
 import { boundaryNote } from "@/lib/boundary-note";
 import type { BoundaryNote } from "@/lib/boundary-note";
 import type { ConversationState, PendingInput } from "@/lib/conversation-state";
@@ -62,7 +63,7 @@ import { useInfo, useWithdrawMessage } from "@/lib/queries";
 import { settingsNote } from "@/lib/settings-note";
 import { skillMentionParts } from "@/lib/skill-message";
 import { useConversationStore } from "@/lib/store";
-import { subagentIdFor } from "@/lib/subagent";
+import { subagentIdFor, subagentsInFlight } from "@/lib/subagent";
 import { displayParts, isNearBottom, userParts } from "@/lib/transcript";
 import { unansweredNote } from "@/lib/unanswered-note";
 import { useNow } from "@/lib/use-now";
@@ -71,7 +72,7 @@ import { ArtifactCard } from "./artifact-card";
 import { SentChip } from "./attachment-chip";
 import { FeedbackActions } from "./feedback-actions";
 import { Markdown } from "./markdown";
-import { SubagentStream } from "./subagent";
+import { SubagentStream, SubagentWaiting } from "./subagent";
 import { ToolCall } from "./tool-call";
 
 const Caret = () => (
@@ -781,6 +782,29 @@ const EntryItem = ({
 };
 
 /**
+ * The run's calls that wait on the person, lifted under a closed "Details" on its nesting line: its own, then each
+ * in-flight subagent's. The line hides itself when nothing renders inside.
+ */
+const Waiting = ({
+  entries,
+  state,
+}: {
+  entries: readonly EntryRecord[];
+  state: ConversationState;
+}) => (
+  <TraceNest className="mt-0 has-[>:empty]:hidden">
+    <div className="flex flex-col gap-2">
+      {waitingCalls(entries, state).map((call) => (
+        <ToolCall key={call.id} call={call} state={state} />
+      ))}
+      {subagentsInFlight(entries, state).map((id) => (
+        <SubagentWaiting key={id} id={id} />
+      ))}
+    </div>
+  </TraceNest>
+);
+
+/**
  * One run in the simple view: its steps fold under "Details", its closing answer stays outside. A run that was
  * only its answer — a single all-text entry — has nothing to fold, so it renders whole.
  */
@@ -795,6 +819,7 @@ const SimpleRun = ({
   showThinking: boolean;
   conversation?: number;
 }) => {
+  const [open, setOpen] = useState(false);
   const final = finalResponse(entries);
   const [only] = entries;
   if (
@@ -817,7 +842,7 @@ const SimpleRun = ({
     <div className="flex min-w-0 flex-col gap-3">
       {entries.length === 0 ? null : (
         <Trace>
-          <TraceCollapsible>
+          <TraceCollapsible open={open} onOpenChange={setOpen}>
             <TraceCollapsibleTrigger>
               <TraceLine>
                 <TraceIcon>
@@ -840,6 +865,8 @@ const SimpleRun = ({
               </div>
             </TraceCollapsibleContent>
           </TraceCollapsible>
+          {/* Lifted only while closed: an open "Details" shows the card in place, so it is never mounted twice. */}
+          {open ? null : <Waiting entries={entries} state={state} />}
         </Trace>
       )}
       {final === undefined ? null : (
