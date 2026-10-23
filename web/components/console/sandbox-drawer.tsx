@@ -2,10 +2,12 @@
 
 import type { ConversationSummary } from "effect-pi/api";
 import dynamic from "next/dynamic";
+import { useState } from "react";
 
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import type { ConversationState } from "@/lib/conversation-state";
 import { seatlessOf } from "@/lib/conversation-status";
+import type { SandboxView, SandboxViewAction } from "@/lib/sandbox-view";
 
 import { DesktopPanel } from "./desktop-panel";
 
@@ -18,17 +20,24 @@ const SandboxPanel = dynamic(
   { ssr: false }
 );
 
-const SNAP_POINTS = [0.55, 0.95];
+const LOW_SNAP = 0.55;
+const TOP_SNAP = 0.95;
+const SNAP_POINTS = [LOW_SNAP, TOP_SNAP];
 
 /** The sandbox's own panel — the desktop VNC view, or the shell/agent/files tabs. */
 export const SandboxContent = ({
   conversation,
   state,
   resuming,
+  view,
+  onView,
 }: {
   conversation: ConversationSummary;
   state: ConversationState;
   resuming: boolean;
+  /** The shell panel's tab and pending folder reveal, owned by the console page. */
+  view: SandboxView;
+  onView: (action: SandboxViewAction) => void;
 }) => (
   <div className="h-full min-h-0">
     {conversation.sandbox === "desktop" ? (
@@ -44,6 +53,8 @@ export const SandboxContent = ({
         live={!seatlessOf(conversation)}
         state={state}
         resuming={resuming}
+        view={view}
+        onView={onView}
       />
     )}
   </div>
@@ -62,13 +73,25 @@ export const SandboxDrawer = ({
   conversation,
   state,
   resuming,
+  view,
+  onView,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   conversation: ConversationSummary | undefined;
   state: ConversationState;
   resuming: boolean;
+  view: SandboxView;
+  onView: (action: SandboxViewAction) => void;
 }) => {
+  const [snap, setSnap] = useState<number | string | null>(LOW_SNAP);
+  // A folder link raises the drawer to its top snap: at the lower one the tree's lower rows sit
+  // below the screen, where scrolling the tree cannot bring them.
+  const [revealSeq, setRevealSeq] = useState(view.revealSeq);
+  if (revealSeq !== view.revealSeq) {
+    setRevealSeq(view.revealSeq);
+    setSnap(TOP_SNAP);
+  }
   if (conversation === undefined || conversation.sandbox === "none") {
     return null;
   }
@@ -78,6 +101,8 @@ export const SandboxDrawer = ({
       onOpenChange={onOpenChange}
       modal={false}
       snapPoints={SNAP_POINTS}
+      activeSnapPoint={snap}
+      setActiveSnapPoint={setSnap}
       handleOnly
     >
       <DrawerContent>
@@ -90,6 +115,8 @@ export const SandboxDrawer = ({
             conversation={conversation}
             state={state}
             resuming={resuming}
+            view={view}
+            onView={onView}
           />
         </div>
       </DrawerContent>

@@ -3,13 +3,13 @@
 import { prepareFileTreeInput } from "@pierre/trees";
 import type { FileTreeBatchOperation } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { useQuery } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import { runApi } from "@/lib/api";
-import { useOpenFile } from "@/lib/file-context";
+import { useWorkspaceTree } from "@/lib/queries";
+import { useWorkspace } from "@/lib/workspace-context";
 import type { TreeChildren } from "@/lib/workspace-files";
 import {
   cappedDirs,
@@ -17,6 +17,8 @@ import {
   mergeTreePaths,
   needsChildren as listingNeedsChildren,
 } from "@/lib/workspace-files";
+import { normalizeWorkspacePath } from "@/lib/workspace-links";
+import type { WorkspacePath } from "@/lib/workspace-links";
 
 /**
  * The tree reads the console's palette through its --trees-theme-* layer. The built-in values that stay
@@ -47,18 +49,24 @@ const Tree = ({
   capped,
   onLoadDirectory,
   needsChildren,
+  reveal,
+  revealSeq,
+  onRevealed,
 }: {
   paths: readonly string[];
   capped: ReadonlySet<string>;
   onLoadDirectory: (dir: string) => void;
   needsChildren: (dir: string) => boolean;
+  reveal: WorkspacePath | undefined;
+  revealSeq: number;
+  onRevealed: (seq: number) => void;
 }) => {
-  const openFile = useOpenFile();
+  const { open } = useWorkspace();
   // Options apply once, when the model is created; the callbacks read the newest data through refs.
   const live = useRef({
     dirs: new Set<string>(),
     capped,
-    openFile,
+    open,
     onLoadDirectory,
     needsChildren,
   });
@@ -71,7 +79,7 @@ const Tree = ({
           .map((path) => path.slice(0, -1))
       ),
       capped,
-      openFile,
+      open,
       onLoadDirectory,
       needsChildren,
     };
@@ -95,7 +103,10 @@ const Tree = ({
       }
       const dir = added.replace(/\/+$/u, "");
       if (!live.current.dirs.has(dir)) {
-        live.current.openFile?.({ path: added });
+        const path = normalizeWorkspacePath(added);
+        if (path !== undefined) {
+          live.current.open({ path, kind: "file" });
+        }
         return;
       }
       // A directory whose children the listing withheld has nothing to expand; selecting it fetches them.
@@ -148,6 +159,41 @@ const Tree = ({
       }),
     [model]
   );
+  // A folder link: expand it (expanding a directory expands its ancestors too), select its row and
+  // scroll to it. scrollToPath only finds a visible row, so it runs after the expansion; a filter
+  // could hide it. A folder inside a flattened chain ("deep / nest / inner") has no row of its own,
+  // and scrollToPath and focusNearestPath both miss it, so the reveal lands on the first visible row
+  // under the folder: its own row, or the chain's.
+  useEffect(() => {
+    if (reveal === undefined) {
+      return;
+    }
+    const item = model.getItem(`${reveal}/`);
+    if (item !== null && "expand" in item) {
+      if (model.isSearchOpen()) {
+        model.closeSearch();
+      }
+      item.expand();
+      if (live.current.needsChildren(reveal)) {
+        live.current.onLoadDirectory(reveal);
+      }
+      const row =
+        model
+          .getVisibleRows(0, model.getVisibleCount())
+          .find((visible) => visible.path.startsWith(`${reveal}/`))?.path ??
+        `${reveal}/`;
+      const shown = model.getItem(row);
+      if (shown !== null && "expand" in shown) {
+        shown.expand();
+      }
+      for (const selected of model.getSelectedPaths()) {
+        model.getItem(selected)?.deselect();
+      }
+      shown?.select();
+      model.scrollToPath(row, { offset: "center", focus: true });
+    }
+    onRevealed(revealSeq);
+  }, [model, reveal, revealSeq, onRevealed]);
   return (
     <FileTree
       model={model}
@@ -162,14 +208,22 @@ const Tree = ({
  * in the file pane beside the chat. Without a Seat (paused, archived) there is no Sandbox to list through; the
  * workspace keeps its files for the next one.
  */
-export const FilesBrowser = ({ id, live }: { id: number; live: boolean }) => {
-  const { data, error } = useQuery({
-    queryKey: ["workspace-tree", id],
-    queryFn: () => runApi((c) => c.files.tree({ params: { id } })),
-    // The listing follows the agent's writes, like the file pane follows one file.
-    enabled: live,
-    refetchInterval: 2000,
-  });
+export const FilesBrowser = ({
+  id,
+  live,
+  reveal,
+  revealSeq,
+  onRevealed,
+}: {
+  id: number;
+  live: boolean;
+  /** A folder to expand and scroll to (a folder link), acknowledged through onRevealed. */
+  reveal: WorkspacePath | undefined;
+  revealSeq: number;
+  onRevealed: (seq: number) => void;
+}) => {
+  // The listing follows the agent's writes, like the file pane follows one file.
+  const { data, error } = useWorkspaceTree(id, { live, poll: true });
   // Children the tree listing withheld (truncated or skipped dirs), fetched per directory on expand.
   const [extra, setExtra] = useState<Readonly<Record<string, TreeChildren>>>(
     {}
@@ -257,6 +311,9 @@ export const FilesBrowser = ({ id, live }: { id: number; live: boolean }) => {
           capped={capped}
           onLoadDirectory={loadDirectory}
           needsChildren={dirNeedsChildren}
+          reveal={reveal}
+          revealSeq={revealSeq}
+          onRevealed={onRevealed}
         />
       </div>
       {data.truncated ? (

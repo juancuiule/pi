@@ -2,7 +2,14 @@
 
 import type { ArtifactInfo, ConversationSummary } from "effect-pi/api";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { toast } from "sonner";
@@ -45,18 +52,21 @@ import type {
 } from "@/lib/artifacts";
 import { parseConversationId } from "@/lib/conversation-id";
 import type { ConversationState } from "@/lib/conversation-state";
-import { OpenFileContext } from "@/lib/file-context";
 import {
   useConversationAction,
   useConversationArtifacts,
   useConversations,
   useAnswerQuestions,
   useDecideApproval,
+  useWorkspaceIndex,
 } from "@/lib/queries";
+import { initialSandboxView, sandboxViewReducer } from "@/lib/sandbox-view";
 import { useConversationStore, useResuming, useSimpleView } from "@/lib/store";
 import { useConversationEvents } from "@/lib/use-conversation-events";
 import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
+import { WorkspaceContext } from "@/lib/workspace-context";
 import type { OpenFile } from "@/lib/workspace-files";
+import type { WorkspaceTarget } from "@/lib/workspace-links";
 
 const pageTitle = (conversation: ConversationSummary | undefined): string =>
   conversation === undefined
@@ -210,6 +220,17 @@ const useFilePanel = (
   return [file, setFile];
 };
 
+/** The sandbox panel's tab and pending folder reveal; switching a conversation starts over. */
+const useSandboxView = (selectedId: number | undefined) => {
+  const [view, dispatch] = useReducer(sandboxViewReducer, initialSandboxView);
+  const [viewConversation, setViewConversation] = useState(selectedId);
+  if (viewConversation !== selectedId) {
+    setViewConversation(selectedId);
+    dispatch({ type: "reset" });
+  }
+  return [view, dispatch] as const;
+};
+
 /** The header's panel button reads the same in both modes: it toggles the pane on desktop, the drawer below it. */
 const sidePanelOf = (
   conversation: ConversationSummary,
@@ -309,6 +330,27 @@ const Console = () => {
     dispatchArtifactPanel
   );
   const [file, setFile] = useFilePanel(selectedId);
+  const [view, dispatchView] = useSandboxView(selectedId);
+  const index = useWorkspaceIndex(conversation, state.running);
+  const openPath = useCallback(
+    (target: WorkspaceTarget) => {
+      if (target.kind === "file") {
+        setFile({ path: target.path });
+        return;
+      }
+      if (isDesktop === true) {
+        sidePanel.current?.expand();
+      } else {
+        setSandboxOpen(true);
+      }
+      dispatchView({ type: "reveal", path: target.path });
+    },
+    [dispatchView, isDesktop, setFile, sidePanel]
+  );
+  const workspace = useMemo(
+    () => ({ index, open: openPath }),
+    [index, openPath]
+  );
 
   const toggleSidePanel = () => {
     if (isDesktop !== true) {
@@ -381,7 +423,7 @@ const Console = () => {
 
   return (
     <OpenArtifactContext.Provider value={openArtifact}>
-      <OpenFileContext.Provider value={setFile}>
+      <WorkspaceContext.Provider value={workspace}>
         <title>{pageTitle(conversation)}</title>
         {isDesktop === true ? (
           // Nested inside the console shell's page panel: main, then open pages and files, then the sandbox.
@@ -413,6 +455,8 @@ const Console = () => {
                     conversation={conversation}
                     state={state}
                     resuming={resuming}
+                    view={view}
+                    onView={dispatchView}
                   />
                 </ResizablePanel>
               </>
@@ -428,6 +472,8 @@ const Console = () => {
               conversation={conversation}
               state={state}
               resuming={resuming}
+              view={view}
+              onView={dispatchView}
             />
           </>
         ) : null}
@@ -444,7 +490,7 @@ const Console = () => {
           isDesktop={isDesktop}
           onClose={() => setFile(undefined)}
         />
-      </OpenFileContext.Provider>
+      </WorkspaceContext.Provider>
     </OpenArtifactContext.Provider>
   );
 };

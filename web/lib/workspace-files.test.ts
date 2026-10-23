@@ -12,12 +12,15 @@ import {
 } from "./workspace-files";
 
 describe(filePathOf, () => {
-  it("names the path of a file tool's arguments", () => {
+  it("names the workspace path of a file tool's arguments", () => {
     expect(filePathOf("write", { path: "REPORT.md" })).toBe("REPORT.md");
-    expect(filePathOf("read", { path: "/workspace/a.txt" })).toBe(
-      "/workspace/a.txt"
-    );
-    expect(filePathOf("edit", { path: "src/x.ts" })).toBe("src/x.ts");
+    expect(filePathOf("read", { path: "/workspace/a.txt" })).toBe("a.txt");
+    expect(filePathOf("edit", { path: "./src/x.ts" })).toBe("src/x.ts");
+  });
+
+  it("ignores paths outside the workspace", () => {
+    expect(filePathOf("read", { path: "/tmp/x" })).toBeUndefined();
+    expect(filePathOf("read", { path: "~/.bashrc" })).toBeUndefined();
   });
 
   it("ignores tools whose path may be a directory, and missing paths", () => {
