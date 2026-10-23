@@ -69,11 +69,12 @@ export const approvalKey = (
 ): string => `${String(conversationId)}:${callId}`;
 
 /**
- * The conversation whose ApprovalDoc `conversationId`'s gated calls consult: itself, unless it is a subagent,
- * whose doc carries `root`. Everything that reads or writes pending entries goes through the same resolution,
- * so a child's waiting calls are decided on its root's doc.
+ * The top-level conversation of `conversationId`'s tree: itself, unless it is a subagent, whose ApprovalDoc
+ * carries `root`. Everything that reads or writes pending entries goes through it, so a child's waiting calls
+ * are decided on its root's doc; artifacts use it too, so a child's pages belong to the conversation the
+ * person sees.
  */
-export const approvalRoot = async (
+export const conversationRoot = async (
   read: Pick<ToolExecutionApi, "snapshot">,
   conversationId: ConversationId,
   context: Context
@@ -129,7 +130,7 @@ export const waitForPerson = async (
 ): Promise<PersonReply> => {
   const signal = context.abortSignal;
   // A subagent's calls are decided on its root conversation's doc, which its own only points at.
-  const rootId = await approvalRoot(api, api.conversationId, context);
+  const rootId = await conversationRoot(api, api.conversationId, context);
   // Declared before the try so the finally can always detach the listener and stop the watch.
   let watch: DocumentWatch<ApprovalState> | undefined;
   const waiting = Promise.withResolvers<PersonReply | "stop">();
@@ -225,7 +226,7 @@ export const withApproval = (tool: ToolRegistration): ToolRegistration => {
     ...tool,
     execute: async (args, api, context) => {
       const key = approvalKey(api.conversationId, api.callId);
-      const rootId = await approvalRoot(api, api.conversationId, context);
+      const rootId = await conversationRoot(api, api.conversationId, context);
       // Reading the policy and registering happen in one commit, so an "always" decision cannot land
       // between them and leave this call waiting under a policy that is already `auto`.
       let requestedAt: number | undefined;

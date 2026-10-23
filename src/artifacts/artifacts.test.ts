@@ -1,3 +1,8 @@
+import type { FauxResponseStep } from "@earendil-works/pi-ai";
+import {
+  fauxAssistantMessage,
+  fauxToolCall,
+} from "@earendil-works/pi-ai/providers/faux";
 import { Effect, Exit, Ref, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -311,6 +316,34 @@ describe("artifacts", () => {
     expect(result.scoped.map((view) => view.id)).toStrictEqual([result.ids[1]]);
   });
 
+  it("lists a conversation's artifacts most recently updated first", async () => {
+    const result = await withArtifacts((artifacts) =>
+      Effect.gen(function* () {
+        const older = yield* artifacts.create(1, {
+          title: "Older",
+          html: "<p>1</p>",
+          callId: "c1",
+        });
+        yield* Effect.sleep("5 millis");
+        yield* artifacts.create(1, {
+          title: "Newer",
+          html: "<p>2</p>",
+          callId: "c2",
+        });
+        const created = (yield* artifacts.list(1)).map((view) => view.title);
+        yield* Effect.sleep("5 millis");
+        yield* artifacts.update(1, older.id, {
+          callId: "c3",
+          html: "<p>1.</p>",
+        });
+        const updated = (yield* artifacts.list(1)).map((view) => view.title);
+        return { created, updated };
+      })
+    );
+    expect(result.created).toStrictEqual(["Newer", "Older"]);
+    expect(result.updated).toStrictEqual(["Older", "Newer"]);
+  });
+
   it("lets a replayed call find the version it already wrote", async () => {
     const result = await withArtifacts((artifacts) =>
       Effect.gen(function* () {
@@ -350,6 +383,19 @@ describe("artifacts", () => {
     });
   });
 });
+
+/** A parent's turn that revises the page whose id its subagent reported back. */
+const reviseReported: FauxResponseStep = (request) => {
+  const reported = request.messages
+    .findLast((message) => message.role === "toolResult")
+    ?.content.flatMap((c) => (c.type === "text" ? [c.text] : []))
+    .join("")
+    .match(/art_[0-9a-f]{32}/u)?.[0];
+  return callTool("artifact_update", {
+    id: reported ?? "art_none",
+    edits: [{ find: "Child", replace: "Parent" }],
+  });
+};
 
 /** The settled tool results among a conversation's events. */
 const toolResults = (events: readonly ConversationEvent[]) =>
@@ -512,5 +558,40 @@ describe("the artifact tools", () => {
     expect(answers[0]).toContain("error: ");
     expect(answers[0]).toContain("No artifact art_missing");
     expect(answers[1]).toContain("300 KB");
+  });
+
+  it("keeps a subagent's page in its root conversation, where the parent can revise it", async () => {
+    const { layer } = fauxAgents([
+      fauxAssistantMessage(
+        [fauxToolCall("task", { prompt: "Make a page." }, { id: "call-task" })],
+        { stopReason: "toolUse" }
+      ),
+      // The subagent's turns: it creates the page and answers with the result, which names the id.
+      callTool("artifact_create", { title: "Report", html: "<h1>Child</h1>" }),
+      echoToolResult,
+      reviseReported,
+      echoToolResult,
+    ]);
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const artifacts = yield* Artifacts;
+          const seat = yield* openSeat();
+          const answer = yield* seat.ask("Have a subagent make a page.");
+          const [listed] = yield* artifacts.list(Number(seat.id));
+          return {
+            answer,
+            listed,
+            latest:
+              listed === undefined
+                ? undefined
+                : yield* artifacts.html(Number(seat.id), listed.id),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect(result.answer).toContain("to version 2");
+    expect(result.listed?.versions.map((v) => v.version)).toStrictEqual([1, 2]);
+    expect(result.latest?.html).toBe("<h1>Parent</h1>");
   });
 });
