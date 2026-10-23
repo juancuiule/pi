@@ -302,7 +302,8 @@ describe("artifacts", () => {
         });
         return {
           ids: [one.id, two.id],
-          all: yield* artifacts.listAll(),
+          all: yield* artifacts.listIn([1, 2]),
+          none: yield* artifacts.listIn([3]),
           scoped: yield* artifacts.list(2),
         };
       })
@@ -314,6 +315,7 @@ describe("artifacts", () => {
       [result.ids[1], 2],
     ]);
     expect(result.scoped.map((view) => view.id)).toStrictEqual([result.ids[1]]);
+    expect(result.none).toStrictEqual([]);
   });
 
   it("lists a conversation's artifacts most recently updated first", async () => {

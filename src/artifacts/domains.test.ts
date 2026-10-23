@@ -1,6 +1,12 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { alice, bob } from "../testing/users.ts";
 import { isTrusted, normalizeDomain, TrustedDomains } from "./domains.ts";
 
 const withDomains = <A, E>(
@@ -106,18 +112,20 @@ describe(TrustedDomains, () => {
   it("adds, lists and removes domains, normalized and deduped", async () => {
     const result = await withDomains((domains) =>
       Effect.gen(function* () {
-        const added = yield* domains.add("CDN.Example.COM/img.png");
-        const invalid = yield* Effect.exit(domains.add("not a domain!"));
-        yield* domains.add("cdn.example.com");
-        yield* domains.add("*.other.com");
-        const removed = yield* domains.remove("cdn.example.com");
-        const absent = yield* domains.remove("gone.com");
+        const added = yield* domains.add(alice.id, "CDN.Example.COM/img.png");
+        const invalid = yield* Effect.exit(
+          domains.add(alice.id, "not a domain!")
+        );
+        yield* domains.add(alice.id, "cdn.example.com");
+        yield* domains.add(alice.id, "*.other.com");
+        const removed = yield* domains.remove(alice.id, "cdn.example.com");
+        const absent = yield* domains.remove(alice.id, "gone.com");
         return {
           added,
           invalid,
           removed,
           absent,
-          list: yield* domains.list(),
+          list: yield* domains.list(alice.id),
         };
       })
     );
@@ -128,5 +136,61 @@ describe(TrustedDomains, () => {
       absent: false,
       list: ["*.other.com"],
     });
+  });
+
+  it("keeps one list per user", async () => {
+    const result = await withDomains((domains) =>
+      Effect.gen(function* () {
+        yield* domains.add(alice.id, "cdn.alice.com");
+        yield* domains.add(bob.id, "cdn.bob.com");
+        const bobRemovedAlices = yield* domains.remove(bob.id, "cdn.alice.com");
+        return {
+          alice: yield* domains.list(alice.id),
+          bob: yield* domains.list(bob.id),
+          bobRemovedAlices,
+        };
+      })
+    );
+    expect(result).toStrictEqual({
+      alice: ["cdn.alice.com"],
+      bob: ["cdn.bob.com"],
+      bobRemovedAlices: false,
+    });
+  });
+
+  it("migrates a list from before accounts, which the adopting user then owns", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "domains-"));
+    const file = path.join(dir, "db.sqlite");
+    const legacy = new DatabaseSync(file);
+    legacy.exec(`
+      CREATE TABLE trusted_domains (domain TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
+      INSERT INTO trusted_domains VALUES ('cdn.old.com', 1), ('*.shared.com', 2);
+    `);
+    legacy.close();
+    try {
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const domains = yield* TrustedDomains;
+            const beforeAdoption = yield* domains.list(alice.id);
+            yield* domains.add(alice.id, "*.shared.com");
+            yield* domains.adopt(alice.id);
+            yield* domains.adopt(bob.id);
+            return {
+              beforeAdoption,
+              alice: yield* domains.list(alice.id),
+              bob: yield* domains.list(bob.id),
+            };
+          })
+        ).pipe(Effect.provide(TrustedDomains.local({ database: file })))
+      );
+      expect(result).toStrictEqual({
+        beforeAdoption: [],
+        alice: ["cdn.old.com", "*.shared.com"],
+        bob: [],
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

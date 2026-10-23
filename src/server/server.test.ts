@@ -18,9 +18,11 @@ import type { AgentError } from "../agents/agents.ts";
 import { Artifacts } from "../artifacts/artifacts.ts";
 import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments } from "../attachments/attachments.ts";
+import { Auth } from "../auth/auth.ts";
 import { Capacity } from "../capacity.ts";
 import { Search } from "../search/search.ts";
 import { Skills, SkillSource } from "../skills/skills.ts";
+import { signedIn } from "../testing/auth.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { fakeMcpServer } from "../testing/mcp.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
@@ -55,7 +57,9 @@ const serverWith = (
     Layer.provideMerge(search),
     Layer.provide(agents),
     Layer.provide(skills),
-    Layer.provideMerge(NodeHttpServer.layerTest)
+    Layer.provideMerge(NodeHttpServer.layerTest),
+    Layer.provideMerge(Auth.temporary()),
+    (served) => signedIn().pipe(Layer.provideMerge(served))
   );
 
 const server = (responses: FauxResponseStep[], shells = 3) =>
@@ -1031,7 +1035,8 @@ describe("HTTP API", () => {
         info: { name: "brief.md", kind: "text" },
         prepared: { kind: "text", pages: ["# Brief\n\nKeep it short."] },
       },
-      viewedElsewhere: { _tag: "AttachmentNotFound" },
+      // Not a conversation of the caller's: the guard answers before the attachment is looked up.
+      viewedElsewhere: { _tag: "ConversationNotFound" },
       unscoped: { status: 404 },
       elsewhere: { status: 404 },
     });

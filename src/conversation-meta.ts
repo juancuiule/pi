@@ -1,8 +1,14 @@
 // Per-conversation metadata the console needs after a restart: title and timestamps. The doc survives every Seat,
 // so the server can list and describe Conversations that are paused or archived.
+import type { Context } from "@earendil-works/chord";
 import { defineDoc } from "@earendil-works/pi-durable";
-import type { ConversationId } from "@earendil-works/pi-durable";
+import type {
+  ConversationId,
+  ToolExecutionApi,
+} from "@earendil-works/pi-durable";
 
+import { conversationRoot } from "./approvals.ts";
+import type { UserId } from "./auth/user.ts";
 import type { SandboxChoice } from "./sandbox/sandbox.ts";
 import type { SoftwareId } from "./sandbox/software.ts";
 
@@ -23,6 +29,11 @@ export type ConversationMeta = {
    * cleared: a failed or stomped attempt is not retried.
    */
   readonly autoTitleAt?: number;
+  /**
+   * The User it belongs to, set in the creating commit. Absent only on Conversations that predate accounts, until
+   * the first account adopts them; nobody else ever sees one without it.
+   */
+  readonly owner?: UserId;
 };
 
 /** A stored Conversation: its metadata and its Workspace's Level and Software. */
@@ -41,3 +52,14 @@ export const MetaDoc = defineDoc<{ meta?: ConversationMeta }>({
   fork: "initial",
   initial: () => ({}),
 });
+
+/** The User `conversationId` belongs to: its root's owner, so a subagent belongs to whoever owns its parent. */
+export const conversationOwner = async (
+  read: Pick<ToolExecutionApi, "snapshot">,
+  conversationId: ConversationId,
+  context: Context
+): Promise<UserId | undefined> => {
+  const root = await conversationRoot(read, conversationId, context);
+  const doc = await read.snapshot(MetaDoc, root, context);
+  return doc?.meta?.owner;
+};

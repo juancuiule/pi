@@ -1,5 +1,5 @@
-// The server has no auth and only serves this machine, but binding to 127.0.0.1 does not stop a
-// browser: any page can POST to http://127.0.0.1:4000, and a DNS-rebound name reaches it too. So every
+// The server only serves this machine (sessions travel over plain http), but binding to 127.0.0.1 does not
+// stop a browser: any page can POST to http://127.0.0.1:4000, and a DNS-rebound name reaches it too. So every
 // request must name a loopback host, and a browser's Origin (and the Next proxy's X-Forwarded-Host)
 // must be loopback as well. Non-browser clients send no Origin and pass on Host alone.
 import { Effect } from "effect";

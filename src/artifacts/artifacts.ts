@@ -15,6 +15,8 @@ import type { Extension } from "@earendil-works/pi-durable";
 import { Clock, Context, Effect, Layer } from "effect";
 
 import { conversationRoot } from "../approvals.ts";
+import type { UserId } from "../auth/user.ts";
+import { conversationOwner } from "../conversation-meta.ts";
 import { ArtifactNotFound, ArtifactRefused } from "../errors.ts";
 import type { TrustedDomains } from "./domains.ts";
 import { checkPage } from "./refs.ts";
@@ -49,6 +51,8 @@ export interface ArtifactEdit {
 export type ArtifactUpdate = {
   readonly callId: string;
   readonly title?: string | undefined;
+  /** Whose Trusted domains the page is checked against; without one, against none. */
+  readonly owner?: UserId | undefined;
 } & ({ readonly html: string } | { readonly edits: readonly ArtifactEdit[] });
 
 /** An artifact as the API and the console see it. */
@@ -86,11 +90,17 @@ const quoted = (find: string) =>
 /** The trusted image domains a check reads: the live service, or a fixed list for tests. */
 type Trusted = TrustedDomains["Service"] | readonly string[];
 
-const listTrusted = (trusted: Trusted | undefined) => {
+const listTrusted = (
+  trusted: Trusted | undefined,
+  owner: UserId | undefined
+): Effect.Effect<readonly string[]> => {
   if (trusted === undefined) {
     return Effect.succeed([]);
   }
-  return "list" in trusted ? trusted.list() : Effect.succeed(trusted);
+  if (!("list" in trusted)) {
+    return Effect.succeed(trusted);
+  }
+  return owner === undefined ? Effect.succeed([]) : trusted.list(owner);
 };
 
 /** Fail with the first reason `edits` cannot apply to `html`; each `find` must occur exactly once. */
@@ -133,6 +143,8 @@ export class Artifacts extends Context.Service<
         readonly title: string;
         readonly html: string;
         readonly callId: string;
+        /** Whose Trusted domains the page is checked against; without one, against none. */
+        readonly owner?: UserId | undefined;
       }
     ): Effect.Effect<ArtifactRef, ArtifactRefused>;
     /**
@@ -161,10 +173,12 @@ export class Artifacts extends Context.Service<
     /** The conversation's artifacts, most recently updated first. */
     list(conversationId: number): Effect.Effect<readonly ArtifactView[]>;
     /**
-     * Every artifact across conversations, most recently updated first. A separate method, not `list` with an
-     * optional scope: on this service `undefined` scope always means finds nothing, never everything.
+     * Every artifact of these conversations (a User's), most recently updated first. A separate method, not `list`
+     * with an optional scope: on this service `undefined` scope always means finds nothing, never everything.
      */
-    listAll(): Effect.Effect<readonly ArtifactView[]>;
+    listIn(
+      conversationIds: readonly number[]
+    ): Effect.Effect<readonly ArtifactView[]>;
     /** Delete the conversation's artifact and all its versions. `undefined` scopes to no conversation. */
     remove(
       conversationId: number | undefined,
@@ -183,8 +197,8 @@ export class Artifacts extends Context.Service<
         const { records } = options;
         // Every new version's page is checked against the current trusted domains: a replayed call skips it (the
         // check already ran), while a domain trusted later lets a once-refused page through unchanged.
-        const check = (html: string) =>
-          Effect.flatMap(listTrusted(options.trusted), (domains) =>
+        const check = (html: string, owner: UserId | undefined) =>
+          Effect.flatMap(listTrusted(options.trusted, owner), (domains) =>
             checkPage(html, domains)
           );
 
@@ -199,7 +213,12 @@ export class Artifacts extends Context.Service<
 
         const create = Effect.fn("Artifacts.create")(function* (
           conversationId: number,
-          input: { title: string; html: string; callId: string }
+          input: {
+            title: string;
+            html: string;
+            callId: string;
+            owner?: UserId | undefined;
+          }
         ) {
           yield* checkSize(input.html);
           const replayed = records.versionByCallId(
@@ -214,7 +233,7 @@ export class Artifacts extends Context.Service<
             };
           }
           const id = `art_${randomBytes(16).toString("hex")}`;
-          yield* check(input.html);
+          yield* check(input.html, input.owner);
           const now = yield* Clock.currentTimeMillis;
           records.insert(
             {
@@ -269,7 +288,7 @@ export class Artifacts extends Context.Service<
             ({ html } = change);
           }
           yield* checkSize(html);
-          yield* check(html);
+          yield* check(html, change.owner);
           const now = yield* Clock.currentTimeMillis;
           const title = change.title ?? artifact.title;
           const record = {
@@ -318,7 +337,8 @@ export class Artifacts extends Context.Service<
             }),
           list: (conversationId) =>
             Effect.sync(() => records.list(conversationId).map(viewOf)),
-          listAll: () => Effect.sync(() => records.listAll().map(viewOf)),
+          listIn: (conversationIds) =>
+            Effect.sync(() => records.listIn(conversationIds).map(viewOf)),
           remove: (conversationId, id) =>
             Effect.suspend(() =>
               conversationId !== undefined && records.remove(id, conversationId)
@@ -403,13 +423,15 @@ export const artifactsExtension = (
   return defineExtension({
     name: "artifacts",
     sections: [
-      section("artifacts", (input) =>
-        Effect.runPromise(
-          Effect.map(trusted.list(), (domains) =>
-            sectionText(domains, String(input.conversationId))
-          )
-        )
-      ),
+      section("artifacts", async (input, context) => {
+        const owner = await conversationOwner(
+          input.read,
+          input.conversationId,
+          context
+        );
+        const domains = await Effect.runPromise(listTrusted(trusted, owner));
+        return sectionText(domains, String(input.conversationId));
+      }),
     ],
     tools: [
       defineTool({
@@ -420,16 +442,13 @@ export const artifactsExtension = (
           html: Type.String({ description: page }),
         }),
         execute: async (args, api, context) => {
-          const owner = await conversationRoot(
-            api,
-            api.conversationId,
-            context
-          );
+          const root = await conversationRoot(api, api.conversationId, context);
           const ref = await run(
-            artifacts.create(Number(owner), {
+            artifacts.create(Number(root), {
               title: args.title,
               html: args.html,
               callId: api.callId,
+              owner: await conversationOwner(api, root, context),
             })
           );
           return {
@@ -483,15 +502,12 @@ export const artifactsExtension = (
               isError: true,
             };
           }
-          const owner = await conversationRoot(
-            api,
-            api.conversationId,
-            context
-          );
+          const root = await conversationRoot(api, api.conversationId, context);
           const ref = await run(
-            artifacts.update(Number(owner), args.id, {
+            artifacts.update(Number(root), args.id, {
               ...update,
               ...(args.title === undefined ? {} : { title: args.title }),
+              owner: await conversationOwner(api, root, context),
             })
           );
           return {

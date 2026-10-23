@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentError } from "../agents/agents.ts";
 import { Search } from "../search/search.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
+import { alice } from "../testing/users.ts";
 import { Conversations } from "./conversations.ts";
 
 const defaults = {
@@ -97,14 +98,15 @@ describe("persistent conversations", () => {
       withStack(file, [answer("hello")], (conversations) =>
         Effect.gen(function* () {
           const created = yield* conversations.create({
+            owner: alice.id,
             sandbox: "none",
             prompt: "Say hi",
           });
           ({ id } = created);
           yield* waitUntil(
-            conversations.list.pipe(
-              Effect.map((all) => all[0]?.status === "idle")
-            )
+            conversations
+              .list(alice.id)
+              .pipe(Effect.map((all) => all[0]?.status === "idle"))
           );
         })
       )
@@ -113,7 +115,7 @@ describe("persistent conversations", () => {
     await Effect.runPromise(
       withStack(file, [answer("still here")], (conversations) =>
         Effect.gen(function* () {
-          const listed = yield* conversations.list;
+          const listed = yield* conversations.list(alice.id);
           const found = listed.find((c) => c.id === id);
           expect(found?.status).toBe("paused");
           expect(found?.title).toBe("Say hi");
@@ -142,13 +144,14 @@ describe("persistent conversations", () => {
         (conversations) =>
           Effect.gen(function* () {
             ({ id } = yield* conversations.create({
+              owner: alice.id,
               sandbox: "shell",
               prompt: "leave a note",
             }));
             yield* waitUntil(
-              conversations.list.pipe(
-                Effect.map((all) => all[0]?.status === "idle")
-              )
+              conversations
+                .list(alice.id)
+                .pipe(Effect.map((all) => all[0]?.status === "idle"))
             );
           })
       )
@@ -160,7 +163,9 @@ describe("persistent conversations", () => {
         [callTool("bash", { command: "cat note.txt" }), echoToolResult],
         (conversations) =>
           Effect.gen(function* () {
-            const found = (yield* conversations.list).find((c) => c.id === id);
+            const found = (yield* conversations.list(alice.id)).find(
+              (c) => c.id === id
+            );
             const stream = yield* conversations.events(id);
             yield* conversations.send(id, "read it");
             const got = yield* nextAnswer(stream);
@@ -181,6 +186,7 @@ describe("persistent conversations", () => {
       withStack(file, [answer("ok")], (conversations) =>
         Effect.gen(function* () {
           ({ id } = yield* conversations.create({
+            owner: alice.id,
             sandbox: "none",
             prompt: "hi",
           }));
@@ -194,7 +200,7 @@ describe("persistent conversations", () => {
     const result = await Effect.runPromise(
       withStack(file, [], (conversations) =>
         Effect.gen(function* () {
-          const listed = yield* conversations.list;
+          const listed = yield* conversations.list(alice.id);
           const sendExit = yield* Effect.exit(conversations.send(id, "again"));
           return { listed, sendExit };
         })
@@ -214,15 +220,25 @@ describe("persistent conversations", () => {
         [answer("a"), answer("b")],
         (conversations) =>
           Effect.gen(function* () {
-            yield* conversations.create({ sandbox: "none", prompt: "chat" });
-            yield* conversations.create({ sandbox: "shell", prompt: "shell" });
+            yield* conversations.create({
+              owner: alice.id,
+              sandbox: "none",
+              prompt: "chat",
+            });
+            yield* conversations.create({
+              owner: alice.id,
+              sandbox: "shell",
+              prompt: "shell",
+            });
             yield* waitUntil(
-              conversations.list.pipe(
-                Effect.map((all) => all.every((c) => c.status === "paused"))
-              ),
+              conversations
+                .list(alice.id)
+                .pipe(
+                  Effect.map((all) => all.every((c) => c.status === "paused"))
+                ),
               15_000
             );
-            return yield* conversations.list;
+            return yield* conversations.list(alice.id);
           }),
         { idleTimeoutMs: 50, sweepEveryMs: 10 }
       )
@@ -238,6 +254,7 @@ describe("persistent conversations", () => {
       withStack(file, [answer("a")], (conversations) =>
         Effect.gen(function* () {
           ({ id } = yield* conversations.create({
+            owner: alice.id,
             sandbox: "none",
             prompt: "hi",
           }));
@@ -312,14 +329,15 @@ describe("persistent conversations", () => {
             const context = yield* Layer.build(layer);
             const conversations = Context.get(context, Conversations);
             const created = yield* conversations.create({
+              owner: alice.id,
               sandbox: "shell",
               prompt: "sleep",
             });
             ({ id } = created);
             yield* waitUntil(
-              conversations.list.pipe(
-                Effect.map((all) => all[0]?.status === "running")
-              ),
+              conversations
+                .list(alice.id)
+                .pipe(Effect.map((all) => all[0]?.status === "running")),
               10_000
             );
           })
@@ -331,7 +349,7 @@ describe("persistent conversations", () => {
     await Effect.runPromise(
       withStack(file, [], (conversations, faux) =>
         Effect.gen(function* () {
-          const listed = yield* conversations.list;
+          const listed = yield* conversations.list(alice.id);
           expect(listed.find((c) => c.id === id)?.status).toBe("paused");
           yield* Effect.sleep("300 millis");
           expect(faux.state.callCount).toBe(0);

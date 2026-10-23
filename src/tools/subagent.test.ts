@@ -30,6 +30,7 @@ import {
   offered,
   openSeat,
 } from "../testing/faux.ts";
+import { alice } from "../testing/users.ts";
 import { MAX_SUBAGENTS } from "./subagent.ts";
 import { UPGRADE_WORKSPACE } from "./workspace.ts";
 
@@ -165,12 +166,25 @@ describe("task", () => {
           const listed = (yield* agents.list).map((record) =>
             Number(record.id)
           );
-          return { answer, events, childId, listed, seatId: seat.id };
+          const childOwner =
+            childId === undefined ? undefined : yield* agents.ownerOf(childId);
+          return {
+            answer,
+            events,
+            childId,
+            childOwner,
+            listed,
+            seatId: seat.id,
+          };
         })
       ).pipe(Effect.provide(layer))
     );
     expect(result.answer).toBe("7");
-    expect(result.childId).toBeDefined();
+    // The child belongs to whoever owns its parent, so its owner can stream its card.
+    expect({
+      child: result.childId !== undefined,
+      owner: result.childOwner,
+    }).toStrictEqual({ child: true, owner: alice.id });
     // The child is task-owned: it never appears in the top-level list.
     expect(result.listed).toStrictEqual([Number(result.seatId)]);
     // The console attaches to the child through the call's details.
