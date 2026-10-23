@@ -17,11 +17,14 @@ export interface Workspace {
    * it, the root the Files tab.
    */
   readonly open: (target: OpenTarget) => void;
+  /** Refetches the tree listing, which otherwise waits for the Run to end: files made in the Shell tab meanwhile. */
+  readonly refresh: () => void;
 }
 
 export const WorkspaceContext = createContext<Workspace>({
   index: EMPTY_INDEX,
   open: () => null,
+  refresh: () => null,
 });
 
 export const useWorkspace = (): Workspace => useContext(WorkspaceContext);

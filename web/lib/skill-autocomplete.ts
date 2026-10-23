@@ -1,6 +1,7 @@
 // The composer's `/` list. At the start of the prompt a `/` opens it, forcing a skill (`/skill:<name> request`).
 // Anywhere else, after whitespace, it opens once `/s` is typed: a mention there hints at the skill to the model
 // (src/skills/format.ts formatSkillHints), and a bare `/` mid-text is more often a path than a skill.
+import type { Suggestion, Suggestions } from "./autocomplete";
 
 export interface SkillOption {
   readonly name: string;
@@ -52,22 +53,26 @@ export const matchSkills = (
   return all.filter((skill) => skill.name.startsWith(query));
 };
 
-/** The prompt with the word replaced by `/skill:<name> `, and where the cursor goes: after the space. */
-export const completeSkill = (
+/** The composer's `/` list: matchSkills over skillQuery, each row inserting `/skill:<name> `. */
+export const skillSuggestions = (
   prompt: string,
-  token: SkillToken,
-  name: string
-): { readonly prompt: string; readonly cursor: number } => {
-  const inserted = `/skill:${name} `;
-  const rest = prompt.slice(token.end).replace(/^ /u, "");
-  return {
-    prompt: `${prompt.slice(0, token.start)}${inserted}${rest}`,
-    cursor: token.start + inserted.length,
-  };
+  cursor: number,
+  skills: readonly SkillOption[]
+): Suggestions | undefined => {
+  const token = skillQuery(prompt, cursor);
+  if (token === undefined) {
+    return;
+  }
+  const [first, ...rest] = matchSkills(skills, token.query).map(
+    (skill): Suggestion => ({
+      key: skill.name,
+      label: `/skill:${skill.name}`,
+      detail: skill.description,
+      icon: "skill",
+      insert: `/skill:${skill.name} `,
+    })
+  );
+  return first === undefined
+    ? undefined
+    : { start: token.start, end: token.end, options: [first, ...rest] };
 };
-
-export const moveSelection = (
-  index: number,
-  delta: 1 | -1,
-  length: number
-): number => (length === 0 ? 0 : (index + delta + length) % length);

@@ -15,7 +15,7 @@ import type {
   SettingsChange,
   SoftwareId,
 } from "effect-pi/api";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 
 import { runApi } from "./api";
@@ -121,11 +121,14 @@ export const useWorkspaceTree = (
       : { staleTime: Number.POSITIVE_INFINITY }),
   });
 
-/** The open conversation's link index (see linkIndexOf), refetched when a run ends so its new files link. */
+/**
+ * The open conversation's link index (see linkIndexOf), refetched when a run ends so its new files link, and
+ * `refresh` to refetch it sooner. Without a live Sandbox the query is disabled and `refresh` fetches nothing.
+ */
 export const useWorkspaceIndex = (
   conversation: ConversationSummary | undefined,
   running: boolean
-): WorkspaceIndex => {
+): { readonly index: WorkspaceIndex; readonly refresh: () => void } => {
   const id = conversation?.id ?? -1;
   const sandbox = conversation?.sandbox ?? "none";
   const status = conversation?.status ?? "archived";
@@ -144,10 +147,14 @@ export const useWorkspaceIndex = (
     }
     wasRunning.current = running;
   }, [id, queryClient, running]);
-  return useMemo(
+  const refresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: workspaceTreeKey(id) });
+  }, [id, queryClient]);
+  const index = useMemo(
     () => linkIndexOf({ sandbox, status }, data?.paths),
     [sandbox, status, data]
   );
+  return { index, refresh };
 };
 
 const TRUSTED_DOMAINS = ["trusted-domains"] as const;

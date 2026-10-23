@@ -149,7 +149,7 @@ describe(linkIndexOf, () => {
 const provide = (child: ReturnType<typeof createElement>, at = index) =>
   createElement(
     WorkspaceContext.Provider,
-    { value: { index: at, open: () => null } },
+    { value: { index: at, open: () => null, refresh: () => null } },
     child
   );
 

@@ -331,7 +331,7 @@ const Console = () => {
   );
   const [file, setFile] = useFilePanel(selectedId);
   const [view, dispatchView] = useSandboxView(selectedId);
-  const index = useWorkspaceIndex(conversation, state.running);
+  const { index, refresh } = useWorkspaceIndex(conversation, state.running);
   const openPath = useCallback(
     (target: OpenTarget) => {
       if (target.kind === "file") {
@@ -352,8 +352,8 @@ const Console = () => {
     [dispatchView, isDesktop, setFile, sidePanel]
   );
   const workspace = useMemo(
-    () => ({ index, open: openPath }),
-    [index, openPath]
+    () => ({ index, open: openPath, refresh }),
+    [index, openPath, refresh]
   );
 
   const toggleSidePanel = () => {

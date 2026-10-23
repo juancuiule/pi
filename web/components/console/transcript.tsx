@@ -13,6 +13,8 @@ import {
   Brain,
   CircleAlert,
   Clock,
+  FileIcon,
+  FolderIcon,
   FoldVertical,
   History,
   Info,
@@ -62,11 +64,16 @@ import { messageTime } from "@/lib/format";
 import { useInfo, useWithdrawMessage } from "@/lib/queries";
 import { settingsNote } from "@/lib/settings-note";
 import { skillMentionParts } from "@/lib/skill-message";
+import type { MentionPart } from "@/lib/skill-message";
 import { useConversationStore } from "@/lib/store";
 import { subagentIdFor, subagentsInFlight } from "@/lib/subagent";
 import { displayParts, isNearBottom, userParts } from "@/lib/transcript";
 import { unansweredNote } from "@/lib/unanswered-note";
 import { useNow } from "@/lib/use-now";
+import { useWorkspace } from "@/lib/workspace-context";
+import type { WorkspaceTarget } from "@/lib/workspace-links";
+import { workspaceMentionParts } from "@/lib/workspace-mentions";
+import type { PathMentionPart } from "@/lib/workspace-mentions";
 
 import { ArtifactCard } from "./artifact-card";
 import { SentChip } from "./attachment-chip";
@@ -152,6 +159,55 @@ const SkillMention = ({ skill }: { skill: string }) => (
     {skill}
   </span>
 );
+
+/** An `@path` mention in the person's text that resolves in the workspace: opens it like an answer's path link. */
+const PathMention = ({ target }: { target: WorkspaceTarget }) => {
+  const { open } = useWorkspace();
+  const Icon = target.kind === "file" ? FileIcon : FolderIcon;
+  return (
+    <button
+      type="button"
+      onClick={() => open(target)}
+      title={target.kind === "file" ? "Open file" : "Show in Files"}
+      className="bg-background text-muted-foreground hover:text-foreground inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 align-baseline font-mono text-xs"
+    >
+      <Icon aria-hidden className="size-3" strokeWidth={1.5} />
+      {target.kind === "file" ? target.path : `${target.path}/`}
+    </button>
+  );
+};
+
+/** The person's text, with skill hints and resolved `@` mentions as chips. */
+const MessageText = ({
+  text,
+  hinted,
+}: {
+  text: string;
+  hinted: readonly string[];
+}) => {
+  const { index } = useWorkspace();
+  return (
+    <p className="text-prose break-words whitespace-pre-wrap">
+      {skillMentionParts(text, hinted)
+        .flatMap((part): readonly (MentionPart | PathMentionPart)[] =>
+          part.kind === "text"
+            ? workspaceMentionParts(part.text, index)
+            : [part]
+        )
+        .map((part, position) => {
+          if (part.kind === "text") {
+            return part.text;
+          }
+          // oxlint-disable-next-line no-array-index-key -- parts have no identity beyond their order
+          return part.kind === "skill" ? (
+            <SkillMention key={position} skill={part.skill} />
+          ) : (
+            <PathMention key={position} target={part.target} />
+          );
+        })}
+    </p>
+  );
+};
 
 /** The message's timestamp, when it carries one (older entries and test fixtures may not). */
 const atOf = (entry: EntryRecord): number | undefined => {
@@ -498,20 +554,7 @@ const Entry = ({
               />
             )}
             {parts.shown === "" ? null : (
-              <p className="text-prose break-words whitespace-pre-wrap">
-                {skillMentionParts(parts.shown, parts.hinted).map(
-                  (part, index) =>
-                    part.kind === "text" ? (
-                      part.text
-                    ) : (
-                      <SkillMention
-                        // oxlint-disable-next-line no-array-index-key -- parts have no identity beyond their order
-                        key={index}
-                        skill={part.skill}
-                      />
-                    )
-                )}
-              </p>
+              <MessageText text={parts.shown} hinted={parts.hinted} />
             )}
             {parts.attachments.length === 0 ? null : (
               <div className="flex flex-wrap gap-1.5">
@@ -672,19 +715,7 @@ const QueuedMessage = ({
         />
       )}
       {parts.shown === "" ? null : (
-        <p className="text-prose break-words whitespace-pre-wrap">
-          {skillMentionParts(parts.shown, parts.hinted).map((part, index) =>
-            part.kind === "text" ? (
-              part.text
-            ) : (
-              <SkillMention
-                // oxlint-disable-next-line no-array-index-key -- parts have no identity beyond their order
-                key={index}
-                skill={part.skill}
-              />
-            )
-          )}
-        </p>
+        <MessageText text={parts.shown} hinted={parts.hinted} />
       )}
       {parts.attachments.length === 0 ? null : (
         <div className="flex flex-wrap gap-1.5">
