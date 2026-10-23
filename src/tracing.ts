@@ -526,12 +526,14 @@ export const makeAgentTracing = (
         },
         // A follow-up the Run took in answers again; the turn keeps the last answer.
         onYield: (answer, api) => {
-          runs
-            .get(api.conversationId)
-            ?.span.attribute(
+          // Under `ask` the entry is an earlier, ended turn.
+          const turn = runs.get(api.conversationId)?.span;
+          if (turn !== undefined && turn.status._tag !== "Ended") {
+            turn.attribute(
               "langfuse.observation.output",
               textOf(answer.content)
             );
+          }
         },
       }),
       hook(ToolTask, {
