@@ -64,7 +64,8 @@ const CapacityPage = () => {
               holders: resource.holders,
             };
             const holders = holdersOf(shortage, conversations ?? []);
-            const full = resource.holders.length >= resource.limit;
+            // The limit is shared: `inUse` counts everyone's, `holders` only this User's own.
+            const full = resource.inUse >= resource.limit;
             return (
               <section
                 key={resource.resource}
@@ -78,7 +79,10 @@ const CapacityPage = () => {
                   {SECTION_LABEL[resource.resource]}
                 </h2>
                 <p className="text-muted-foreground text-xs">
-                  {resource.holders.length} of {resource.limit} in use
+                  {resource.inUse} of {resource.limit} in use
+                  {resource.inUse > resource.holders.length
+                    ? ` · ${resource.holders.length} by your conversations`
+                    : ""}
                   {full ? ` · ${shortageText(shortage)}` : ""}
                 </p>
                 {holders.length === 0 ? null : (

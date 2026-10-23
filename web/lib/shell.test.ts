@@ -3,11 +3,17 @@ import { describe, expect, it } from "vitest";
 import { shellControlOf, shellOpenTargetOf, shellUrl } from "./shell";
 import { WORKSPACE_ROOT, workspaceIndexOf } from "./workspace-links";
 
+const hostFor = (apiUrl: string, pageHost: string) =>
+  new URL(
+    shellUrl({ apiUrl, pageHost, conversation: 1, columns: 80, rows: 24 })
+  ).host;
+
 describe(shellUrl, () => {
   it("points at the server's own URL with the ws scheme and the PTY size", () => {
     const url = new URL(
       shellUrl({
         apiUrl: "http://127.0.0.1:4000",
+        pageHost: "127.0.0.1",
         conversation: 7,
         columns: 120,
         rows: 40,
@@ -23,12 +29,29 @@ describe(shellUrl, () => {
     const url = new URL(
       shellUrl({
         apiUrl: "https://pi.example.com",
+        pageHost: "pi.example.com",
         conversation: 1,
         columns: 80,
         rows: 24,
       })
     );
     expect(url.protocol).toBe("wss:");
+  });
+
+  // The session cookie belongs to the page's host; on another loopback name the socket would arrive without it.
+  it("takes the page's loopback name, keeping the server's port and scheme", () => {
+    expect([
+      hostFor("http://127.0.0.1:4000", "localhost"),
+      hostFor("http://localhost:4000", "127.0.0.1"),
+      hostFor("http://127.0.0.1:4000", "[::1]"),
+    ]).toStrictEqual(["localhost:4000", "127.0.0.1:4000", "[::1]:4000"]);
+  });
+
+  it("keeps the server's host when either side is not loopback", () => {
+    expect([
+      hostFor("http://127.0.0.1:4000", "pi.example.com"),
+      hostFor("https://api.example.com", "localhost"),
+    ]).toStrictEqual(["127.0.0.1:4000", "api.example.com"]);
   });
 });
 

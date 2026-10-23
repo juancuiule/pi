@@ -49,3 +49,41 @@ describe("upload errors", () => {
     ]);
   });
 });
+
+describe("sign-in errors", () => {
+  it("explains wrong credentials, the wait after too many, and refused accounts", () => {
+    expect([
+      apiError({ _tag: "InvalidCredentials" }),
+      apiError({ _tag: "TooManyAttempts", retryAfterMs: 29_100 }),
+      apiError({ _tag: "TooManyAttempts", retryAfterMs: 400 }),
+      apiError({ _tag: "InvalidAccount", reason: "The name is taken." }),
+    ]).toStrictEqual([
+      "Wrong name or password.",
+      "Too many failed attempts. Try again in 30 seconds.",
+      "Too many failed attempts. Try again in 1 second.",
+      "The name is taken.",
+    ]);
+  });
+});
+
+describe("capacity errors", () => {
+  it("asks to wait when other people hold the whole limit", () => {
+    expect([
+      apiError({
+        _tag: "CapacityExhausted",
+        resource: "shell",
+        limit: 3,
+        holders: [4],
+      }),
+      apiError({
+        _tag: "CapacityExhausted",
+        resource: "shell",
+        limit: 3,
+        holders: [],
+      }),
+    ]).toStrictEqual([
+      "At most 3 shell sandboxes can run at once. Pause one first.",
+      "The server is busy with other people's conversations. Try again later.",
+    ]);
+  });
+});

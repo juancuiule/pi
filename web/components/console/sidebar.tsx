@@ -3,6 +3,7 @@
 import type { ConversationSummary } from "effect-pi/api";
 import {
   LoaderCircle,
+  LogOut,
   Monitor,
   Moon,
   Plus,
@@ -15,6 +16,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -29,7 +31,12 @@ import { parseConversationId } from "@/lib/conversation-id";
 import { ATTENTION_LABEL } from "@/lib/conversation-status";
 import { relativeTime } from "@/lib/format";
 import { PAGES } from "@/lib/navigation";
-import { useConversations, useInfo } from "@/lib/queries";
+import {
+  useAuthState,
+  useConversations,
+  useInfo,
+  useSignOut,
+} from "@/lib/queries";
 import { useOpenSearch } from "@/lib/search-context";
 import { useConversationStore } from "@/lib/store";
 import { useMounted } from "@/lib/use-media-query";
@@ -110,6 +117,33 @@ const ThemeToggle = () => {
         </Tooltip>
       ))}
     </fieldset>
+  );
+};
+
+/** The signed-in User's name and Sign out. */
+const Account = () => {
+  const { data } = useAuthState();
+  const signOut = useSignOut();
+  const name = data?.user?.name ?? "";
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="min-w-0 truncate text-xs font-medium" title={name}>
+        {name}
+      </span>
+      <Button
+        variant="ghost"
+        size="xs"
+        disabled={signOut.isPending}
+        onClick={() =>
+          signOut.mutate(undefined, {
+            onError: (error) => toast.error(error.message),
+          })
+        }
+      >
+        <LogOut aria-hidden />
+        Sign out
+      </Button>
+    </div>
   );
 };
 
@@ -299,6 +333,7 @@ export const Sidebar = () => {
         </ul>
       </nav>
       <div className="border-border flex flex-col gap-1.5 border-t p-2">
+        <Account />
         <span
           className="text-muted-foreground block truncate font-mono text-xs"
           title={info?.model}
