@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SandboxShell } from "./sandbox.ts";
 import { shellSession } from "./shell-session.ts";
+import type { ShellSession } from "./shell-session.ts";
 
 const fakeShell = Effect.gen(function* () {
   const queue = yield* Queue.unbounded<Uint8Array>();
@@ -26,6 +27,14 @@ const fakeShell = Effect.gen(function* () {
 
 const bytes = (value: string) => new TextEncoder().encode(value);
 const text = (bytes_: Uint8Array) => new TextDecoder().decode(bytes_);
+/** Forks a run of `opens` for its first open; the yield lets the fork subscribe before the test prints. */
+const firstOpen = (session: ShellSession) =>
+  Effect.tap(
+    session.opens.pipe(Stream.take(1), Stream.runCollect, Effect.forkChild),
+    () => Effect.yieldNow
+  );
+const openSequence = (kind: string, path: string) =>
+  `\u001B]7701;open;${kind};${Buffer.from(path).toString("base64")}\u0007`;
 
 describe("a shell session", () => {
   it("replays scrollback to a new attach", async () => {
@@ -176,6 +185,83 @@ describe("a shell session", () => {
     );
 
     expect(alive).toBeFalsy();
+  });
+
+  it("announces an `open` to a live attach, even split across PTY chunks", async () => {
+    const opened = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { shell, queue } = yield* fakeShell;
+          const session = yield* shellSession(shell);
+          const attached = yield* firstOpen(session);
+          const printed = openSequence("file", "/workspace/a.md");
+          yield* Queue.offerAll(queue, [
+            bytes(`$ open a.md\r\n${printed.slice(0, 9)}`),
+            bytes(`${printed.slice(9)}$ `),
+          ]);
+          return yield* Fiber.join(attached);
+        })
+      )
+    );
+
+    expect(opened).toStrictEqual([{ path: "/workspace/a.md", kind: "file" }]);
+  });
+
+  it("never replays an `open` to a later attach, which still gets its bytes", async () => {
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { shell, queue } = yield* fakeShell;
+          const session = yield* shellSession(shell);
+          const first = yield* firstOpen(session);
+          yield* Queue.offer(
+            queue,
+            bytes(openSequence("file", "/workspace/a.md"))
+          );
+          yield* Fiber.join(first);
+
+          const later = yield* firstOpen(session);
+          const replayed = yield* session.output.pipe(
+            Stream.take(1),
+            Stream.runCollect
+          );
+          yield* Queue.offer(
+            queue,
+            bytes(openSequence("directory", "/workspace/src"))
+          );
+          return {
+            replayed: replayed.map(text),
+            later: yield* Fiber.join(later),
+          };
+        })
+      )
+    );
+
+    expect(result.replayed).toStrictEqual([
+      openSequence("file", "/workspace/a.md"),
+    ]);
+    expect(result.later).toStrictEqual([
+      { path: "/workspace/src", kind: "directory" },
+    ]);
+  });
+
+  it("ends `opens` when the PTY's output ends", async () => {
+    const opened = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { shell, queue } = yield* fakeShell;
+          const session = yield* shellSession(shell);
+          const attached = yield* session.opens.pipe(
+            Stream.runCollect,
+            Effect.forkChild
+          );
+          yield* Queue.shutdown(queue);
+          return yield* Fiber.join(attached);
+        })
+      )
+    );
+
+    expect(opened).toStrictEqual([]);
   });
 
   it("forwards write and resize to the wrapped shell", async () => {

@@ -3,7 +3,7 @@
 import { createContext, useContext } from "react";
 
 import { EMPTY_INDEX } from "./workspace-links";
-import type { WorkspaceIndex, WorkspaceTarget } from "./workspace-links";
+import type { OpenTarget, WorkspaceIndex } from "./workspace-links";
 
 /**
  * The open conversation's workspace, provided by the console page. Answers' path links, tool calls,
@@ -12,8 +12,11 @@ import type { WorkspaceIndex, WorkspaceTarget } from "./workspace-links";
 export interface Workspace {
   /** What a mention may link to: empty without a live Sandbox, so every link goes quiet together. */
   readonly index: WorkspaceIndex;
-  /** The one "open workspace path" action: a file opens the file pane, a folder the Files tab revealing it. */
-  readonly open: (target: WorkspaceTarget) => void;
+  /**
+   * The one "open workspace path" action: a file opens the file pane, a folder the Files tab revealing
+   * it, the root the Files tab.
+   */
+  readonly open: (target: OpenTarget) => void;
 }
 
 export const WorkspaceContext = createContext<Workspace>({

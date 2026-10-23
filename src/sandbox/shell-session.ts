@@ -5,12 +5,20 @@
 import { Cause, Deferred, Effect, PubSub, Ref, Stream } from "effect";
 import type { Scope } from "effect";
 
+import { OPEN_SCAN_START, scanOpens } from "./open-sequence.ts";
+import type { WorkspaceOpen } from "./open-sequence.ts";
 import type { SandboxShell } from "./sandbox.ts";
 
 /** Bytes of PTY scrollback a new attach replays, kept as 4 KiB frames in a sliding PubSub. */
 export const SHELL_SCROLLBACK_BYTES = 256 * 1024;
 
 const FRAME_BYTES = 4 * 1024;
+
+const framesOf = function* (chunk: Uint8Array) {
+  for (let offset = 0; offset < chunk.length; offset += FRAME_BYTES) {
+    yield chunk.subarray(offset, offset + FRAME_BYTES);
+  }
+};
 
 /**
  * ShellSession IS a `SandboxShell`: `output` is the attach point (each run replays then follows live),
@@ -24,6 +32,11 @@ export interface ShellSession extends SandboxShell {
    * scope closing — the callers that map each to a protocol reason cannot tell them apart by timing.
    */
   readonly ended: Effect.Effect<"exit" | "close">;
+  /**
+   * The shell's `open` commands printed after a run subscribes. Never replayed, so a reattach cannot
+   * fire an old one; `output` still carries their bytes, live and on replay, and the terminal swallows them.
+   */
+  readonly opens: Stream.Stream<WorkspaceOpen>;
 }
 
 /**
@@ -43,6 +56,7 @@ export const shellSession = (
       capacity: replay,
       replay,
     });
+    const opens = yield* PubSub.sliding<WorkspaceOpen>(16);
     const running = yield* Ref.make(true);
     const gone = yield* Deferred.make<"exit" | "close">();
 
@@ -50,22 +64,32 @@ export const shellSession = (
       Effect.andThen(
         Ref.set(running, false),
         Effect.andThen(
-          PubSub.shutdown(pubsub),
+          Effect.andThen(PubSub.shutdown(pubsub), PubSub.shutdown(opens)),
           Effect.ignore(Deferred.succeed(gone, cause))
         )
       );
 
     yield* shell.output.pipe(
-      Stream.flatMap((chunk) =>
-        Stream.fromIterable(
-          (function* () {
-            for (let offset = 0; offset < chunk.length; offset += FRAME_BYTES) {
-              yield chunk.subarray(offset, offset + FRAME_BYTES);
-            }
-          })()
+      Stream.mapAccum(
+        () => OPEN_SCAN_START,
+        (scan, chunk) => {
+          const [next, found] = scanOpens(scan, chunk);
+          return [next, [{ chunk, found }]] as const;
+        }
+      ),
+      // An open goes out after its own bytes, so a live attach has them before it acts.
+      Stream.runForEach(({ chunk, found }) =>
+        Effect.andThen(
+          Effect.forEach(
+            framesOf(chunk),
+            (frame) => PubSub.publish(pubsub, frame),
+            { discard: true }
+          ),
+          Effect.forEach(found, (open) => PubSub.publish(opens, open), {
+            discard: true,
+          })
         )
       ),
-      Stream.runForEach((frame) => PubSub.publish(pubsub, frame)),
       Effect.andThen(finish("exit")),
       Effect.catchCause((cause) =>
         // Interruption is the scope closing, which the finalizer below records itself.
@@ -85,17 +109,21 @@ export const shellSession = (
     // recorded as `close` before the pump's interruption can report `exit`.
     yield* Effect.addFinalizer(() => finish("close"));
 
-    return {
-      // A subscribe racing `PubSub.shutdown` hangs, so the gone Deferred interrupts it instead.
-      output: Stream.unwrap(
+    // A subscribe racing `PubSub.shutdown` hangs, so the gone Deferred interrupts it instead.
+    const attach = <A>(source: PubSub.PubSub<A>): Stream.Stream<A> =>
+      Stream.unwrap(
         Effect.map(Ref.get(running), (alive) =>
           alive
-            ? Stream.fromPubSub(pubsub).pipe(
+            ? Stream.fromPubSub(source).pipe(
                 Stream.interruptWhen(Deferred.await(gone))
               )
             : Stream.empty
         )
-      ),
+      );
+
+    return {
+      output: attach(pubsub),
+      opens: attach(opens),
       write: shell.write,
       resize: shell.resize,
       alive: Ref.get(running),

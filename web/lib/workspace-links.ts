@@ -21,6 +21,16 @@ export interface WorkspaceTarget {
   readonly kind: WorkspaceKind;
 }
 
+/** The workspace root, which no WorkspacePath names: the Files tab with nothing revealed. */
+export interface WorkspaceRoot {
+  readonly kind: "root";
+}
+
+export const WORKSPACE_ROOT: WorkspaceRoot = { kind: "root" };
+
+/** What the open action takes: a file, a folder, or the root (the shell's `open .` at /workspace). */
+export type OpenTarget = WorkspaceTarget | WorkspaceRoot;
+
 /**
  * The paths a link may point at, each with its kind. Built from the tree listing only, so skipped
  * subtrees and entries past its 4000 cap are absent and never link.

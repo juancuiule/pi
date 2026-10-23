@@ -1,0 +1,30 @@
+#!/bin/sh
+# open <path>: shows a workspace file in the console's file pane, a folder in its Files tab.
+# Prints ESC ] 7701 ; open ; <file|directory> ; <base64 absolute path> BEL to the terminal, which the
+# server reads from the PTY (src/sandbox/open-sequence.ts). Inside tmux or screen it does nothing: they
+# drop an OSC they do not know.
+set -eu
+root=/workspace
+if [ "$#" -ne 1 ]; then
+  echo "usage: open <path>" >&2
+  exit 2
+fi
+if [ ! -e "$1" ]; then
+  echo "open: no such file or directory: $1" >&2
+  exit 1
+fi
+abs=$(realpath -e -- "$1")
+case "$abs" in
+  "$root" | "$root"/*) ;;
+  *)
+    echo "open: not in the workspace: $1" >&2
+    exit 1
+    ;;
+esac
+if [ -d "$abs" ]; then kind=directory; else kind=file; fi
+encoded=$(printf %s "$abs" | base64 -w0)
+# The terminal, not stdout: `$(open x)` or `open x | cat` must not capture the sequence.
+if ! printf '\033]7701;open;%s;%s\007' "$kind" "$encoded" 2>/dev/null >/dev/tty; then
+  echo "open: needs the console's Shell tab" >&2
+  exit 1
+fi

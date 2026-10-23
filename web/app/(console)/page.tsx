@@ -66,7 +66,7 @@ import { useConversationEvents } from "@/lib/use-conversation-events";
 import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
 import { WorkspaceContext } from "@/lib/workspace-context";
 import type { OpenFile } from "@/lib/workspace-files";
-import type { WorkspaceTarget } from "@/lib/workspace-links";
+import type { OpenTarget } from "@/lib/workspace-links";
 
 const pageTitle = (conversation: ConversationSummary | undefined): string =>
   conversation === undefined
@@ -333,7 +333,7 @@ const Console = () => {
   const [view, dispatchView] = useSandboxView(selectedId);
   const index = useWorkspaceIndex(conversation, state.running);
   const openPath = useCallback(
-    (target: WorkspaceTarget) => {
+    (target: OpenTarget) => {
       if (target.kind === "file") {
         setFile({ path: target.path });
         return;
@@ -343,7 +343,11 @@ const Console = () => {
       } else {
         setSandboxOpen(true);
       }
-      dispatchView({ type: "reveal", path: target.path });
+      dispatchView(
+        target.kind === "root"
+          ? { type: "tab", tab: "files" }
+          : { type: "reveal", path: target.path }
+      );
     },
     [dispatchView, isDesktop, setFile, sidePanel]
   );

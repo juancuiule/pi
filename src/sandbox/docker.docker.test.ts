@@ -1,6 +1,14 @@
 // Integration tests against real Docker containers. Run with `pnpm test:docker` after `pnpm sandbox:build`.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -28,8 +36,10 @@ import { ask, callTool, echoToolResult } from "../testing/faux.ts";
 import * as DockerVolumes from "../workspaces/docker-volume.ts";
 import { Workspaces } from "../workspaces/workspaces.ts";
 import * as DockerSandboxes from "./docker.ts";
+import type { WorkspaceOpen } from "./open-sequence.ts";
 import { Sandboxes } from "./sandbox.ts";
 import type { SandboxShell } from "./sandbox.ts";
+import { shellSession } from "./shell-session.ts";
 
 const containerExists = (name: string) =>
   execFileSync("docker", ["ps", "-a", "--filter", `name=^${name}$`, "-q"], {
@@ -130,7 +140,7 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
               const created = yield* workspaces.sandbox({ level: "shell" });
               const output = yield* run(
                 workspaces.env(created.sandbox),
-                "pwd && echo kept > notes.txt && git --version | cut -d' ' -f1"
+                "pwd && echo kept > notes.txt && git --version | cut -d' ' -f1 && test -x /usr/local/bin/open && echo open"
               );
               return { ...created, output };
             })
@@ -144,7 +154,7 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
               });
               const output = yield* run(
                 workspaces.env(created.sandbox),
-                "cat notes.txt"
+                "cat notes.txt && test ! -e /usr/local/bin/open && echo no-open"
               );
               return { ...created, output };
             })
@@ -159,8 +169,11 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
         }).pipe(Effect.provide(testWorkspaces()))
       );
 
-      expect(first).toStrictEqual({ ok: true, text: "/workspace\ngit\n" });
-      expect(second).toStrictEqual({ ok: true, text: "kept\n" });
+      expect(first).toStrictEqual({
+        ok: true,
+        text: "/workspace\ngit\nopen\n",
+      });
+      expect(second).toStrictEqual({ ok: true, text: "kept\nno-open\n" });
       for (const name of names) {
         expect(containerExists(name)).toBeFalsy();
       }
@@ -179,7 +192,7 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
               });
               const output = yield* run(
                 workspaces.env(created.sandbox),
-                "uv --version"
+                "uv --version && test -x /usr/local/bin/open"
               );
               const image = imageOf(created.sandbox.id);
               return {
@@ -296,6 +309,155 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       );
 
       expect(answer).toContain("X=640\nY=400");
+    });
+
+    it("announces the Shell tab's `open` from the PTY, live only, and refuses what it cannot open", async () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "effect-pi-open-"));
+      mkdirSync(path.join(dir, "notes"));
+      mkdirSync(path.join(dir, "src"));
+      writeFileSync(path.join(dir, "notes", "a.md"), "# A\n");
+      writeFileSync(path.join(dir, "src", "x.ts"), "x\n");
+      writeFileSync(path.join(dir, "odd;name .md"), "odd\n");
+      symlinkSync("/etc", path.join(dir, "out"));
+      const name = `effect-pi-open-${crypto.randomUUID().slice(0, 8)}`;
+      const utf8 = new TextDecoder();
+      const ascii = new TextEncoder();
+
+      const observed = await Effect.runPromise(
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes;
+          const sandbox = yield* sandboxes.create(
+            "shell",
+            name,
+            { type: "directory", path: dir },
+            []
+          );
+          yield* Effect.addFinalizer(() =>
+            Effect.ignore(sandboxes.remove(sandbox))
+          );
+          const session = yield* shellSession(
+            yield* sandboxes.shell(sandbox, { columns: 200, rows: 40 })
+          );
+          let output = "";
+          const opens: WorkspaceOpen[] = [];
+          yield* Stream.runForEach(session.output, (chunk) =>
+            Effect.sync(() => {
+              output += utf8.decode(chunk, { stream: true });
+            })
+          ).pipe(Effect.forkScoped);
+          yield* Stream.runForEach(session.opens, (open) =>
+            Effect.sync(() => {
+              opens.push(open);
+            })
+          ).pipe(Effect.forkScoped);
+
+          let step = 0;
+          /**
+           * Runs one command line: its exit status and the lines it printed between the echoed command
+           * and the status, without escape sequences (bash's own, and `open`'s, which `opens` reports).
+           */
+          const type = (line: string) =>
+            Effect.gen(function* () {
+              step += 1;
+              const from = output.length;
+              const status = `echo END-${step}:$?`;
+              const end = new RegExp(`END-${step}:(\\d+)`, "u");
+              yield* session.write(ascii.encode(`${line}; ${status}\n`));
+              yield* until(() => end.test(output.slice(from)));
+              const lines = output
+                .slice(from)
+                .replaceAll(
+                  // oxlint-disable-next-line no-control-regex -- terminal escapes are control characters by design
+                  /\u001B\][^\u0007]*\u0007|\u001B\[[0-9;?]*[A-Za-z]|\r/gu,
+                  ""
+                )
+                .split("\n");
+              const endAt = lines.findIndex((printed) => end.test(printed));
+              // The first command is echoed twice: by the PTY as typeahead, then by readline.
+              const echoAt = lines
+                .slice(0, endAt)
+                .findLastIndex((printed) => printed.includes(status));
+              return {
+                status: Number(end.exec(lines[endAt] ?? "")?.[1]),
+                said: lines.slice(echoAt + 1, endAt).join("\n"),
+              };
+            });
+
+          const results = {
+            file: yield* type("cd src && open ../notes/a.md"),
+            here: yield* type("open ."),
+            root: yield* type("cd .. && open ."),
+            odd: yield* type("open 'odd;name .md'"),
+            missing: yield* type("open nope"),
+            outside: yield* type("open /etc/hostname"),
+            link: yield* type("open out"),
+            none: yield* type("open"),
+            two: yield* type("open a b"),
+            captured: yield* type('x=$(open notes/a.md); echo "[$x]"'),
+          };
+          yield* until(() => opens.length >= 5);
+          yield* Effect.sleep("300 millis");
+
+          const agent = yield* run(
+            sandboxes.env(sandbox),
+            'cd /workspace && open notes/a.md; echo "status=$?"'
+          );
+
+          let replayed = "";
+          const late: WorkspaceOpen[] = [];
+          yield* Stream.runForEach(session.output, (chunk) =>
+            Effect.sync(() => {
+              replayed += utf8.decode(chunk, { stream: true });
+            })
+          ).pipe(Effect.forkScoped);
+          yield* Stream.runForEach(session.opens, (open) =>
+            Effect.sync(() => {
+              late.push(open);
+            })
+          ).pipe(Effect.forkScoped);
+          const replay = yield* until(() =>
+            replayed.includes("\u001B]7701;open;")
+          );
+          yield* Effect.sleep("500 millis");
+
+          return {
+            results,
+            opens: [...opens],
+            agent: agent.text,
+            replay,
+            late,
+          };
+        }).pipe(Effect.provide(DockerSandboxes.layer()), Effect.scoped)
+      );
+      rmSync(dir, { recursive: true, force: true });
+
+      expect(observed).toStrictEqual({
+        results: {
+          file: { status: 0, said: "" },
+          here: { status: 0, said: "" },
+          root: { status: 0, said: "" },
+          odd: { status: 0, said: "" },
+          missing: { status: 1, said: "open: no such file or directory: nope" },
+          outside: {
+            status: 1,
+            said: "open: not in the workspace: /etc/hostname",
+          },
+          link: { status: 1, said: "open: not in the workspace: out" },
+          none: { status: 2, said: "usage: open <path>" },
+          two: { status: 2, said: "usage: open <path>" },
+          captured: { status: 0, said: "[]" },
+        },
+        opens: [
+          { path: "/workspace/notes/a.md", kind: "file" },
+          { path: "/workspace/src", kind: "directory" },
+          { path: "/workspace", kind: "directory" },
+          { path: "/workspace/odd;name .md", kind: "file" },
+          { path: "/workspace/notes/a.md", kind: "file" },
+        ],
+        agent: "open: needs the console's Shell tab\nstatus=1\n",
+        replay: true,
+        late: [],
+      });
     });
 
     it("runs an interactive PTY with resize and Ctrl-C, killed when its scope closes", async () => {
