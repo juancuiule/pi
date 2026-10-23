@@ -110,6 +110,21 @@ describe(Auth, () => {
     expect(result.bob).toBe("bob");
   });
 
+  it("counts parallel guesses, so a burst cannot outrun the block", async () => {
+    const tags = await withAuth((auth) =>
+      Effect.gen(function* () {
+        yield* auth.setup("alice", "password-a");
+        const burst = yield* Effect.forEach(
+          Array.from({ length: 12 }, (_, at) => `wrong-${at}-password`),
+          (guess) => Effect.flip(auth.login("alice", guess)),
+          { concurrency: "unbounded" }
+        );
+        return burst.map((error) => error._tag);
+      })
+    );
+    expect(tags.filter((tag) => tag === "InvalidCredentials")).toHaveLength(5);
+  });
+
   it("refuses bad names, short passwords and taken names", async () => {
     const result = await withAuth((auth) =>
       Effect.gen(function* () {

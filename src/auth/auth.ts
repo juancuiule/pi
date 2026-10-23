@@ -25,6 +25,7 @@ export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const FREE_FAILURES = 5;
 const FIRST_BLOCK_MS = 30_000;
 const MAX_BLOCK_MS = 15 * 60_000;
+const MAX_TRACKED = 10_000;
 
 const tokenHash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
@@ -86,6 +87,18 @@ export class Auth extends Context.Service<
           { count: number; blockedUntil: number }
         >();
 
+        // Names are the attacker's to choose, so the map is bounded: past MAX_TRACKED, names no longer blocked go.
+        const forgetStale = (now: number) => {
+          if (failures.size <= MAX_TRACKED) {
+            return;
+          }
+          for (const [name, entry] of failures) {
+            if (entry.blockedUntil <= now) {
+              failures.delete(name);
+            }
+          }
+        };
+
         const newAccount = Effect.fnUntraced(function* (
           name: string,
           password: string
@@ -126,6 +139,18 @@ export class Auth extends Context.Service<
               retryAfterMs: blocked.blockedUntil - now,
             });
           }
+          // Charged before the slow check, in the same synchronous step as the read above, so a burst of parallel
+          // guesses counts every one of them; a right password takes the charge back.
+          const count = (blocked?.count ?? 0) + 1;
+          const over = count - FREE_FAILURES;
+          failures.set(key, {
+            count,
+            blockedUntil:
+              over < 0
+                ? 0
+                : now + Math.min(FIRST_BLOCK_MS * 2 ** over, MAX_BLOCK_MS),
+          });
+          forgetStale(now);
           const account = records.byName(key);
           // An unknown name is checked against a decoy, so timing does not tell which names exist.
           const ok = yield* Effect.promise(async () =>
@@ -135,15 +160,6 @@ export class Auth extends Context.Service<
             )
           );
           if (account === undefined || !ok) {
-            const count = (blocked?.count ?? 0) + 1;
-            const over = count - FREE_FAILURES;
-            failures.set(key, {
-              count,
-              blockedUntil:
-                over < 0
-                  ? 0
-                  : now + Math.min(FIRST_BLOCK_MS * 2 ** over, MAX_BLOCK_MS),
-            });
             return yield* new InvalidCredentials();
           }
           failures.delete(key);
