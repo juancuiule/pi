@@ -43,13 +43,13 @@ import { toolResultEntryOf, toolResultOf } from "@/lib/conversation-state";
 import type { ConversationState, ToolRun } from "@/lib/conversation-state";
 import type { ToolDiagnostic } from "@/lib/diagnostics";
 import { diagnosticsOf, visibleResultContent } from "@/lib/diagnostics";
-import { useOpenFile } from "@/lib/file-context";
 import { formatDuration } from "@/lib/format";
 import { questionsOf } from "@/lib/questions";
 import { editHunksOf, isEditConfirmation, patchOf } from "@/lib/tool-input";
 import { toolSummary } from "@/lib/tool-summary";
 import { cn } from "@/lib/utils";
 import { sourcesOf } from "@/lib/web-search";
+import { useWorkspace } from "@/lib/workspace-context";
 import { filePathOf } from "@/lib/workspace-files";
 
 import { EditPreview, FilePreview, PatchPreview } from "./file-blocks";
@@ -562,7 +562,7 @@ export const ToolCall = ({
   /** A call-specific extra body — a `task` call's nested subagent transcript. */
   extra?: ReactNode;
 }) => {
-  const openFile = useOpenFile();
+  const workspace = useWorkspace();
   const filePath = filePathOf(call.name, call.arguments);
   const tool = state.tools[call.id];
   const resultEntry = toolResultEntryOf(state, call.id);
@@ -636,7 +636,7 @@ export const ToolCall = ({
         </TraceCollapsibleContent>
       </TraceCollapsible>
       {/* A workspace path the call names opens in the file pane beside the chat. */}
-      {filePath === undefined || openFile === undefined ? null : (
+      {filePath === undefined ? null : (
         <Tooltip>
           <TooltipTrigger
             render={
@@ -644,7 +644,7 @@ export const ToolCall = ({
                 variant="ghost"
                 size="icon-sm"
                 aria-label={`Open ${filePath}`}
-                onClick={() => openFile({ path: filePath })}
+                onClick={() => workspace.open({ path: filePath, kind: "file" })}
               >
                 <FileSearch />
               </Button>

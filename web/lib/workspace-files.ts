@@ -3,6 +3,9 @@
 // rendered, and binaries are only described — the file pane never executes a workspace file.
 import type { WorkspaceFileEntry } from "effect-pi/api";
 
+import { normalizeWorkspacePath } from "./workspace-links";
+import type { WorkspacePath } from "./workspace-links";
+
 /** A workspace file opened in the file pane, by the path the agent used. */
 export interface OpenFile {
   readonly path: string;
@@ -14,13 +17,16 @@ export interface OpenFile {
  */
 const FILE_TOOLS = new Set(["read", "write", "edit"]);
 
-/** The workspace path a call's arguments name, when they name a file. */
-export const filePathOf = (name: string, args: unknown): string | undefined => {
+/** The workspace path a call's arguments name, when they name a file inside the workspace. */
+export const filePathOf = (
+  name: string,
+  args: unknown
+): WorkspacePath | undefined => {
   if (!FILE_TOOLS.has(name)) {
     return undefined;
   }
   const { path } = (args ?? {}) as Record<string, unknown>;
-  return typeof path === "string" && path !== "" ? path : undefined;
+  return typeof path === "string" ? normalizeWorkspacePath(path) : undefined;
 };
 
 const LANGUAGES: Record<string, string> = {

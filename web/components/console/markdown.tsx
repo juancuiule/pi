@@ -29,6 +29,9 @@ import {
 } from "@/components/ui/code-block";
 import { useHighlightedCode } from "@/hooks/use-highlighted-code";
 import { cn } from "@/lib/utils";
+import { useWorkspace } from "@/lib/workspace-context";
+import { markedTargetOf, remarkWorkspaceLinks } from "@/lib/workspace-links";
+import type { WorkspaceTarget } from "@/lib/workspace-links";
 
 /** Unique prefixes for pele's accessibility ids, serial across concurrent diagrams. */
 let serial = 0;
@@ -214,6 +217,23 @@ const TrustedImage = ({ src, alt }: { src?: string | Blob; alt?: string }) => {
   );
 };
 
+const TrustedLink = ({
+  href,
+  children,
+}: {
+  href?: string;
+  children?: ReactNode;
+}) => (
+  <a
+    href={href}
+    target="_blank"
+    rel="noreferrer"
+    className="text-link underline underline-offset-2"
+  >
+    {children}
+  </a>
+);
+
 // Element overrides only — no typography plugin, no raw HTML (react-markdown's default).
 export const markdownComponents: Components = {
   p: ({ children }) => (
@@ -255,16 +275,7 @@ export const markdownComponents: Components = {
       {children}
     </blockquote>
   ),
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-link underline underline-offset-2"
-    >
-      {children}
-    </a>
-  ),
+  a: ({ children, href }) => <TrustedLink href={href}>{children}</TrustedLink>,
   img: TrustedImage,
   code: ({ className, children }) => {
     // A language class means a fenced block, rendered by `pre` below.
@@ -402,28 +413,76 @@ const untrustedComponents: Components = {
   img: UntrustedImage,
 };
 
+/**
+ * A workspace path in an answer: a button styled as a link, so it opens the file pane or the Files
+ * tab instead of navigating. Its children keep their rendering, so a code span keeps its chip.
+ */
+const WorkspaceLink = ({
+  target,
+  children,
+}: {
+  target: WorkspaceTarget;
+  children?: ReactNode;
+}) => {
+  const { open } = useWorkspace();
+  return (
+    <button
+      type="button"
+      onClick={() => open(target)}
+      title={target.kind === "file" ? "Open file" : "Show in Files"}
+      className="text-link inline cursor-pointer text-left underline underline-offset-2"
+    >
+      {children}
+    </button>
+  );
+};
+
+/** The `a` override while linking: what the plugin marked opens the workspace, the rest stay links. */
+const WorkspaceAnchor: NonNullable<Components["a"]> = ({
+  node,
+  href,
+  children,
+}) => {
+  const target = markedTargetOf(node?.properties);
+  return target === undefined ? (
+    <TrustedLink href={href}>{children}</TrustedLink>
+  ) : (
+    <WorkspaceLink target={target}>{children}</WorkspaceLink>
+  );
+};
+
 export const Markdown = ({
   children,
   className,
   untrusted = false,
   components,
+  workspaceLinks = false,
 }: {
   children: string;
   className?: string;
   untrusted?: boolean;
   components?: Components;
-}) => (
-  <div className={cn("text-prose max-w-[65ch]", className)}>
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      // Without rehype-raw raw HTML shows as text; sanitize keeps <img>/<a> as elements for the overrides while killing scripts, media and handlers.
-      rehypePlugins={untrusted ? [rehypeRaw, rehypeSanitize] : []}
-      components={{
-        ...(untrusted ? untrustedComponents : markdownComponents),
-        ...components,
-      }}
-    >
-      {children}
-    </ReactMarkdown>
-  </div>
-);
+  /** Link the workspace paths the text mentions, against `useWorkspace().index`. The agent's answers only. */
+  workspaceLinks?: boolean;
+}) => {
+  const { index } = useWorkspace();
+  const linking = workspaceLinks && !untrusted && index.size > 0;
+  return (
+    <div className={cn("text-prose max-w-[65ch]", className)}>
+      <ReactMarkdown
+        remarkPlugins={
+          linking ? [remarkGfm, [remarkWorkspaceLinks, { index }]] : [remarkGfm]
+        }
+        // Without rehype-raw raw HTML shows as text; sanitize keeps <img>/<a> as elements for the overrides while killing scripts, media and handlers.
+        rehypePlugins={untrusted ? [rehypeRaw, rehypeSanitize] : []}
+        components={{
+          ...(untrusted ? untrustedComponents : markdownComponents),
+          ...(linking ? { a: WorkspaceAnchor } : {}),
+          ...components,
+        }}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
+};

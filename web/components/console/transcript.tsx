@@ -377,7 +377,7 @@ const AssistantBlocks = ({
       {segments.map((segment) =>
         segment.kind === "text" ? (
           <div key={`t${segment.index}`}>
-            <Markdown>{segment.text}</Markdown>
+            <Markdown workspaceLinks>{segment.text}</Markdown>
             {caret && segment.index === lastTextIndex ? <Caret /> : null}
           </div>
         ) : (
@@ -871,7 +871,7 @@ const SimpleRun = ({
       )}
       {final === undefined ? null : (
         <div className="group/msg group/feedback">
-          <Markdown>{final.text}</Markdown>
+          <Markdown workspaceLinks>{final.text}</Markdown>
           <MessageFooter
             conversation={conversation}
             entry={final.entry.id}

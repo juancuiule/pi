@@ -15,13 +15,16 @@ import type {
   SettingsChange,
   SoftwareId,
 } from "effect-pi/api";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 
 import { runApi } from "./api";
 import type { CapacityGuard } from "./capacity-context";
 import { useCapacityGuard } from "./capacity-context";
+import { seatlessOf } from "./conversation-status";
 import { useConversationStore } from "./store";
+import { linkIndexOf } from "./workspace-links";
+import type { WorkspaceIndex } from "./workspace-links";
 
 const LIST = ["conversations"] as const;
 
@@ -97,6 +100,55 @@ export const useCapabilities = () =>
     // save. A short staleness refetches on remount or focus, enough for the /skills page.
     staleTime: 30_000,
   });
+
+const workspaceTreeKey = (id: number) => ["workspace-tree", id] as const;
+
+/**
+ * A conversation's tree listing, one cache entry shared by the Files tab and the links. `poll` is
+ * the Files tab's 2s refresh; without it the listing stays until the run-end invalidation in
+ * useWorkspaceIndex. Structural sharing keeps `data` identical across unchanged polls.
+ */
+export const useWorkspaceTree = (
+  id: number,
+  { live, poll }: { readonly live: boolean; readonly poll: boolean }
+) =>
+  useQuery({
+    queryKey: workspaceTreeKey(id),
+    queryFn: () => runApi((c) => c.files.tree({ params: { id } })),
+    enabled: live,
+    ...(poll
+      ? { refetchInterval: 2000 }
+      : { staleTime: Number.POSITIVE_INFINITY }),
+  });
+
+/** The open conversation's link index (see linkIndexOf), refetched when a run ends so its new files link. */
+export const useWorkspaceIndex = (
+  conversation: ConversationSummary | undefined,
+  running: boolean
+): WorkspaceIndex => {
+  const id = conversation?.id ?? -1;
+  const sandbox = conversation?.sandbox ?? "none";
+  const status = conversation?.status ?? "archived";
+  const { data } = useWorkspaceTree(id, {
+    live:
+      conversation !== undefined &&
+      sandbox !== "none" &&
+      !seatlessOf({ status }),
+    poll: false,
+  });
+  const queryClient = useQueryClient();
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      void queryClient.invalidateQueries({ queryKey: workspaceTreeKey(id) });
+    }
+    wasRunning.current = running;
+  }, [id, queryClient, running]);
+  return useMemo(
+    () => linkIndexOf({ sandbox, status }, data?.paths),
+    [sandbox, status, data]
+  );
+};
 
 const TRUSTED_DOMAINS = ["trusted-domains"] as const;
 

@@ -2,16 +2,19 @@
 
 import { cn } from "cn";
 import { LoaderCircle, SquareTerminal } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { buttonVariants } from "@/components/ui/button";
 import type { ConversationState } from "@/lib/conversation-state";
+import type {
+  PanelTab,
+  SandboxView,
+  SandboxViewAction,
+} from "@/lib/sandbox-view";
 
 import { FilesBrowser } from "./files-browser";
 import { ShellTerminal } from "./shell-terminal";
 import { TerminalPanel } from "./terminal-panel";
-
-type PanelTab = "shell" | "agent" | "files";
 
 const PanelTabs = ({
   tab,
@@ -47,13 +50,16 @@ const PanelTabs = ({
 /**
  * The shell sandbox's side panel: an interactive Shell tab over the conversation's Sandbox, and the Agent tab
  * with the read-only view of the agent's commands. Both stay mounted once visited — the shell's socket and
- * scrollback would die with its terminal — so the inactive one is only hidden.
+ * scrollback would die with its terminal — so the inactive one is only hidden. The console page owns the
+ * view, so a folder link can switch to Files.
  */
 export const SandboxPanel = ({
   id,
   live,
   state,
   resuming = false,
+  view,
+  onView,
 }: {
   id: number;
   /** The conversation has a Seat: `running` or `idle`. Without one the Shell tab shows why it is empty. */
@@ -61,19 +67,18 @@ export const SandboxPanel = ({
   state: ConversationState;
   /** A resume is in flight: the seat's sandbox is still starting. */
   resuming?: boolean;
+  view: SandboxView;
+  onView: (action: SandboxViewAction) => void;
 }) => {
-  const [tab, setTab] = useState<PanelTab>(live ? "shell" : "agent");
-  const [shellSeen, setShellSeen] = useState(tab === "shell");
-  const [filesSeen, setFilesSeen] = useState(tab === "files");
-  const select = (next: PanelTab) => {
-    if (next === "shell") {
-      setShellSeen(true);
-    }
-    if (next === "files") {
-      setFilesSeen(true);
-    }
-    setTab(next);
-  };
+  const tab = view.tab ?? (live ? "shell" : "agent");
+  const [seen, setSeen] = useState<ReadonlySet<PanelTab>>(() => new Set([tab]));
+  if (!seen.has(tab)) {
+    setSeen(new Set([...seen, tab]));
+  }
+  const onRevealed = useCallback(
+    (seq: number) => onView({ type: "revealed", seq }),
+    [onView]
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -86,10 +91,13 @@ export const SandboxPanel = ({
             className="text-muted-foreground size-3.5 motion-safe:animate-spin"
           />
         ) : null}
-        <PanelTabs tab={tab} onTab={select} />
+        <PanelTabs
+          tab={tab}
+          onTab={(next) => onView({ type: "tab", tab: next })}
+        />
       </div>
       <div className="relative min-h-0 flex-1">
-        {shellSeen ? (
+        {seen.has("shell") ? (
           <div
             className={cn("absolute inset-0", tab !== "shell" && "invisible")}
           >
@@ -99,11 +107,17 @@ export const SandboxPanel = ({
         <div className={cn("absolute inset-0", tab !== "agent" && "invisible")}>
           <TerminalPanel state={state} resuming={resuming} />
         </div>
-        {filesSeen ? (
+        {seen.has("files") ? (
           <div
             className={cn("absolute inset-0", tab !== "files" && "invisible")}
           >
-            <FilesBrowser id={id} live={live} />
+            <FilesBrowser
+              id={id}
+              live={live}
+              reveal={view.reveal}
+              revealSeq={view.revealSeq}
+              onRevealed={onRevealed}
+            />
           </div>
         ) : null}
       </div>
