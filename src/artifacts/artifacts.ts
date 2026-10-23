@@ -14,6 +14,7 @@ import {
 import type { Extension } from "@earendil-works/pi-durable";
 import { Clock, Context, Effect, Layer } from "effect";
 
+import { conversationRoot } from "../approvals.ts";
 import { ArtifactNotFound, ArtifactRefused } from "../errors.ts";
 import type { TrustedDomains } from "./domains.ts";
 import { checkPage } from "./refs.ts";
@@ -157,7 +158,7 @@ export class Artifacts extends Context.Service<
       { readonly version: number; readonly html: string },
       ArtifactNotFound
     >;
-    /** The conversation's artifacts, oldest first. */
+    /** The conversation's artifacts, most recently updated first. */
     list(conversationId: number): Effect.Effect<readonly ArtifactView[]>;
     /**
      * Every artifact across conversations, most recently updated first. A separate method, not `list` with an
@@ -386,8 +387,10 @@ const run = <A>(effect: Effect.Effect<A, ArtifactNotFound | ArtifactRefused>) =>
 
 /**
  * The `artifacts` extension: a prompt section, and the create and update tools over the conversation's
- * artifacts. They run on the host, so a conversation without a Sandbox still produces pages. The section renders
- * before each request, so the trusted-domain list the person edits shows up on the next one.
+ * artifacts. A subagent's calls act on its root conversation's artifacts, so the person finds a page the child
+ * wrote in the conversation they see. The tools run on the host, so a conversation without a Sandbox still
+ * produces pages. The section renders before each request, so the trusted-domain list the person edits shows
+ * up on the next one.
  */
 export const artifactsExtension = (
   artifacts: Artifacts["Service"],
@@ -416,9 +419,14 @@ export const artifactsExtension = (
           title,
           html: Type.String({ description: page }),
         }),
-        execute: async (args, api) => {
+        execute: async (args, api, context) => {
+          const owner = await conversationRoot(
+            api,
+            api.conversationId,
+            context
+          );
           const ref = await run(
-            artifacts.create(Number(api.conversationId), {
+            artifacts.create(Number(owner), {
               title: args.title,
               html: args.html,
               callId: api.callId,
@@ -461,7 +469,7 @@ export const artifactsExtension = (
           ),
           title: Type.Optional(title),
         }),
-        execute: async (args, api) => {
+        execute: async (args, api, context) => {
           let update: ArtifactUpdate;
           if (args.html !== undefined && args.edits === undefined) {
             update = { callId: api.callId, html: args.html };
@@ -475,8 +483,13 @@ export const artifactsExtension = (
               isError: true,
             };
           }
+          const owner = await conversationRoot(
+            api,
+            api.conversationId,
+            context
+          );
           const ref = await run(
-            artifacts.update(Number(api.conversationId), args.id, {
+            artifacts.update(Number(owner), args.id, {
               ...update,
               ...(args.title === undefined ? {} : { title: args.title }),
             })

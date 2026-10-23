@@ -9,7 +9,7 @@ import type { Extension } from "@earendil-works/pi-durable";
 import {
   ApprovalDoc,
   approvalKey,
-  approvalRoot,
+  conversationRoot,
   waitForPerson,
 } from "../approvals.ts";
 import type { QuestionAnswer } from "../approvals.ts";
@@ -106,7 +106,11 @@ export const questionsExtension = (): Extension =>
         execute: async ({ questions }, api, context) => {
           const key = approvalKey(api.conversationId, api.callId);
           // A subagent's questions wait on its root conversation's doc, like its approvals.
-          const rootId = await approvalRoot(api, api.conversationId, context);
+          const rootId = await conversationRoot(
+            api,
+            api.conversationId,
+            context
+          );
           await api.commit(async (tx) => {
             const doc = await tx.doc(ApprovalDoc, rootId);
             doc.pending[key] = {

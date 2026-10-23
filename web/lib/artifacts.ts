@@ -4,6 +4,7 @@
 import type { ConversationSummary, EntryRecord } from "effect-pi/api";
 
 import { parseConversationId } from "./conversation-id";
+import { relativeTime } from "./format";
 
 /** The artifact a committed `artifact_*` result points at. */
 export interface ArtifactRef {
@@ -17,6 +18,59 @@ export interface OpenArtifact {
   readonly id: string;
   readonly version?: number | undefined;
 }
+
+/** What the console's artifact panel shows: nothing, the conversation's list, or one artifact. */
+export type ArtifactPanelState =
+  | { readonly kind: "closed" }
+  | { readonly kind: "list" }
+  | { readonly kind: "artifact"; readonly artifact: OpenArtifact };
+
+export type ArtifactPanelAction =
+  | { readonly type: "toggle" }
+  | { readonly type: "open"; readonly artifact: OpenArtifact }
+  | { readonly type: "back" }
+  | { readonly type: "close" };
+
+export const ARTIFACT_PANEL_CLOSED: ArtifactPanelState = { kind: "closed" };
+
+/**
+ * The header button toggles between closed and the list, and closes an open artifact too; `open` shows one
+ * artifact from anywhere; `back` returns from an artifact to the list.
+ */
+export const nextArtifactPanel = (
+  state: ArtifactPanelState,
+  action: ArtifactPanelAction
+): ArtifactPanelState => {
+  switch (action.type) {
+    case "toggle": {
+      return state.kind === "closed" ? { kind: "list" } : ARTIFACT_PANEL_CLOSED;
+    }
+    case "open": {
+      return { kind: "artifact", artifact: action.artifact };
+    }
+    case "back": {
+      return state.kind === "artifact" ? { kind: "list" } : state;
+    }
+    case "close": {
+      return ARTIFACT_PANEL_CLOSED;
+    }
+    default: {
+      return state;
+    }
+  }
+};
+
+/** A list row's detail: "1 version · just now", "3 versions · 2h ago". */
+export const artifactRowDetail = (
+  artifact: {
+    readonly versions: readonly unknown[];
+    readonly updatedAt: number;
+  },
+  now: number
+): string => {
+  const count = artifact.versions.length;
+  return `${count} ${count === 1 ? "version" : "versions"} · ${relativeTime(artifact.updatedAt, now)}`;
+};
 
 /** The ref in a tool result's `details`, when it is one. */
 export const artifactOf = (details: unknown): ArtifactRef | undefined => {

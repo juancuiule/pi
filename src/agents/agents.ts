@@ -61,7 +61,7 @@ import type {
 } from "../approvals.ts";
 import {
   ApprovalDoc,
-  approvalRoot,
+  conversationRoot,
   clearApprovals,
   isGated,
   stopWaitingCalls,
@@ -2093,7 +2093,7 @@ export class Agents extends Context.Service<
 
           // The pending entries of a subagent's calls live on its root conversation's doc.
           const pendingApprovals = attempt(async () => {
-            const rootId = await approvalRoot(harness, id, context);
+            const rootId = await conversationRoot(harness, id, context);
             const doc = await harness.snapshot(ApprovalDoc, rootId, context);
             return Object.keys(doc?.pending ?? {}).length;
           });

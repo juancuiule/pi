@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 
 import {
   ArtifactDrawer,
+  ArtifactPanel,
   ArtifactResizablePanel,
 } from "@/components/console/artifact-panel";
 import { PageHeader } from "@/components/console/page-header";
@@ -107,16 +108,24 @@ const ArtifactsPage = () => {
     </ScrollArea>
   );
 
+  const panel =
+    open === undefined ? null : (
+      <ArtifactPanel
+        key={`${open.conversation}:${open.artifact.id}`}
+        artifact={open.artifact}
+        conversation={open.conversation}
+        onClose={close}
+      />
+    );
+
   let body: ReactNode = null;
   if (isDesktop === true) {
     body = (
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         <ResizablePanel minSize="30%">{list}</ResizablePanel>
-        <ArtifactResizablePanel
-          artifact={open?.artifact}
-          conversation={open?.conversation}
-          onClose={close}
-        />
+        <ArtifactResizablePanel open={open !== undefined} onClose={close}>
+          {panel}
+        </ArtifactResizablePanel>
       </ResizablePanelGroup>
     );
   } else if (isDesktop === false) {
@@ -129,11 +138,12 @@ const ArtifactsPage = () => {
       <PageHeader title="Artifacts" />
       {body}
       <ArtifactDrawer
-        artifact={open?.artifact}
-        conversation={open?.conversation}
+        open={open !== undefined}
         isDesktop={isDesktop}
         onClose={close}
-      />
+      >
+        {panel}
+      </ArtifactDrawer>
     </div>
   );
 };

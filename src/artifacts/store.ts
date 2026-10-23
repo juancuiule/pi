@@ -84,7 +84,7 @@ export interface ArtifactRecords {
   ): ArtifactVersionRecord | undefined;
   /** An artifact's versions, oldest first, without the pages. */
   versions(artifactId: string): readonly ArtifactVersionInfo[];
-  /** A conversation's artifacts, oldest first. */
+  /** A conversation's artifacts, most recently updated first. */
   list(conversationId: number): readonly ArtifactRecord[];
   /** Every artifact across conversations, most recently updated first. */
   listAll(): readonly ArtifactRecord[];
@@ -199,7 +199,7 @@ export const sqliteRecords = (
       (
         db
           .prepare(
-            "SELECT * FROM artifacts WHERE conversation_id = ? ORDER BY created_at"
+            "SELECT * FROM artifacts WHERE conversation_id = ? ORDER BY updated_at DESC"
           )
           .all(conversationId) as unknown as ArtifactRow[]
       ).map(toRecord),
