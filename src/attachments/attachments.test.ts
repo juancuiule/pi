@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -582,6 +589,51 @@ describe("claims and quotas", WORKERS, () => {
     expect(textOf(answer)).toContain(
       "[Note: The separator is a guess: commas and semicolons split every row the same way."
     );
+  });
+});
+
+describe("the original's stored key", WORKERS, () => {
+  it("keeps the upload's extension, and still serves an original stored before the key had it", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "originals-"));
+    const files = path.join(directory, "files");
+    const layer = Attachments.local({
+      directory: files,
+      database: path.join(directory, "db.sqlite"),
+    });
+    const ids = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const pdf = yield* upload("report.pdf", textPdf(["one page"]));
+          // Only a dotfile reaches a record with no extension: classify needs one in the name, extname finds none.
+          const bare = yield* upload(".txt", "plain text");
+          const legacy = yield* upload("legacy.txt", "legacy bytes");
+          return { pdf: pdf.id, bare: bare.id, legacy: legacy.id };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect(readdirSync(path.join(files, ids.pdf))).toContain("original.pdf");
+    expect(readdirSync(path.join(files, ids.bare))).toContain("original");
+    // An attachment stored before the key carried the extension.
+    renameSync(
+      path.join(files, ids.legacy, "original.txt"),
+      path.join(files, ids.legacy, "original")
+    );
+    const served = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const attachments = yield* Attachments;
+          const bytes = (id: string) =>
+            attachments
+              .file(id, undefined, "original")
+              .pipe(
+                Effect.map(({ bytes }) => new TextDecoder().decode(bytes))
+              );
+          return { legacy: yield* bytes(ids.legacy), bare: yield* bytes(ids.bare) };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    rmSync(directory, { recursive: true, force: true });
+    expect(served).toStrictEqual({ legacy: "legacy bytes", bare: "plain text" });
   });
 });
 
