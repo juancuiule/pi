@@ -622,18 +622,22 @@ describe("the original's stored key", WORKERS, () => {
       Effect.scoped(
         Effect.gen(function* () {
           const attachments = yield* Attachments;
-          const bytes = (id: string) =>
+          const text = (id: string) =>
             attachments
               .file(id, undefined, "original")
-              .pipe(
-                Effect.map(({ bytes }) => new TextDecoder().decode(bytes))
-              );
-          return { legacy: yield* bytes(ids.legacy), bare: yield* bytes(ids.bare) };
+              .pipe(Effect.map(({ bytes }) => new TextDecoder().decode(bytes)));
+          return {
+            legacy: yield* text(ids.legacy),
+            bare: yield* text(ids.bare),
+          };
         })
       ).pipe(Effect.provide(layer))
     );
     rmSync(directory, { recursive: true, force: true });
-    expect(served).toStrictEqual({ legacy: "legacy bytes", bare: "plain text" });
+    expect(served).toStrictEqual({
+      legacy: "legacy bytes",
+      bare: "plain text",
+    });
   });
 });
 
