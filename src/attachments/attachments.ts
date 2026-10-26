@@ -373,8 +373,12 @@ export class Attachments extends Context.Service<
             name:
               path.basename(file.name.replaceAll("\\", "/")).slice(0, 255) ||
               "file",
-            mediaType: kind.mediaType,
-            kind: kind.kind,
+            // An unknown file that turned out to be text downloads as text.
+            mediaType:
+              kind.kind === "file" && prepared.kind === "text"
+                ? "text/plain"
+                : kind.mediaType,
+            kind: prepared.kind,
             size,
             status: statusOf(prepared),
             ocrPages: prepared.ocrPages,
@@ -385,7 +389,9 @@ export class Attachments extends Context.Service<
             conversationId: file.conversationId,
             sentAt: undefined,
             ...(kind.kind === "pdf" ? { pages: prepared.pages.length } : {}),
-            ...(kind.kind === "image" ? {} : { chars: charsOf(prepared) }),
+            ...(prepared.kind === "image" || prepared.kind === "file"
+              ? {}
+              : { chars: charsOf(prepared) }),
             ...(prepared.image === undefined
               ? {}
               : { width: prepared.image.width, height: prepared.image.height }),
@@ -706,11 +712,14 @@ const SECTION = [
   "When you quote or rely on a file, cite it by name with its page (PDFs) and line numbers, or its row numbers (tables).",
 ].join("\n");
 
-/** Tables need computing, not reading, for totals and groupings; what the agent can do depends on its machine. */
-const tableAdvice = (level: string) =>
+/**
+ * Tables need computing, not reading, for totals and groupings, and binary files (archives, Office documents) need a
+ * shell to open; what the agent can do depends on its machine.
+ */
+const levelAdvice = (level: string) =>
   level === "none"
-    ? "You cannot compute over a table here: for totals, averages or groupings over more rows than you have read, say so (or upgrade to a shell) rather than estimate."
-    : "The original files are also in /workspace/.attachments/<id>/. For totals, averages, groupings or filters over a table, compute with the shell on the original file instead of reading every row.";
+    ? 'You cannot compute over a table here: for totals, averages or groupings over more rows than you have read, say so (or upgrade to a shell) rather than estimate. Binary files (type="file") cannot be opened here either.'
+    : 'The original files are also in /workspace/.attachments/<id>/. For totals, averages, groupings or filters over a table, compute with the shell on the original file instead of reading every row. Open binary files (type="file": archives, Office documents, ...) there with the shell.';
 
 const textResult = (text: string) => ({
   content: [{ type: "text", text } satisfies TextContent],
@@ -724,6 +733,9 @@ const sourceOf = (bytes: Uint8Array): Prepared => ({
   warnings: [],
   extractor: "source",
 });
+
+const binaryNote = (record: AttachmentRecord) =>
+  `${record.name} (${record.id}) is a binary file; it cannot be read here. With a shell, open it at /workspace/${sandboxPath(record.id, record.name)}.`;
 
 /** Run an attachment lookup for a tool: an attachment outside the conversation is an error the model reads. */
 const run = <A>(effect: Effect.Effect<A, AttachmentNotFound>) =>
@@ -776,7 +788,7 @@ export const attachmentsExtension = (
           context
         );
         const level = workspace?.level ?? "none";
-        return `${SECTION}\n${tableAdvice(level)}`;
+        return `${SECTION}\n${levelAdvice(level)}`;
       }),
     ],
     tools: [
@@ -814,6 +826,9 @@ export const attachmentsExtension = (
           const conversationId = Number(api.conversationId);
           const loaded = await textOf(conversationId, id, which);
           const { record, prepared } = loaded;
+          if (prepared.kind === "file") {
+            return textResult(binaryNote(record));
+          }
           if (prepared.kind === "image") {
             const { model } = await api.agent(context);
             const vision =
@@ -876,6 +891,9 @@ export const attachmentsExtension = (
             return textResult(
               `${record.name} (${id}) is an image; it has no text to search.`
             );
+          }
+          if (prepared.kind === "file") {
+            return textResult(binaryNote(record));
           }
           return textResult(
             formatSearch(

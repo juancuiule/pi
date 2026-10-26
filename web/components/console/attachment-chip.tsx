@@ -2,6 +2,7 @@
 
 import {
   CircleAlert,
+  FileArchive,
   FileCode,
   FileImage,
   FileSpreadsheet,
@@ -29,6 +30,7 @@ const KIND_ICON: Record<AttachmentKind, typeof FileText> = {
   pdf: FileText,
   table: FileSpreadsheet,
   image: FileImage,
+  file: FileArchive,
 };
 
 const ChipBody = ({

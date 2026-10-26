@@ -17,7 +17,7 @@ import type {
 } from "react";
 
 import { Button } from "@/components/ui/button";
-import { ACCEPTED_FILES, canSend } from "@/lib/attachments";
+import { canSend } from "@/lib/attachments";
 import type { DraftAttachment } from "@/lib/attachments";
 import { complete, moveSelection } from "@/lib/autocomplete";
 import type { Suggestion } from "@/lib/autocomplete";
@@ -120,7 +120,6 @@ const AttachButton = ({
         ref={picker}
         type="file"
         multiple
-        accept={ACCEPTED_FILES}
         className="hidden"
         onChange={(event) => {
           attachments.onAdd([...(event.target.files ?? [])]);

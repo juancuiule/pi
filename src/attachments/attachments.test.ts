@@ -385,7 +385,7 @@ describe("upload checks and lifetimes", WORKERS, () => {
     const exits = await Effect.runPromise(
       Effect.gen(function* () {
         return [
-          yield* Effect.exit(upload("a.docx", "x")),
+          yield* Effect.exit(upload("a.pdf", "not a pdf")),
           yield* Effect.exit(upload("a.txt", "x".repeat(101))),
           yield* Effect.exit(upload("b.txt", "x".repeat(100))),
           yield* Effect.exit(upload("c.txt", "x".repeat(60))),
@@ -749,6 +749,56 @@ describe("PDF pages for the console", WORKERS, () => {
     // The second request is the stored image, not a new drawing.
     expect(result.again).toStrictEqual(result.first);
     expect(result.refused).toStrictEqual([true, true, true]);
+  });
+});
+
+describe("other files", WORKERS, () => {
+  it("reads source code as text and keeps binary files for the shell", async () => {
+    const { layer, faux } = fauxAgents([]);
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat();
+          const code = yield* upload(
+            "app.py",
+            "import os\n\n\n\nprint(os.getcwd())\n",
+            Number(seat.id)
+          );
+          const zip = yield* upload(
+            "src.zip",
+            new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]),
+            Number(seat.id)
+          );
+          faux.setResponses([
+            fauxAssistantMessage([fauxText("ok")]),
+            callTool("search_attachment", { id: code.id, query: "print" }),
+            echoToolResult,
+            callTool("read_attachment", { id: zip.id }),
+            echoToolResult,
+          ]);
+          yield* seat.ask("Files.", [code.id, zip.id]);
+          return {
+            code,
+            zip,
+            found: yield* seat.ask("Find print."),
+            read: yield* seat.ask("Read the zip."),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect([result.code.kind, result.code.mediaType]).toStrictEqual([
+      "text",
+      "text/plain",
+    ]);
+    expect([result.zip.kind, result.zip.mediaType]).toStrictEqual([
+      "file",
+      "application/zip",
+    ]);
+    expect(result.found).toContain("line 5: print(os.getcwd())");
+    expect(result.read).toContain("is a binary file");
+    expect(result.read).toContain(
+      `/workspace/.attachments/${result.zip.id}/src.zip`
+    );
   });
 });
 
