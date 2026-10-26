@@ -5,16 +5,13 @@
 // the Sandbox's lifetime (Seat.shell), so a socket dropping detaches this client without killing the shell —
 // a reconnect lands back in it with scrollback replayed. The shell's `open` command, run while this socket is
 // attached, sends `{"type":"open","path":"/workspace/...","kind":"file"|"directory"}`; a replay never does.
-// The upgrade request is an ordinary request first, so the `loopbackOnly` middleware merged into the same
-// router answers 403 before this runs. It is outside the HttpApi, so it runs `Authentication`'s checks itself:
+// It is outside the HttpApi, so it runs `seatForSocket` (src/server/seat-socket.ts) for `Authentication`'s checks:
 // a session cookie (401 without one) and a Conversation of the caller's own (404 otherwise).
-import { Deferred, Effect, Exit, Option, Stream } from "effect";
+import { Deferred, Effect, Exit, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Socket } from "effect/socket";
 
-import { SESSION_COOKIE } from "../auth/user.ts";
-import { authorize } from "./auth.ts";
-import { Conversations } from "./conversations.ts";
+import { seatForSocket } from "./seat-socket.ts";
 
 const SHELL_ROUTE = "/api/conversations/:id/shell";
 
@@ -52,39 +49,12 @@ const resizeOf = (text: string) => {
 };
 
 const session = Effect.gen(function* () {
-  const conversations = yield* Conversations;
+  const found = yield* seatForSocket(SHELL_ROUTE);
+  if (HttpServerResponse.isHttpServerResponse(found)) {
+    return found;
+  }
+  const seat = found;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const params = yield* HttpRouter.params;
-  const id = Number(params.id);
-  if (!Number.isInteger(id) || id < 0) {
-    return HttpServerResponse.text("Unknown conversation", { status: 404 });
-  }
-  const refusal = yield* authorize(
-    request.cookies[SESSION_COOKIE] ?? "",
-    SHELL_ROUTE
-  ).pipe(
-    Effect.as(Option.none<HttpServerResponse.HttpServerResponse>()),
-    Effect.catchTags({
-      Unauthorized: () =>
-        Effect.succeedSome(
-          HttpServerResponse.text("Sign in first", { status: 401 })
-        ),
-      ConversationNotFound: () =>
-        Effect.succeedSome(
-          HttpServerResponse.text("Unknown conversation", { status: 404 })
-        ),
-    })
-  );
-  if (Option.isSome(refusal)) {
-    return refusal.value;
-  }
-  // A paused or archived Conversation has no Seat: nothing runs to shell into.
-  const seat = yield* conversations.seat(id);
-  if (seat === undefined) {
-    return HttpServerResponse.text("The conversation has no live seat", {
-      status: 404,
-    });
-  }
 
   const upgraded = yield* Effect.exit(request.upgrade);
   if (Exit.isFailure(upgraded)) {

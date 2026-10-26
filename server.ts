@@ -35,6 +35,7 @@ import {
 } from "./src/screenshots.ts";
 import { Search } from "./src/search/search.ts";
 import { Conversations } from "./src/server/conversations.ts";
+import { desktopRoute } from "./src/server/desktop.ts";
 import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
 import { shellRoute } from "./src/server/shell.ts";
@@ -211,7 +212,8 @@ const ServerLive = HttpRouter.serve(
       pagePorts: [config.server.webPort, config.server.port],
       publicUrl: config.server.publicUrl,
     }),
-    shellRoute
+    shellRoute,
+    desktopRoute
   )
 ).pipe(
   Layer.provide(ConversationsLive),

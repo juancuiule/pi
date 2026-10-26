@@ -23,7 +23,10 @@ export type SandboxInfo = {
   readonly kind: SandboxKind;
   /** Backend-specific identity, for example a container name; reconnects use it after a restart. */
   readonly id: string;
-  /** A URL where a person can watch the desktop, when there is one. */
+  /**
+   * The desktop's VNC stream as a WebSocket (websockify) on this machine, when there is one. Only the server
+   * dials it (src/server/desktop.ts); it has no authentication of its own, so it never reaches a browser.
+   */
   readonly vncUrl?: string;
 };
 

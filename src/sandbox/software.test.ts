@@ -20,7 +20,10 @@ describe("Software", () => {
     ).toStrictEqual([
       [[], []],
       [SHELL, SHELL],
-      [[...SHELL, "chrome"], SHELL],
+      [
+        [...SHELL, "chrome"],
+        [...SHELL, "chrome"],
+      ],
     ]);
   });
 
@@ -40,13 +43,15 @@ describe("Software", () => {
       checkSoftware("none", ["node"], "x64"),
       checkSoftware("shell", ["node", "chrome"], "x64"),
       checkSoftware("desktop", ["chrome"], "arm64"),
+      checkSoftware("desktop", ["chrome"], "ia32"),
     ]).toStrictEqual([
       undefined,
       undefined,
       undefined,
       "Software needs a shell or desktop",
       "Google Chrome needs the desktop Level",
-      "Google Chrome is not available on arm64 hosts",
+      undefined,
+      "Google Chrome is not available on ia32 hosts",
     ]);
   });
 

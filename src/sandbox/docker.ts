@@ -230,7 +230,7 @@ const vncUrl = (name: string) =>
     // `docker port` prints one line per address, e.g. "127.0.0.1:55012"
     Effect.map((ports) => {
       const [address] = ports.split("\n");
-      return `http://${address}/vnc.html?autoconnect=true&resize=scale`;
+      return `ws://${address}/websockify`;
     })
   );
 

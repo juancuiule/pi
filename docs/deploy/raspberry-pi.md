@@ -4,26 +4,34 @@ The server listens on 127.0.0.1 only. `cloudflared` runs on the Pi, connects out
 
 ```
 browser ──https──> Cloudflare (Access) ──tunnel──> cloudflared on the Pi
-                                                    ├── /api/conversations/*/shell ──> server :4000 (WebSocket)
+                                                    ├── /api/conversations/*/(shell|desktop) ──> server :4000 (WebSockets)
                                                     └── everything else ───────────> console :3001 ──/api──> server :4000
 ```
 
 ## What works remotely
 
-- Levels `none` and `shell`: chats, files, the Shell tab, artifacts, attachments.
-- Not `desktop`: noVNC is published on a random 127.0.0.1 port of the Pi, which a remote browser cannot reach. Set `MAX_DESKTOPS=0`.
+- Every Level: chats, files, the Shell tab, artifacts, attachments, and the desktop. The desktop's VNC stream goes through the server (`/api/conversations/:id/desktop`, behind your session), and the console draws it with its own noVNC.
+
+## Can a Raspberry Pi 4 (8 GB) run a desktop with Chrome?
+
+Yes, one at a time, slowly. What it costs:
+
+- Chrome: Google ships it for arm64 Linux since July 2026 (`google-chrome-stable_current_arm64.deb`, about 430 MB installed); add it as Software on a desktop conversation.
+- Memory: XFCE, Xvfb and the VNC server take a few hundred MB; Chrome with a few tabs about 1–1.5 GB. With the server, the console and Docker, one desktop plus a couple of shells fits in 8 GB.
+- CPU is the limit, not RAM: Xvfb has no GPU, so Chrome draws everything in software on the Pi 4's four Cortex-A72 cores. Ordinary pages are usable; video, maps and heavy animation are not. Keep the screen small (the image's default 1280x800) and `MAX_DESKTOPS=1`.
+- Disk: the desktop image plus Chrome is several GB, and Docker writes a lot. Boot from a USB 3 SSD rather than the SD card.
+- Cooling: sustained software rendering throttles a Pi 4 without a heatsink or fan.
 
 ## The Pi
 
-- A 64-bit OS (Raspberry Pi OS 64-bit or Ubuntu arm64): the sandbox images are `ubuntu:24.04`, and the pi-env daemon ships an arm64 build. 8 GB of RAM is comfortable; lower `MAX_SHELLS` on smaller boards.
+- A 64-bit OS (Raspberry Pi OS 64-bit or Ubuntu arm64): the sandbox images are `ubuntu:24.04`, and the pi-env daemon ships an arm64 build. 8 GB of RAM is comfortable; lower `MAX_SHELLS` on smaller boards, and leave desktops off below 8 GB.
 - A current Node (the one this repo develops on; `node server.ts` relies on type stripping), pnpm, and Docker Engine with your user in the `docker` group.
 - Leave Langfuse and SearXNG off unless you need them; both are heavy for a Pi.
 
 ```sh
 git clone <this repo> && cd effect-pi
 pnpm install
-# The shell image, built for the Pi's arm64; `pnpm sandbox:build` also builds desktop, which is not needed here.
-docker build -t effect-pi/sandbox-shell -f docker/sandbox/shell.Dockerfile docker/sandbox
+pnpm sandbox:build          # the shell and desktop images, for the Pi's arm64; Chrome is added per conversation
 touch .env
 ```
 
@@ -31,7 +39,7 @@ touch .env
 
 ```sh
 PUBLIC_URL=https://pi.example.com
-MAX_DESKTOPS=0
+MAX_DESKTOPS=1
 MAX_SHELLS=2
 # A model: an API key, or Ollama on another machine
 ANTHROPIC_API_KEY=sk-ant-...
@@ -79,14 +87,14 @@ cloudflared tunnel create effect-pi
 cloudflared tunnel route dns effect-pi pi.example.com
 ```
 
-`~/.cloudflared/config.yml`; the shell rule must come first, because the console's `/api` rewrite cannot carry WebSockets:
+`~/.cloudflared/config.yml`; the socket rule must come first, because the console's `/api` rewrite cannot carry WebSockets (the Shell tab and the desktop):
 
 ```yaml
 tunnel: effect-pi
 credentials-file: /home/pi/.cloudflared/<tunnel id>.json
 ingress:
   - hostname: pi.example.com
-    path: ^/api/conversations/[^/]+/shell$
+    path: ^/api/conversations/[^/]+/(shell|desktop)$
     service: http://localhost:4000
   - hostname: pi.example.com
     service: http://localhost:3001

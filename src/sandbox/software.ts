@@ -79,9 +79,10 @@ export const SOFTWARE: Record<SoftwareId, SoftwareSpec> = {
     description: "The Chrome browser, on the desktop.",
     level: "desktop",
     install:
-      "curl -fsSL -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* /tmp/chrome.deb",
+      // Google ships Chrome for amd64 and, since July 2026, arm64 Linux; dpkg names them as Google's packages do.
+      'curl -fsSL -o /tmp/chrome.deb "https://dl.google.com/linux/direct/google-chrome-stable_current_$(dpkg --print-architecture).deb" && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* /tmp/chrome.deb',
     prompt: "Google Chrome (`google-chrome`)",
-    arch: ["x64"],
+    arch: ["x64", "arm64"],
   },
 };
 

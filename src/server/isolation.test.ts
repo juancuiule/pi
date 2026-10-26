@@ -29,6 +29,7 @@ import { signedIn, signIn } from "../testing/auth.ts";
 import { fauxAgents } from "../testing/faux.ts";
 import { Api } from "./api.ts";
 import { Conversations } from "./conversations.ts";
+import { desktopRoute } from "./desktop.ts";
 import { apiLayer } from "./handlers.ts";
 import { shellRoute } from "./shell.ts";
 
@@ -38,7 +39,8 @@ const server = () =>
   HttpRouter.serve(
     Layer.mergeAll(
       apiLayer({ apiUrl: "http://127.0.0.1", tracing: false }),
-      shellRoute
+      shellRoute,
+      desktopRoute
     ),
     { disableListenLog: true, disableLogger: true }
   ).pipe(
@@ -342,21 +344,24 @@ describe("isolation between Users", () => {
 
         const { port } = (yield* HttpServer.HttpServer)
           .address as NetAddress.InetAddress;
-        const shell = yield* Effect.callback<number>((resume) => {
-          const ws = new NodeWS.WebSocket(
-            `ws://127.0.0.1:${port}/api/conversations/${created.id}/shell`,
-            { headers: { cookie: bob.cookie } }
-          );
-          ws.on("unexpected-response", (_request, response) => {
-            resume(Effect.succeed(response.statusCode ?? 0));
-            ws.on("error", () => {});
-            ws.terminate();
+        const socketStatus = (path: string) =>
+          Effect.callback<number>((resume) => {
+            const ws = new NodeWS.WebSocket(
+              `ws://127.0.0.1:${port}/api/conversations/${created.id}/${path}`,
+              { headers: { cookie: bob.cookie } }
+            );
+            ws.on("unexpected-response", (_request, response) => {
+              resume(Effect.succeed(response.statusCode ?? 0));
+              ws.on("error", () => {});
+              ws.terminate();
+            });
+            ws.on("open", () => {
+              resume(Effect.succeed(101));
+              ws.close();
+            });
           });
-          ws.on("open", () => {
-            resume(Effect.succeed(101));
-            ws.close();
-          });
-        });
+        const shell = yield* socketStatus("shell");
+        const desktop = yield* socketStatus("desktop");
 
         return {
           aliceSaw: {
@@ -384,6 +389,7 @@ describe("isolation between Users", () => {
           aliceVariants,
           upload,
           shell,
+          desktop,
         };
       }).pipe(Effect.provide(server()))
     );
@@ -415,7 +421,14 @@ describe("isolation between Users", () => {
       ),
       upload: result.upload,
       shell: result.shell,
-    }).toStrictEqual({ notRefused: [], leaked: [], upload: 404, shell: 404 });
+      desktop: result.desktop,
+    }).toStrictEqual({
+      notRefused: [],
+      leaked: [],
+      upload: 404,
+      shell: 404,
+      desktop: 404,
+    });
     // The router serves these spellings (Alice reaches her own history through some), and none gets Bob past the
     // guard: every one is refused, as missing or as malformed, and none carries her data.
     expect({
