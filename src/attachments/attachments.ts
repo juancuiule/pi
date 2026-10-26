@@ -161,10 +161,15 @@ const headOf = async (file: string) => {
 
 const megabytes = (bytes: number) => `${Math.round(bytes / MB)} MB`;
 
+const originalOf = (name: string): `original${string}` => {
+  const extension = path.extname(name);
+  return `original${extension === "." ? "" : extension}`;
+};
+
 const key = (
   id: string,
   file:
-    | "original"
+    | `original${string}`
     | "prepared.json"
     | "model"
     | "thumbnail.webp"
@@ -291,9 +296,14 @@ export class Attachments extends Context.Service<
               })
           );
 
-        const store = (id: string, file: string, extracted: Extracted) =>
+        const store = (
+          id: string,
+          name: string,
+          file: string,
+          extracted: Extracted
+        ) =>
           Effect.promise(async () => {
-            await blobs.put(key(id, "original"), { path: file });
+            await blobs.put(key(id, originalOf(name)), { path: file });
             await blobs.put(
               key(id, "prepared.json"),
               new TextEncoder().encode(JSON.stringify(extracted.prepared))
@@ -384,7 +394,7 @@ export class Attachments extends Context.Service<
               : { rows: prepared.table.rows, columns: prepared.table.columns }),
           };
           // Bytes first: a record never points at missing files. A failed write leaves no record.
-          yield* store(id, file.path, extracted).pipe(
+          yield* store(id, record.name, file.path, extracted).pipe(
             Effect.andThen(Effect.sync(() => records.insert(record))),
             Effect.onError(() =>
               Effect.promise(() => blobs.removeAll(id)).pipe(Effect.ignore)
@@ -509,13 +519,22 @@ export class Attachments extends Context.Service<
           ) {
             return yield* new AttachmentNotFound({ id });
           }
-          const bytes = yield* Effect.promise(() =>
-            blobs.get(key(id, which === "thumbnail" ? "thumbnail.webp" : which))
-          );
-          if (bytes === undefined) {
-            return yield* new AttachmentNotFound({ id });
+          const wanted: "original" | "thumbnail.webp" | "model" =
+            which === "thumbnail" ? "thumbnail.webp" : which;
+          // Attachments stored before the original's key carried the extension only have the bare key.
+          const candidates =
+            wanted === "original" && originalOf(record.name) !== "original"
+              ? [originalOf(record.name), wanted]
+              : [wanted];
+          for (const candidate of candidates) {
+            const bytes = yield* Effect.promise(() =>
+              blobs.get(key(id, candidate))
+            );
+            if (bytes !== undefined) {
+              return { record, bytes };
+            }
           }
-          return { record, bytes };
+          return yield* new AttachmentNotFound({ id });
         });
 
         const view = Effect.fn("Attachments.view")(function* (
