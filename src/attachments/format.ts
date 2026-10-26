@@ -5,7 +5,17 @@
 import { DELIMITER_NAMES } from "./table.ts";
 import type { Delimiter } from "./table.ts";
 
-export type AttachmentKind = "text" | "html" | "pdf" | "table" | "image";
+/**
+ * `file`: any other upload. Text (source code, JSON, YAML, ...) is read as `text` with its lines as they are; anything
+ * else is kept as is, unread on the host, for the agent to open in its Sandbox.
+ */
+export type AttachmentKind =
+  | "text"
+  | "html"
+  | "pdf"
+  | "table"
+  | "image"
+  | "file";
 
 /** `partial`: a PDF with some pages that need OCR; `needs_ocr`: none of its pages has text. */
 export type AttachmentStatus = "ready" | "partial" | "needs_ocr";
@@ -17,7 +27,7 @@ export type Prepared = {
   readonly kind: AttachmentKind;
   /**
    * Documents: one entry per PDF page, or a single entry for text, HTML and tables (one line per row, row 1 the
-   * header). Empty for images.
+   * header). Empty for images and binary files.
    */
   readonly pages: readonly string[];
   /** 1-based pages without a text layer. */
@@ -61,7 +71,7 @@ export const ATTACHMENT_ID = /^att_[0-9a-f]{32}$/u;
 
 // --- Classification ---
 
-const EXTENSIONS: Record<string, AttachmentKind> = {
+const EXTENSIONS: Record<string, Exclude<AttachmentKind, "file">> = {
   txt: "text",
   md: "text",
   markdown: "text",
@@ -140,7 +150,7 @@ const textMediaType = (kind: "text" | "html" | "table", extension: string) => {
 
 /** The media type a file of `kind` has when its signature and reported type agree with its extension. */
 const mediaTypeOf = (
-  kind: AttachmentKind,
+  kind: Exclude<AttachmentKind, "file">,
   extension: string,
   reported: string,
   sniffed: string | undefined
@@ -176,9 +186,13 @@ const mediaTypeOf = (
   }
 };
 
+/** What an unknown upload is until it is read: a format with a signature, or bytes that may turn out to be text. */
+export const UNKNOWN_MEDIA_TYPE = "application/octet-stream";
+
 /**
  * What an upload is, from its name, the type the client reported and its first bytes; no one of them is enough.
- * Fails with the reason it is not accepted.
+ * An extension we prepare must match the contents, or it fails with the reason; any other file is a `file`, whose
+ * reported type is ignored (browsers report code files as anything, `.ts` as video).
  */
 export const classify = (
   name: string,
@@ -192,10 +206,7 @@ export const classify = (
     "";
   const kind = EXTENSIONS[extension];
   if (kind === undefined) {
-    return {
-      unsupported:
-        "Only text, Markdown, HTML, CSV, TSV, PDF, PNG, JPEG and WebP files can be attached.",
-    };
+    return { kind: "file", mediaType: sniff(head) ?? UNKNOWN_MEDIA_TYPE };
   }
   const mediaType = mediaTypeOf(
     kind,
@@ -266,6 +277,10 @@ export const normalizeText = (text: string): string =>
     .join("\n")
     .replaceAll(/\n{3,}/gu, "\n\n")
     .trim();
+
+/** Lines of a source file, numbered as an editor numbers them: only `\r\n` and `\r` change, and a final newline goes. */
+export const normalizeLineEnds = (text: string): string =>
+  text.replaceAll(/\r\n?/gu, "\n").replace(/\n$/u, "");
 
 /** A file name safe for a path in a Sandbox, still readable. */
 export const safeName = (name: string): string =>
@@ -598,6 +613,13 @@ export const formatBlocks = (
 ): string[] => {
   let left = options.budget;
   return attachments.map(({ info, prepared }) => {
+    if (prepared.kind === "file") {
+      return [
+        openTag(info, { size: `${info.size} bytes` }),
+        `[A binary file, not shown here and not readable with read_attachment. In a shell or desktop workspace it is at /workspace/${sandboxPath(info.id, info.name)}; without one it cannot be opened, so tell the person if it matters.]`,
+        CLOSE_TAG,
+      ].join("\n");
+    }
     if (prepared.kind === "image") {
       const size =
         prepared.image === undefined

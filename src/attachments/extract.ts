@@ -12,7 +12,12 @@ import type { FormatEnum } from "sharp";
 import { extractText, getDocumentProxy, renderPageAsImage } from "unpdf";
 
 import type { AttachmentKind, Prepared } from "./format.ts";
-import { decodeText, normalizeText } from "./format.ts";
+import {
+  UNKNOWN_MEDIA_TYPE,
+  decodeText,
+  normalizeLineEnds,
+  normalizeText,
+} from "./format.ts";
 import { htmlToText } from "./html.ts";
 import {
   DELIMITER_NAMES,
@@ -115,6 +120,44 @@ const extractTextFile = (bytes: Uint8Array): Extracted => {
       ocrPages: [],
       warnings: [...warnings, ...emptyWarning(normalized)],
       extractor: "text",
+    },
+  };
+};
+
+/**
+ * Any other upload: text when it decodes as text (source code, JSON, logs), its lines kept as in the file so line
+ * numbers match an editor's and the copy in the Sandbox; otherwise binary, kept unread.
+ */
+const extractOther = (bytes: Uint8Array, mediaType: string): Extracted => {
+  const text = mediaType === UNKNOWN_MEDIA_TYPE ? decodeText(bytes) : undefined;
+  if (text === undefined) {
+    return {
+      prepared: {
+        kind: "file",
+        pages: [],
+        ocrPages: [],
+        warnings: [
+          "A binary file: the agent cannot read it in chat, only with a shell (a shell or desktop workspace).",
+        ],
+        extractor: "none",
+      },
+    };
+  }
+  const lines = normalizeLineEnds(text.text);
+  return {
+    prepared: {
+      kind: "text",
+      pages: [lines],
+      ocrPages: [],
+      warnings: [
+        ...(text.encoding === "windows-1252"
+          ? [
+              "The file is not UTF-8; it was read as Windows-1252, so some characters may be wrong.",
+            ]
+          : []),
+        ...emptyWarning(lines.trim()),
+      ],
+      extractor: "source",
     },
   };
 };
@@ -369,6 +412,9 @@ export const extract = async (input: ExtractInput): Promise<Extracted> => {
     }
     case "image": {
       return extractImage(bytes, input.mediaType, input.limits);
+    }
+    case "file": {
+      return extractOther(bytes, input.mediaType);
     }
     default: {
       throw new TypeError(`Unknown kind: ${input.kind satisfies never}`);

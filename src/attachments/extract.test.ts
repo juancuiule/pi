@@ -73,6 +73,35 @@ describe("extraction in a worker", WORKERS, () => {
     expect(refused.reason).toBe("unsupported");
   });
 
+  it("reads any other text as is, so its line numbers match the file's", async () => {
+    const { prepared } = await run(
+      "file",
+      "def f():\r\n    pass   \r\n\r\n\r\n\r\nf()\n",
+      "application/octet-stream"
+    );
+    expect(prepared.kind).toBe("text");
+    expect(prepared.pages).toStrictEqual(["def f():\n    pass   \n\n\n\nf()"]);
+    expect(prepared.extractor).toBe("source");
+  });
+
+  it("keeps any other binary file unread", async () => {
+    const zip = await run(
+      "file",
+      new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00]),
+      "application/zip"
+    );
+    const unknown = await run(
+      "file",
+      new Uint8Array([0x00, 0x01, 0x02]),
+      "application/octet-stream"
+    );
+    expect([zip.prepared.kind, unknown.prepared.kind]).toStrictEqual([
+      "file",
+      "file",
+    ]);
+    expect(zip.prepared.pages).toStrictEqual([]);
+  });
+
   const html = `<html><head><title>Report</title><style>p{color:red}</style><script>alert(1)</script></head>
        <body><h1>Results</h1><p>Growth was <b>3%</b>, see <a href="https://example.com/data">the data</a>.</p>
        <ul><li>one</li><li>two</li></ul><table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></table>
