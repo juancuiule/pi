@@ -2,7 +2,7 @@
 // this service only answers which User a session token belongs to.
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-import { Clock, Context, Effect, Layer } from "effect";
+import { Clock, Context, Effect, Layer, Semaphore } from "effect";
 
 import {
   InvalidAccount,
@@ -26,6 +26,12 @@ const FREE_FAILURES = 5;
 const FIRST_BLOCK_MS = 30_000;
 const MAX_BLOCK_MS = 15 * 60_000;
 const MAX_TRACKED = 10_000;
+/**
+ * Password checks running at once. Each scrypt takes 32 MiB and a core's worth of CPU for a while, and failures are
+ * counted per name, so a burst of sign-ins under random names is not slowed by the throttle; without a cap, a small
+ * machine (a Raspberry Pi) runs out of memory. Later attempts wait their turn.
+ */
+const CONCURRENT_HASHES = 2;
 
 const tokenHash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
@@ -86,6 +92,9 @@ export class Auth extends Context.Service<
           string,
           { count: number; blockedUntil: number }
         >();
+        const hashing = Semaphore.makeUnsafe(CONCURRENT_HASHES);
+        const hashed = <A>(work: () => Promise<A>) =>
+          hashing.withPermits(1)(Effect.promise(work));
 
         // Names are the attacker's to choose, so the map is bounded: past MAX_TRACKED, names no longer blocked go.
         const forgetStale = (now: number) => {
@@ -104,9 +113,7 @@ export class Auth extends Context.Service<
           password: string
         ) {
           yield* checked(name, password);
-          const passwordHash = yield* Effect.promise(() =>
-            hashPassword(password)
-          );
+          const passwordHash = yield* hashed(() => hashPassword(password));
           return {
             user: { id: randomUUID() as UserId, name },
             passwordHash,
@@ -153,7 +160,7 @@ export class Auth extends Context.Service<
           forgetStale(now);
           const account = records.byName(key);
           // An unknown name is checked against a decoy, so timing does not tell which names exist.
-          const ok = yield* Effect.promise(async () =>
+          const ok = yield* hashed(async () =>
             verifyPassword(
               password,
               account?.passwordHash ?? (await decoyHash())
@@ -198,7 +205,7 @@ export class Auth extends Context.Service<
           password: string
         ) {
           yield* checked(name, password);
-          const hash = yield* Effect.promise(() => hashPassword(password));
+          const hash = yield* hashed(() => hashPassword(password));
           if (!records.setPassword(name, hash)) {
             return yield* new InvalidAccount({
               reason: `No account is named ${name}.`,

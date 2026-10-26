@@ -71,6 +71,15 @@ export type CoercedEnvSchema = {
   SERVER_PORT: number;
   
   /**
+   * **PUBLIC_URL**  
+   * Where a tunnel (cloudflared, for one) serves the console from outside this machine, e.g. https://pi.example.com.  
+   * The server still listens on 127.0.0.1 only; requests whose Host or Origin is this URL's are accepted beside  
+   * loopback ones, and over https the session cookie is `Secure`. See docs/deploy/raspberry-pi.md.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M24%2021V9h-2v14h8v-2zm-4-6v-4c0-1.103-.897-2-2-2h-6v14h2v-6h1.48l2.335%206h2.145l-2.333-6H18c1.103%200%202-.897%202-2m-6-4h4v4h-4zM8%2023H4c-1.103%200-2-.897-2-2V9h2v12h4V9h2v12c0%201.103-.897%202-2%202%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  PUBLIC_URL?: string;
+  
+  /**
    * **MAX_SEATS**  
    * Seats at once: Conversations live in the server, chats included. A shell or desktop Seat also takes one of  
    * MAX_SHELLS or MAX_DESKTOPS.  
@@ -332,11 +341,11 @@ export type CoercedEnvSchema = {
   
 };
 
-type _CoercedEnvSchema_814ef3e9 = CoercedEnvSchema;
+type _CoercedEnvSchema_1632704b = CoercedEnvSchema;
 
 declare module 'varlock/env' {
-  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_814ef3e9> {}
-  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_814ef3e9, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SEARCH_DB' | 'SKILLS_DIR' | 'SKILLS_ORG_DIR' | 'SCREENSHOTS_DIR' | 'ATTACHMENTS_DIR' | 'STORAGE' | 'WORKSPACE_STORAGE' | 'S3_ENDPOINT' | 'SCREENSHOT_TTL_DAYS' | 'ATTACHMENT_MAX_FILE_MB' | 'ATTACHMENT_MAX_FILES' | 'ATTACHMENT_MAX_UNSENT_MB' | 'ATTACHMENT_MAX_PDF_PAGES' | 'ATTACHMENT_MAX_IMAGE_MEGAPIXELS' | 'ATTACHMENT_EXTRACT_TIMEOUT' | 'ATTACHMENT_EXTRACT_MEMORY_MB' | 'ATTACHMENT_EXTRACT_CONCURRENCY' | 'ATTACHMENT_UNSENT_TTL' | 'ATTACHMENT_INLINE_CHARS' | 'ATTACHMENT_READ_CHARS' | 'TRACE_ATTACHMENT_TEXT' | 'MCP_CONNECT_TIMEOUT' | 'SEARXNG_URL' | 'WEB_SEARCH_TIMEOUT' | 'WEB_SEARCH_CONCURRENCY' | 'WEB_SEARCH_LANGUAGE' | 'WEB_SEARCH_SAFESEARCH' | 'WEB_PORT' | 'API_URL'>> {}
+  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_1632704b> {}
+  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_1632704b, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'PUBLIC_URL' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SEARCH_DB' | 'SKILLS_DIR' | 'SKILLS_ORG_DIR' | 'SCREENSHOTS_DIR' | 'ATTACHMENTS_DIR' | 'STORAGE' | 'WORKSPACE_STORAGE' | 'S3_ENDPOINT' | 'SCREENSHOT_TTL_DAYS' | 'ATTACHMENT_MAX_FILE_MB' | 'ATTACHMENT_MAX_FILES' | 'ATTACHMENT_MAX_UNSENT_MB' | 'ATTACHMENT_MAX_PDF_PAGES' | 'ATTACHMENT_MAX_IMAGE_MEGAPIXELS' | 'ATTACHMENT_EXTRACT_TIMEOUT' | 'ATTACHMENT_EXTRACT_MEMORY_MB' | 'ATTACHMENT_EXTRACT_CONCURRENCY' | 'ATTACHMENT_UNSENT_TTL' | 'ATTACHMENT_INLINE_CHARS' | 'ATTACHMENT_READ_CHARS' | 'TRACE_ATTACHMENT_TEXT' | 'MCP_CONNECT_TIMEOUT' | 'SEARXNG_URL' | 'WEB_SEARCH_TIMEOUT' | 'WEB_SEARCH_CONCURRENCY' | 'WEB_SEARCH_LANGUAGE' | 'WEB_SEARCH_SAFESEARCH' | 'WEB_PORT' | 'API_URL'>> {}
 }
 
 
@@ -346,11 +355,11 @@ export type EnvSchemaAsStrings = {
       : (NonNullable<CoercedEnvSchema[Property]> extends boolean ? ('true' | 'false') : string)
 };
 
-type _EnvSchemaAsStrings_814ef3e9 = EnvSchemaAsStrings;
+type _EnvSchemaAsStrings_1632704b = EnvSchemaAsStrings;
 declare global {
 
   // add types for global import.meta.env
-  interface ImportMetaEnv extends _EnvSchemaAsStrings_814ef3e9 {}
+  interface ImportMetaEnv extends _EnvSchemaAsStrings_1632704b {}
   interface ImportMeta {
     readonly env: ImportMetaEnv;
   }
