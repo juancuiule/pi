@@ -52,6 +52,24 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 `PUBLIC_URL` makes the server accept requests whose Host or Origin is that URL, beside loopback ones, and marks the session cookie `Secure` for requests that came through it.
 
+## Run with Docker Compose
+
+`deploy/pi/` runs the server, the console and `cloudflared` as containers, the way other services on the same Pi run:
+
+```sh
+pnpm sandbox:build                                     # the sandbox images, on the host's Docker
+docker compose -f deploy/pi/docker-compose.yml build
+docker compose -f deploy/pi/docker-compose.yml up -d server web
+docker compose -f deploy/pi/docker-compose.yml exec server node user.ts add <name>
+```
+
+- The server gets the host's Docker socket: it starts the Sandboxes as the host's containers, beside it. That socket is root on the host.
+- Every service uses the host's network. The server opens each desktop's VNC port, which Docker publishes on the host's 127.0.0.1, and it accepts only loopback hosts or `PUBLIC_URL`; server and console still listen on 127.0.0.1 only.
+- Conversations, accounts and attachments live in the `effect-pi-data` volume. `.env` at the repository root is read as `env_file`.
+- `deploy/pi/cloudflared/config.yml` is a locally managed tunnel: set `tunnel:` to your tunnel id and copy `~/.cloudflared/<tunnel id>.json` to `deploy/pi/.cloudflared/credentials.json` (git-ignored), then `up -d cloudflared`.
+
+Without Docker, the next section runs the same two processes directly.
+
 ## Build and run
 
 Run the production console, not `pnpm dev`: the dev server is slow on a Pi and exposes Next's dev tooling. Both listen on 127.0.0.1 only, like the server; the tunnel is the way in.

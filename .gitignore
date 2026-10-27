@@ -14,3 +14,6 @@ docs/plans
 .devin/
 .agents/
 docker/seaweedfs/s3.json
+
+# Cloudflare Tunnel credentials (copy of ~/.cloudflared/<tunnel-id>.json)
+deploy/pi/.cloudflared
