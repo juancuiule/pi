@@ -13,6 +13,10 @@ until xdotool search --class xfdesktop >/dev/null 2>&1 \
 sleep 1
 x11vnc -display :99 -forever -shared -nopw -localhost -rfbport 5900 -quiet >/tmp/x11vnc.log 2>&1 &
 websockify 6080 localhost:5900 >/tmp/websockify.log 2>&1 &
+# Both start in the background; ready must wait until they accept, or the server's first relay is refused
+for port in 5900 6080; do
+  until python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1)" 2>/dev/null; do sleep 0.1; done
+done
 
 touch /tmp/desktop-ready
 wait
