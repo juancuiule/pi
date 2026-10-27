@@ -29,6 +29,8 @@ const include = () => {
 export default defineConfig({
   test: {
     include: include(),
+    // The pre-commit hook runs tests beside tsc and the web checks; on a Raspberry Pi the scrypt tests then pass 5s.
+    testTimeout: 20_000,
     exclude:
       docker || integration || s3
         ? configDefaults.exclude
