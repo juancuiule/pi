@@ -41,7 +41,10 @@ touch .env
 PUBLIC_URL=https://pi.example.com
 MAX_DESKTOPS=1
 MAX_SHELLS=2
-# A model: an API key, or Ollama on another machine
+# Each Sandbox's memory (swap included) and CPUs, so an agent's build cannot starve the Pi
+SANDBOX_MEMORY_MB=2048
+SANDBOX_CPUS=2
+# A model: an API key (Anthropic, Vercel AI Gateway with AI_GATEWAY_API_KEY=vck_..., OpenAI), or Ollama on another machine
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -104,6 +107,8 @@ ingress:
 Do not set `originRequest.httpHostHeader`: the server checks the Host header against `PUBLIC_URL`.
 
 Install it as a service with `sudo cloudflared service install`.
+
+A tunnel managed from the dashboard (Zero Trust → Networks → Tunnels) works too: it runs from a token (`cloudflared tunnel run --token-file ...`), and its public hostnames take the same two routes, in the same order: `pi.example.com` with path `^/api/conversations/[^/]+/(shell|desktop)$` to `http://localhost:4000`, then `pi.example.com` to `http://localhost:3001`. Run `cloudflared` on the host, not in a Docker container: inside a container `localhost` is the container itself (or give the container `network_mode: host`).
 
 ## Put Cloudflare Access in front
 

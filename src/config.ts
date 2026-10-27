@@ -51,6 +51,12 @@ export const capacity = {
   desktops: ENV.MAX_DESKTOPS,
 };
 
+/** Resource limits for each Docker Sandbox; unset, a Sandbox can take the whole machine. */
+export const sandboxLimits = {
+  memoryMb: ENV.SANDBOX_MEMORY_MB,
+  cpus: ENV.SANDBOX_CPUS,
+};
+
 /** Where the server keeps conversations and attachments, where skills are read from, and where desktop screenshots go. */
 export const paths = {
   db: ENV.EFFECT_PI_DB,

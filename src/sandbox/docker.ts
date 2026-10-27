@@ -234,8 +234,24 @@ const vncUrl = (name: string) =>
     })
   );
 
+export interface Limits {
+  /** Memory with swap included, so a Sandbox cannot push the host into swap. */
+  readonly memoryMb?: number | undefined;
+  readonly cpus?: number | undefined;
+}
+
+const limitArgs = ({ memoryMb, cpus }: Limits = {}) => [
+  ...(memoryMb === undefined
+    ? []
+    : [`--memory=${memoryMb}m`, `--memory-swap=${memoryMb}m`]),
+  ...(cpus === undefined ? [] : [`--cpus=${cpus}`]),
+];
+
 export const layer = (
-  options: { readonly images?: Partial<Record<SandboxKind, string>> } = {}
+  options: {
+    readonly images?: Partial<Record<SandboxKind, string>>;
+    readonly limits?: Limits;
+  } = {}
 ) =>
   Layer.effect(
     Sandboxes,
@@ -345,6 +361,7 @@ export const layer = (
           "--mount",
           mount,
           ...publish,
+          ...limitArgs(options.limits),
           image,
         ]);
         const started = Effect.gen(function* () {

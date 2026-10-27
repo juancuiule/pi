@@ -460,6 +460,65 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       });
     });
 
+    it("holds a Sandbox to its memory and CPU limits", async () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "effect-pi-limits-"));
+      const name = `effect-pi-limits-${crypto.randomUUID().slice(0, 8)}`;
+
+      const observed = await Effect.runPromise(
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes;
+          const sandbox = yield* sandboxes.create(
+            "shell",
+            name,
+            { type: "directory", path: dir },
+            []
+          );
+          yield* Effect.addFinalizer(() =>
+            Effect.ignore(sandboxes.remove(sandbox))
+          );
+          const allocate = (mb: number) => {
+            try {
+              execFileSync(
+                "docker",
+                [
+                  "exec",
+                  name,
+                  "python3",
+                  "-c",
+                  `bytearray(${mb} * 1024 * 1024)`,
+                ],
+                { stdio: "ignore" }
+              );
+              return "ok";
+            } catch {
+              return "killed";
+            }
+          };
+          return {
+            small: allocate(64),
+            large: allocate(400),
+            cpus: execFileSync(
+              "docker",
+              ["inspect", "--format", "{{.HostConfig.NanoCpus}}", name],
+              { encoding: "utf-8" }
+            ).trim(),
+          };
+        }).pipe(
+          Effect.provide(
+            DockerSandboxes.layer({ limits: { memoryMb: 256, cpus: 0.5 } })
+          ),
+          Effect.scoped
+        )
+      );
+      rmSync(dir, { recursive: true, force: true });
+
+      expect(observed).toStrictEqual({
+        small: "ok",
+        large: "killed",
+        cpus: "500000000",
+      });
+    });
+
     it("runs an interactive PTY with resize and Ctrl-C, killed when its scope closes", async () => {
       const dir = mkdtempSync(path.join(tmpdir(), "effect-pi-shell-"));
       const name = `effect-pi-shell-${crypto.randomUUID().slice(0, 8)}`;
