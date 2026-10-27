@@ -1,4 +1,3 @@
-import type { Context as ChordContext } from "@earendil-works/chord";
 // An Effect service over a pi-durable harness: how to run a Conversation. `create` records a new one, and `open`
 // gives a Conversation a Seat (see GLOSSARY.md), with a Sandbox over its Workspace when its Level needs one. Which
 // Conversations have Seats, and when that changes, is the server's concern (src/server/conversations.ts).
@@ -22,7 +21,6 @@ import type {
   Storage,
   SubmissionId,
   SubmissionRecord,
-  TaskId,
   ToolRegistration,
   Tx,
   UserInput,
@@ -53,6 +51,7 @@ import {
   Semaphore,
   Stream,
 } from "effect";
+import type { Tracer } from "effect";
 
 import type {
   AnswerInput,
@@ -137,6 +136,7 @@ import {
   TraceDoc,
   traceJson,
 } from "../tracing.ts";
+import type { TraceHooks } from "../tracing.ts";
 import { WebSearch, webSearchExtension } from "../web-search/web-search.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
 import type { StorageRef } from "../workspaces/workspaces.ts";
@@ -722,19 +722,13 @@ export class Agents extends Context.Service<
         const capacity = yield* Capacity;
         const registry = createRegistry();
         // Each run's generation records its trace id into TraceDoc, so a message's feedback finds the run's
-        // trace. Built before the harness like `skillEdits`, it is filled in once `harness` exists below.
-        const traceWrites: {
-          record?: (
-            conversationId: ConversationId,
-            taskId: TaskId,
-            traceId: string,
-            commitContext: ChordContext
-          ) => Promise<void>;
-        } = {};
+        // trace, and each Run is described for its trace. Built before the harness like `skillEdits`, it is
+        // filled in once `harness` exists below.
+        const traceHooks: TraceHooks = {};
         // Spans for model requests and tool calls use the tracer this layer is built with.
         const tracing = makeAgentTracing(yield* Effect.context<never>(), {
           attachmentText: options.traceAttachmentText === true,
-          traceWrites,
+          traceHooks,
         });
         // The repeat guard's `beforeTool` must run before tracing's, which opens a span only
         // its `afterTool` closes; a block coming after it would leak the span.
@@ -1026,11 +1020,36 @@ export class Agents extends Context.Service<
         );
 
         // Idempotent: the generation task's every request attempts the same key.
-        traceWrites.record = (conversationId, taskId, traceId, commitContext) =>
+        traceHooks.record = (conversationId, taskId, traceId, commitContext) =>
           harness.commit(async (tx) => {
             const doc = await tx.doc(TraceDoc, conversationId);
             doc.traces[String(taskId)] ??= traceId;
           }, commitContext);
+        // A Run ends when its inputs settle, all at once; the first one stands for the Run.
+        traceHooks.settled = async (submissionId) => {
+          const submission = await harness.submission(submissionId, context);
+          return submission?.wait(context);
+        };
+        // The Level, approval policy and model a Run's trace is filtered by.
+        traceHooks.describe = async (conversationId, readContext) => {
+          const [workspace, approvals, agent] = await Promise.all([
+            harness.snapshot(WorkspaceDoc, conversationId, readContext),
+            harness.snapshot(ApprovalDoc, conversationId, readContext),
+            harness.snapshot(AgentDoc, conversationId, readContext),
+          ]);
+          const level = workspace?.level ?? "none";
+          const policy = approvals?.policy ?? "auto";
+          return {
+            tags: [`level:${level}`, `approvals:${policy}`],
+            metadata: {
+              level,
+              approvals: policy,
+              ...(agent?.model === undefined
+                ? {}
+                : { model: `${agent.model.provider}/${agent.model.modelId}` }),
+            },
+          };
+        };
 
         // No Seat survives a restart, so a run interrupted by a crash would resume against a Sandbox that no
         // longer exists: every conversation with live work is aborted before the service answers. The first
@@ -1199,11 +1218,15 @@ export class Agents extends Context.Service<
 
         // A one-shot completion outside the transcript, traced as a generation in the
         // conversation's Langfuse session. It resolves on provider errors, so the caller
-        // reads `stopReason`.
+        // reads `stopReason`. `placement` puts it under a turn, or in a trace of its own.
         const completeTitle = (
           id: ConversationId,
           model: Model<Api>,
-          messages: Message[]
+          messages: Message[],
+          placement: {
+            readonly parent?: Tracer.Span;
+            readonly root?: true;
+          } = {}
         ) =>
           attempt(() =>
             options.models.completeSimple(
@@ -1216,6 +1239,7 @@ export class Agents extends Context.Service<
               Effect.annotateCurrentSpan(generationAttributes(message))
             ),
             Effect.withSpan("conversation title", {
+              ...placement,
               attributes: {
                 "langfuse.observation.type": "generation",
                 "langfuse.session.id": tracing.sessionOf(id),
@@ -1847,6 +1871,8 @@ export class Agents extends Context.Service<
           // A settings change between the Sandbox's copy and this registration found no Sandbox to update.
           yield* locked(id, reconcileSkills(id, { refresh: [], removed: [] }));
 
+          // Only an ask's span is the agent observation; a send-driven Run gets its own `turn` root (tracing.ts),
+          // which carries the message, so the send's span stays out of the session.
           const annotate = (prompt: string) =>
             Effect.annotateCurrentSpan({
               "langfuse.observation.type": "agent",
@@ -1982,7 +2008,6 @@ export class Agents extends Context.Service<
           ) {
             // Skills read only what the person typed, never a file's text.
             const expanded = yield* expand(prompt, id);
-            yield* annotate(expanded);
             // Admitted without waiting: a busy conversation queues it, steering the run when it waits on a person
             // and as a follow-up while it works, and the answer arrives as events. No `tracing.traced`: the send
             // span ends at admission, before the run's task hooks — its spans adopt their own run root instead.
@@ -2898,7 +2923,14 @@ export class Agents extends Context.Service<
             firstUser: first.user,
             firstAnswer: first.answer,
           });
-          const message = yield* completeTitle(id, model, messages);
+          // Earned by an answered turn, so its cost counts in that turn's trace; a session stays a list of turns.
+          const turn = tracing.lastTurn(id);
+          const message = yield* completeTitle(
+            id,
+            model,
+            messages,
+            turn === undefined ? { root: true } : { parent: turn }
+          );
           const title =
             message.stopReason === "stop" ? titleText(message) : undefined;
           if (title === undefined) {
