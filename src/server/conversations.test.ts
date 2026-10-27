@@ -14,6 +14,7 @@ import { Search } from "../search/search.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
 import type { LocalSandboxes } from "../testing/sandboxes.ts";
+import { alice } from "../testing/users.ts";
 import { Workspaces, WorkspaceStorage } from "../workspaces/workspaces.ts";
 import type { SaveReason } from "../workspaces/workspaces.ts";
 import { Conversations, titleOf } from "./conversations.ts";
@@ -81,16 +82,17 @@ describe(Conversations, () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "Say hi",
         });
         expect(created.title).toBe("Say hi");
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
-        return yield* conversations.list;
+        return yield* conversations.list(alice.id);
       }).pipe(Effect.provide(layer))
     );
 
@@ -110,19 +112,25 @@ describe(Conversations, () => {
         // Let the startup sweep pass first, so only run-end indexing can find this one.
         yield* search.catchUp;
         const started = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "quokka facts",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
         // Indexing is forked at run end, so poll for it.
         yield* waitUntil(
-          search.query("quokka").pipe(Effect.map((hits) => hits.length > 0))
+          search
+            .query("quokka", alice.id)
+            .pipe(Effect.map((hits) => hits.length > 0))
         );
-        return { created: started, found: yield* search.query("quokka") };
+        return {
+          created: started,
+          found: yield* search.query("quokka", alice.id),
+        };
       }).pipe(Effect.provide(layer))
     );
 
@@ -142,12 +150,13 @@ describe(Conversations, () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "leave a note",
         });
-        const current = conversations.list.pipe(
-          Effect.map((all) => all.find((c) => c.id === created.id))
-        );
+        const current = conversations
+          .list(alice.id)
+          .pipe(Effect.map((all) => all.find((c) => c.id === created.id)));
         yield* waitUntil(current.pipe(Effect.map((c) => c?.status === "idle")));
         yield* conversations.pause(created.id);
         expect(sandboxes.live.size).toBe(0);
@@ -186,12 +195,13 @@ describe(Conversations, () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "sleep",
         });
-        const current = conversations.list.pipe(
-          Effect.map((all) => all.find((c) => c.id === created.id))
-        );
+        const current = conversations
+          .list(alice.id)
+          .pipe(Effect.map((all) => all.find((c) => c.id === created.id)));
         yield* waitUntil(
           current.pipe(Effect.map((c) => c?.status === "running"))
         );
@@ -223,12 +233,13 @@ describe(Conversations, () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "sleep",
         });
-        const current = conversations.list.pipe(
-          Effect.map((all) => all.find((c) => c.id === created.id))
-        );
+        const current = conversations
+          .list(alice.id)
+          .pipe(Effect.map((all) => all.find((c) => c.id === created.id)));
         yield* waitUntil(
           current.pipe(Effect.map((c) => c?.status === "running"))
         );
@@ -258,20 +269,21 @@ describe(Conversations, () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "sleep",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "running")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "running"))
         );
         // The bash call is in progress: only its follow-up turn is still queued.
         yield* waitUntil(
           Effect.sync(() => faux.getPendingResponseCount() === 1)
         );
         yield* conversations.stop(created.id);
-        return (yield* conversations.list)[0];
+        return (yield* conversations.list(alice.id))[0];
       }).pipe(Effect.provide(layer))
     );
 
@@ -291,12 +303,13 @@ describe(Conversations, () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "hello",
         });
-        const current = conversations.list.pipe(
-          Effect.map((all) => all.find((c) => c.id === created.id))
-        );
+        const current = conversations
+          .list(alice.id)
+          .pipe(Effect.map((all) => all.find((c) => c.id === created.id)));
         expect(sandboxes.stored.size).toBe(1);
         yield* conversations.archive(created.id);
         expect(sandboxes.live.size).toBe(0);
@@ -333,17 +346,29 @@ describe(Conversations, () => {
         const shells = yield* Effect.all(
           [
             Effect.exit(
-              conversations.create({ sandbox: "shell", prompt: "1" })
+              conversations.create({
+                owner: alice.id,
+                sandbox: "shell",
+                prompt: "1",
+              })
             ),
             Effect.exit(
-              conversations.create({ sandbox: "shell", prompt: "2" })
+              conversations.create({
+                owner: alice.id,
+                sandbox: "shell",
+                prompt: "2",
+              })
             ),
           ],
           { concurrency: "unbounded" }
         );
         // Conversations without a sandbox don't count.
         const none = yield* Effect.exit(
-          conversations.create({ sandbox: "none", prompt: "3" })
+          conversations.create({
+            owner: alice.id,
+            sandbox: "none",
+            prompt: "3",
+          })
         );
         return [...shells, none];
       }).pipe(Effect.provide(layer))
@@ -362,11 +387,16 @@ describe(Conversations, () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const first = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "1",
         });
         const second = yield* Effect.exit(
-          conversations.create({ sandbox: "shell", prompt: "2" })
+          conversations.create({
+            owner: alice.id,
+            sandbox: "shell",
+            prompt: "2",
+          })
         );
         return { holder: first.id, refused: second };
       }).pipe(Effect.provide(layer))
@@ -386,25 +416,29 @@ describe(Conversations, () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
-        yield* conversations.create({ sandbox: "shell", prompt: "sleep" });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "sleep",
+        });
         // Wait until the run is observably in progress, so the check below
         // does not depend on how fast the bash call started.
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all.some((c) => c.status === "running"))
-          ),
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all.some((c) => c.status === "running"))),
           10_000
         );
         // Several idle timeouts later the bash call (2s) is still running.
         yield* Effect.sleep("300 millis");
-        const during = yield* conversations.list;
+        const during = yield* conversations.list(alice.id);
         expect(during).toHaveLength(1);
         expect(during[0]?.status).toBe("running");
         // Once idle, it is swept: paused, its Sandbox removed.
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "paused")
-          ),
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "paused")),
           15_000
         );
         expect(sandboxes.live.size).toBe(0);
@@ -423,9 +457,13 @@ describe(Conversations, () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
-        yield* conversations.create({ sandbox: "shell", prompt: "sleep" });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "sleep",
+        });
         yield* Effect.sleep("200 millis");
-        const listed = yield* conversations.list;
+        const listed = yield* conversations.list(alice.id);
         expect(listed).toHaveLength(1);
         expect(listed[0]?.status).toBe("running");
       }).pipe(Effect.provide(layer))
@@ -438,8 +476,16 @@ describe(Conversations, () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
-        yield* conversations.create({ sandbox: "shell", prompt: "1" });
-        yield* conversations.create({ sandbox: "shell", prompt: "2" });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "1",
+        });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "2",
+        });
         expect(sandboxes.live.size).toBe(2);
       }).pipe(Effect.provide(layer))
     );
@@ -476,13 +522,14 @@ describe(Conversations, () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "hi",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
         yield* waitUntil(
           Effect.sync(() => saves.some((save) => save.reason === "checkpoint"))
@@ -508,18 +555,26 @@ describe(Conversations, () => {
         const conversations = yield* Conversations;
         for (const delay of [0, 1, 3, 6]) {
           const fiber = yield* Effect.forkChild(
-            conversations.create({ sandbox: "shell", prompt: "x" })
+            conversations.create({
+              owner: alice.id,
+              sandbox: "shell",
+              prompt: "x",
+            })
           );
           yield* Effect.sleep(`${delay} millis`);
           yield* Fiber.interrupt(fiber);
-          for (const summary of yield* conversations.list) {
+          for (const summary of yield* conversations.list(alice.id)) {
             yield* conversations.stop(summary.id);
             yield* conversations.pause(summary.id);
           }
           expect(sandboxes.live.size).toBe(0);
         }
         // The cap slot is free again.
-        yield* conversations.create({ sandbox: "shell", prompt: "y" });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "y",
+        });
       }).pipe(Effect.provide(layer))
     );
   });
@@ -539,12 +594,13 @@ describe("Upgrade", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "hello",
         });
-        const idle = conversations.list.pipe(
-          Effect.map((all) => all[0]?.status === "idle")
-        );
+        const idle = conversations
+          .list(alice.id)
+          .pipe(Effect.map((all) => all[0]?.status === "idle"));
         yield* waitUntil(idle);
         const shell = yield* conversations.upgrade(created.id, {
           level: "shell",
@@ -598,8 +654,13 @@ describe("Upgrade", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
-        yield* conversations.create({ sandbox: "shell", prompt: "holder" });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "holder",
+        });
         const chat = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "chat",
         });
@@ -639,15 +700,17 @@ describe("Upgrade", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const holder = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "holder",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all.every((c) => c.status === "idle"))
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all.every((c) => c.status === "idle")))
         );
         const chat = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "run some code",
         });
@@ -661,13 +724,15 @@ describe("Upgrade", () => {
         );
         yield* conversations.pause(holder.id);
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map(
-              (all) =>
-                all.find((c) => c.id === chat.id)?.status === "idle" &&
-                all.find((c) => c.id === chat.id)?.sandbox === "shell"
-            )
-          ),
+          conversations
+            .list(alice.id)
+            .pipe(
+              Effect.map(
+                (all) =>
+                  all.find((c) => c.id === chat.id)?.status === "idle" &&
+                  all.find((c) => c.id === chat.id)?.sandbox === "shell"
+              )
+            ),
           10_000
         );
         return yield* shellUsage;
@@ -694,8 +759,13 @@ describe("Upgrade", () => {
     const reply = await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
-        yield* conversations.create({ sandbox: "shell", prompt: "holder" });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "holder",
+        });
         const chat = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "run some code",
         });
@@ -771,10 +841,10 @@ describe("a Seat mid-open", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const creating = yield* conversations
-          .create({ sandbox: "shell", prompt: "hi" })
+          .create({ owner: alice.id, sandbox: "shell", prompt: "hi" })
           .pipe(Effect.forkChild);
         yield* Deferred.await(started);
-        const listed = yield* conversations.list;
+        const listed = yield* conversations.list(alice.id);
         expect(listed).toHaveLength(1);
         const resuming = yield* conversations
           .resume(listed[0]?.id ?? -1)
@@ -807,10 +877,15 @@ describe("a Seat mid-open", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const creating = yield* conversations
-          .create({ sandbox: "shell", software: ["node"], prompt: "hi" })
+          .create({
+            owner: alice.id,
+            sandbox: "shell",
+            software: ["node"],
+            prompt: "hi",
+          })
           .pipe(Effect.forkChild);
         yield* Deferred.await(started);
-        const listed = yield* conversations.list;
+        const listed = yield* conversations.list(alice.id);
         const upgrading = yield* conversations
           .upgrade(listed[0]?.id ?? -1, { software: ["uv"] })
           .pipe(Effect.forkChild);
@@ -842,6 +917,7 @@ describe("a Seat mid-open", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "hi",
         });
@@ -864,7 +940,7 @@ describe("a Seat mid-open", () => {
           // Read before the layer closes at the end of this Effect: teardown removes them all.
           sandboxesLive: sandboxes.live.size,
           after: yield* shellHolders,
-          listed: yield* conversations.list,
+          listed: yield* conversations.list(alice.id),
         };
       }).pipe(Effect.provide(layer))
     );
@@ -893,10 +969,10 @@ describe("a Seat mid-open", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const creating = yield* conversations
-          .create({ sandbox: "shell", prompt: "hi" })
+          .create({ owner: alice.id, sandbox: "shell", prompt: "hi" })
           .pipe(Effect.forkChild);
         yield* Deferred.await(started);
-        const listed = yield* conversations.list;
+        const listed = yield* conversations.list(alice.id);
         const archiving = yield* conversations
           .archive(listed[0]?.id ?? -1)
           .pipe(Effect.forkChild);
@@ -908,7 +984,7 @@ describe("a Seat mid-open", () => {
           // Read before the layer closes at the end of this Effect: teardown removes them all.
           sandboxesLive: sandboxes.live.size,
           sandboxesStored: sandboxes.stored.size,
-          listed: yield* conversations.list,
+          listed: yield* conversations.list(alice.id),
         };
       }).pipe(Effect.provide(layer))
     );
@@ -931,9 +1007,9 @@ describe("a failed build", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations
-          .create({ sandbox: "shell", prompt: "hi" })
+          .create({ owner: alice.id, sandbox: "shell", prompt: "hi" })
           .pipe(Effect.flip);
-        const listed = yield* conversations.list;
+        const listed = yield* conversations.list(alice.id);
         const holders = yield* shellHolders;
         // The open's gate settled on the failure: a resume opens a Seat instead of hanging.
         const resumed = yield* conversations.resume(listed[0]?.id ?? -1);
@@ -965,6 +1041,7 @@ describe("a failed build", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "hi",
         });
@@ -976,7 +1053,7 @@ describe("a failed build", () => {
         return {
           upgraded,
           holders: yield* shellHolders,
-          listed: yield* conversations.list,
+          listed: yield* conversations.list(alice.id),
           sandboxesLive: sandboxes.live.size,
         };
       }).pipe(Effect.provide(layer))
@@ -995,12 +1072,21 @@ describe("a failed build", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
-        yield* conversations.create({ sandbox: "shell", prompt: "hi" });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "hi",
+        });
         // The one shell is taken, but the invalid Software must read as a 400, not a 409.
         const rejected = yield* conversations
-          .create({ sandbox: "shell", software: ["chrome"], prompt: "hi" })
+          .create({
+            owner: alice.id,
+            sandbox: "shell",
+            software: ["chrome"],
+            prompt: "hi",
+          })
           .pipe(Effect.flip);
-        return { rejected, listed: yield* conversations.list };
+        return { rejected, listed: yield* conversations.list(alice.id) };
       }).pipe(Effect.provide(layer))
     );
 
@@ -1027,14 +1113,15 @@ describe("titles", () => {
         const conversations = yield* Conversations;
         const agents = yield* Agents;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hello",
         });
         expect(created.title).toBe("say hello");
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.title === "Greetings Chat")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.title === "Greetings Chat"))
         );
         return yield* metaOf(agents, created.id);
       }).pipe(Effect.provide(layer))
@@ -1057,24 +1144,27 @@ describe("titles", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hello",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.title === "Greetings Chat")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.title === "Greetings Chat"))
         );
         yield* conversations.send(created.id, "another");
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
         // The second run-end's attempt found the latch spent: no model call, the title stands.
         yield* Effect.sleep("50 millis");
         expect(faux.state.callCount).toBe(3);
-        expect((yield* conversations.list)[0]?.title).toBe("Greetings Chat");
+        expect((yield* conversations.list(alice.id))[0]?.title).toBe(
+          "Greetings Chat"
+        );
       }).pipe(Effect.provide(layer))
     );
   });
@@ -1097,6 +1187,7 @@ describe("titles", () => {
         const conversations = yield* Conversations;
         const agents = yield* Agents;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hello",
         });
@@ -1108,9 +1199,9 @@ describe("titles", () => {
         );
         yield* conversations.send(created.id, "another");
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
         yield* Effect.sleep("50 millis");
         const meta = yield* metaOf(agents, created.id);
@@ -1137,6 +1228,7 @@ describe("titles", () => {
         const conversations = yield* Conversations;
         const agents = yield* Agents;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hello",
         });
@@ -1162,15 +1254,16 @@ describe("titles", () => {
         const conversations = yield* Conversations;
         const agents = yield* Agents;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hello",
         });
         yield* conversations.rename(created.id, "Mine");
         yield* Deferred.succeed(gate, true);
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
         yield* Effect.sleep("50 millis");
         const meta = yield* metaOf(agents, created.id);
@@ -1194,13 +1287,14 @@ describe("titles", () => {
         const conversations = yield* Conversations;
         const agents = yield* Agents;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
         yield* Effect.sleep("50 millis");
         // The textless first run spent neither the latch nor a title call.
@@ -1237,13 +1331,14 @@ describe("titles", () => {
         const conversations = yield* Conversations;
         const agents = yield* Agents;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hello",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.title === "Auto Title")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.title === "Auto Title"))
         );
         yield* conversations.rename(created.id, "Mine");
         const regenerated = yield* conversations.generateTitle(created.id);
@@ -1281,15 +1376,16 @@ describe("titles", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "first prompt",
         });
         yield* waitUntil(Effect.sync(() => captured.length === 1));
         yield* conversations.send(created.id, "second prompt");
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
         faux.appendResponses([recording]);
         yield* conversations.generateTitle(created.id);
@@ -1320,13 +1416,14 @@ describe("titles", () => {
         const conversations = yield* Conversations;
         const agents = yield* Agents;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hello",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
         yield* Effect.sleep("50 millis");
         return {
@@ -1355,6 +1452,7 @@ describe("titles", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hello",
         });
@@ -1385,13 +1483,17 @@ describe("attention", () => {
     const listed = await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
-        yield* conversations.create({ sandbox: "none", prompt: "say hi" });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "none",
+          prompt: "say hi",
+        });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
-        return yield* conversations.list;
+        return yield* conversations.list(alice.id);
       }).pipe(Effect.provide(layer))
     );
 
@@ -1411,19 +1513,20 @@ describe("attention", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "shell",
           prompt: "sleep",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "running")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "running"))
         );
         yield* waitUntil(
           Effect.sync(() => faux.getPendingResponseCount() === 1)
         );
         yield* conversations.stop(created.id);
-        return yield* conversations.list;
+        return yield* conversations.list(alice.id);
       }).pipe(Effect.provide(layer))
     );
 
@@ -1442,13 +1545,17 @@ describe("attention", () => {
     const listed = await Effect.runPromise(
       Effect.gen(function* () {
         const conversations = yield* Conversations;
-        yield* conversations.create({ sandbox: "shell", prompt: "loop" });
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "loop",
+        });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.status === "idle")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
         );
-        return yield* conversations.list;
+        return yield* conversations.list(alice.id);
       }).pipe(Effect.provide(layer))
     );
 
@@ -1469,21 +1576,24 @@ describe("attention", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hi",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.attention?.reason === "model_error")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(
+              Effect.map((all) => all[0]?.attention?.reason === "model_error")
+            )
         );
         yield* conversations.send(created.id, "again");
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.attention === undefined)
-          )
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.attention === undefined))
         );
-        const listed = yield* conversations.list;
+        const listed = yield* conversations.list(alice.id);
         expect(listed[0]?.status).toBe("idle");
       }).pipe(Effect.provide(layer))
     );
@@ -1501,16 +1611,19 @@ describe("attention", () => {
       Effect.gen(function* () {
         const conversations = yield* Conversations;
         const created = yield* conversations.create({
+          owner: alice.id,
           sandbox: "none",
           prompt: "say hi",
         });
         yield* waitUntil(
-          conversations.list.pipe(
-            Effect.map((all) => all[0]?.attention?.reason === "model_error")
-          )
+          conversations
+            .list(alice.id)
+            .pipe(
+              Effect.map((all) => all[0]?.attention?.reason === "model_error")
+            )
         );
         yield* conversations.archive(created.id);
-        return yield* conversations.list;
+        return yield* conversations.list(alice.id);
       }).pipe(Effect.provide(layer))
     );
 

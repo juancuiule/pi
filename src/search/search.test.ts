@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
 import { callTool, fauxAgents } from "../testing/faux.ts";
+import { alice } from "../testing/users.ts";
 import { Search } from "./search.ts";
 
 const answer = (text: string) => fauxAssistantMessage([fauxText(text)]);
@@ -32,6 +33,7 @@ const converse = (title: string, prompt: string, createdAt = Date.now()) =>
   Effect.gen(function* () {
     const agents = yield* Agents;
     const id = yield* agents.create({
+      owner: alice.id,
       prompt: "",
       title,
       level: "none",
@@ -57,8 +59,8 @@ describe(Search, () => {
         yield* search.indexConversation(created);
         return {
           id: created,
-          byAnswer: yield* search.query("echidna"),
-          byPrompt: yield* search.query("mammals"),
+          byAnswer: yield* search.query("echidna", alice.id),
+          byPrompt: yield* search.query("mammals", alice.id),
         };
       }).pipe(Effect.provide(layer))
     );
@@ -82,7 +84,7 @@ describe(Search, () => {
         const search = yield* Search;
         const id = yield* converse("Monotremes", "hi");
         yield* search.indexConversation(id);
-        return yield* search.query("Monotremes");
+        return yield* search.query("Monotremes", alice.id);
       }).pipe(Effect.provide(layer))
     );
 
@@ -104,8 +106,8 @@ describe(Search, () => {
         yield* search.indexConversation(created);
         return {
           id: created,
-          promptHit: yield* search.query("something"),
-          toolHit: yield* search.query("unindextoken"),
+          promptHit: yield* search.query("something", alice.id),
+          toolHit: yield* search.query("unindextoken", alice.id),
         };
       }).pipe(Effect.provide(layer))
     );
@@ -125,7 +127,7 @@ describe(Search, () => {
         const id = yield* converse("mellohi", "say mellohi");
         yield* search.indexConversation(id);
         yield* agents.archive(id, Date.now());
-        return yield* search.query("mellohi");
+        return yield* search.query("mellohi", alice.id);
       }).pipe(Effect.provide(layer))
     );
 
@@ -141,9 +143,12 @@ describe(Search, () => {
         const search = yield* Search;
         const id = yield* converse("idempotent", "a persistent token");
         yield* search.indexConversation(id);
-        const before = yield* search.query("persistent");
+        const before = yield* search.query("persistent", alice.id);
         yield* search.indexConversation(id);
-        return { first: before, second: yield* search.query("persistent") };
+        return {
+          first: before,
+          second: yield* search.query("persistent", alice.id),
+        };
       }).pipe(Effect.provide(layer))
     );
 
@@ -159,7 +164,10 @@ describe(Search, () => {
         const search = yield* Search;
         const older = yield* converse("zebra file", "one", 1000);
         const newer = yield* converse("yak file", "two", 2000);
-        return { hits: yield* search.query("!!!"), ids: [newer, older] };
+        return {
+          hits: yield* search.query("!!!", alice.id),
+          ids: [newer, older],
+        };
       }).pipe(Effect.provide(layer))
     );
 
@@ -204,7 +212,10 @@ describe(Search, () => {
           const search = yield* Search;
           const id = yield* converse("echidnas", "which mammals lay eggs");
           yield* search.indexConversation(id);
-          return { created: id, hits: yield* search.query("echidna") };
+          return {
+            created: id,
+            hits: yield* search.query("echidna", alice.id),
+          };
         }).pipe(Effect.provide(layer([answer("The echidna is a monotreme.")])))
       );
       expect(first.length).toBeGreaterThan(0);
@@ -214,7 +225,7 @@ describe(Search, () => {
         Effect.gen(function* () {
           const search = yield* Search;
           yield* search.indexConversation(created);
-          return yield* search.query("echidna");
+          return yield* search.query("echidna", alice.id);
         }).pipe(Effect.provide(layer([])))
       );
 

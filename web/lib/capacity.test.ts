@@ -51,8 +51,8 @@ describe(shortageText, () => {
 describe(waitingShortage, () => {
   it("finds the resource a Conversation waits for", () => {
     const usage = [
-      { resource: "seat", limit: 10, holders: [1, 2], waiting: [] },
-      { resource: "desktop", limit: 1, holders: [1], waiting: [2] },
+      { resource: "seat", limit: 10, inUse: 2, holders: [1, 2], waiting: [] },
+      { resource: "desktop", limit: 1, inUse: 1, holders: [1], waiting: [2] },
     ] as const;
     expect(waitingShortage(usage, 2)).toStrictEqual({
       resource: "desktop",

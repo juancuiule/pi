@@ -25,6 +25,7 @@ import { Skills } from "../skills/skills.ts";
 import type { WebSearch } from "../web-search/web-search.ts";
 import { localSandboxes } from "./sandboxes.ts";
 import type { LocalSandboxes } from "./sandboxes.ts";
+import { alice } from "./users.ts";
 
 export const fauxAgents = (
   responses: FauxResponseStep[],
@@ -124,6 +125,7 @@ export const openSeat = (
   Effect.gen(function* () {
     const agents = yield* Agents;
     const id = yield* agents.create({
+      owner: alice.id,
       prompt: "",
       title: "",
       level: options.sandbox ?? "none",

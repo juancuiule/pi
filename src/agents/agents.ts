@@ -76,6 +76,7 @@ import {
 import type { LoadedAttachment } from "../attachments/attachments.ts";
 import { escapeAttachmentTags, formatBlocks } from "../attachments/format.ts";
 import type { Attention } from "../attention.ts";
+import type { UserId } from "../auth/user.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, ClaimCancelled } from "../capacity.ts";
 import type {
@@ -85,7 +86,7 @@ import type {
   UnansweredInput,
 } from "../conversation-events.ts";
 import type { StoredConversation } from "../conversation-meta.ts";
-import { MetaDoc } from "../conversation-meta.ts";
+import { conversationOwner, MetaDoc } from "../conversation-meta.ts";
 import type {
   AttachmentNotFound,
   AttachmentRefused,
@@ -563,6 +564,8 @@ export class Agents extends Context.Service<
       /** Installed in its Sandboxes on top of the Level's image; `InvalidSetting` when the Level cannot have it. */
       readonly software?: readonly SoftwareId[] | undefined;
       readonly createdAt: number;
+      /** The User it belongs to. */
+      readonly owner: UserId;
       readonly approvals?: ApprovalPolicy | undefined;
       /** Changes to what a conversation at this Level gets by default. */
       readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
@@ -628,6 +631,13 @@ export class Agents extends Context.Service<
     ): Effect.Effect<StoredConversation, AgentError | ConversationNotFound>;
     /** Every stored top-level Conversation, archived ones included; order irrelevant. */
     readonly list: Effect.Effect<readonly StoredConversation[], AgentError>;
+    /**
+     * The User a Conversation belongs to: its own owner, or its root's for a subagent. `undefined` for an unknown
+     * id and for a Conversation that predates accounts and is not adopted yet.
+     */
+    ownerOf(id: ConversationId): Effect.Effect<UserId | undefined, AgentError>;
+    /** Give every top-level Conversation without an owner to `owner`; idempotent. Returns how many it took. */
+    adopt(owner: UserId): Effect.Effect<number, AgentError>;
     /** Archive a Conversation without a Seat: mark it, and delete its Workspace's files. */
     archive(
       id: ConversationId,
@@ -1504,6 +1514,7 @@ export class Agents extends Context.Service<
           readonly level: SandboxChoice;
           readonly software?: readonly SoftwareId[] | undefined;
           readonly createdAt: number;
+          readonly owner: UserId;
           readonly approvals?: ApprovalPolicy | undefined;
           readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
         }) {
@@ -1562,6 +1573,7 @@ export class Agents extends Context.Service<
                   meta.meta = {
                     title: createOptions.title,
                     createdAt: createOptions.createdAt,
+                    owner: createOptions.owner,
                   };
                   const workspace = await tx.doc(WorkspaceDoc, id);
                   workspace.level = createOptions.level;
@@ -2213,6 +2225,33 @@ export class Agents extends Context.Service<
           }
           return conversations;
         }).pipe(Effect.withSpan("Agents.list"));
+
+        const ownerOf = Effect.fn("Agents.ownerOf")(function* (
+          id: ConversationId
+        ) {
+          return yield* attempt(() => conversationOwner(harness, id, context));
+        });
+
+        const adopt = Effect.fn("Agents.adopt")(function* (owner: UserId) {
+          const ids = yield* attempt(() =>
+            scanTopLevel(harness, undefined, [])
+          );
+          let adopted = 0;
+          for (const id of ids) {
+            const took = yield* attempt(() =>
+              harness.commit(async (tx) => {
+                const doc = await tx.doc(MetaDoc, id);
+                if (doc.meta === undefined || doc.meta.owner !== undefined) {
+                  return false;
+                }
+                doc.meta = { ...doc.meta, owner };
+                return true;
+              }, context)
+            );
+            adopted += took ? 1 : 0;
+          }
+          return adopted;
+        });
 
         const archive = Effect.fn("Agents.archive")(function* (
           id: ConversationId,
@@ -2995,6 +3034,8 @@ export class Agents extends Context.Service<
           upgrade: upgradeStored,
           get,
           list,
+          ownerOf,
+          adopt,
           archive,
           unarchive,
           events,

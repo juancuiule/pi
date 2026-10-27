@@ -14,6 +14,7 @@ import {
 
 import { Agents } from "../agents/agents.ts";
 import type { AgentError } from "../agents/agents.ts";
+import type { UserId } from "../auth/user.ts";
 import type { ConversationNotFound } from "../errors.ts";
 import type { SearchResult } from "../server/api.ts";
 import { indexedText, matchQuery, splitSnippet } from "./format.ts";
@@ -44,10 +45,11 @@ export class Search extends Context.Service<
     /**
      * Ranked conversations matching `q`, snippets segmented, title and archived flag live from
      * MetaDoc. An empty or unmatchable `q` lists the most recent conversations with empty matches
-     * (the palette's zero-state).
+     * (the palette's zero-state). Only `owner`'s conversations are searched.
      */
     query(
-      q: string
+      q: string,
+      owner: UserId
     ): Effect.Effect<readonly SearchResult[], SearchError | AgentError>;
     /**
      * Index a conversation's title and every transcript entry past its cursor. Idempotent —
@@ -119,11 +121,16 @@ export class Search extends Context.Service<
         const indexConversation = (id: ConversationId) =>
           writing.withPermit(indexOne(id));
 
-        const query = Effect.fn("Search.query")(function* (q: string) {
+        const query = Effect.fn("Search.query")(function* (
+          q: string,
+          owner: UserId
+        ) {
+          const owned = (yield* agents.list).filter(
+            (each) => each.meta.owner === owner
+          );
           const match = matchQuery(q);
           if (match === undefined) {
-            const stored = yield* agents.list;
-            return stored
+            return owned
               .toSorted((a, b) => b.meta.createdAt - a.meta.createdAt)
               .slice(0, RECENT)
               .map((each): SearchResult => ({
@@ -134,7 +141,13 @@ export class Search extends Context.Service<
                 matches: [],
               }));
           }
-          const rows = yield* indexed(() => index.query(match, QUERY_ROWS));
+          const rows = yield* indexed(() =>
+            index.query(
+              match,
+              QUERY_ROWS,
+              owned.map((each) => Number(each.id))
+            )
+          );
           const groups = new Map<number, QueryRow[]>();
           for (const row of rows) {
             const group = groups.get(row.conversationId);

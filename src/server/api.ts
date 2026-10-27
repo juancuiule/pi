@@ -1,15 +1,18 @@
 // oxlint-disable no-redeclare -- a schema and its type share a name, the Effect idiom
 // The HTTP API, shared by the server and web/. Only type imports from pi packages: web/ bundles this file.
-import { Schema } from "effect";
+import { Context, Schema } from "effect";
 import { Multipart } from "effect/http";
 import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
+  HttpApiMiddleware,
   HttpApiSchema,
+  HttpApiSecurity,
 } from "effect/http-api";
 
 import { ATTENTION_REASONS } from "../attention.ts";
+import { SESSION_COOKIE, User } from "../auth/user.ts";
 import {
   ApprovalNotFound,
   ArtifactNotFound,
@@ -20,20 +23,33 @@ import {
   ConversationNotFound,
   EmptyMessage,
   EntryNotFound,
+  InvalidAccount,
+  InvalidCredentials,
   InvalidDomain,
   InvalidSetting,
   InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
+  SetupClosed,
   SkillNotFound,
   SubmissionNotFound,
   TitleGenerationFailed,
+  TooManyAttempts,
   TraceUnavailable,
+  Unauthorized,
   WorkspaceFileNotFound,
 } from "../errors.ts";
 import { SOFTWARE_IDS } from "../sandbox/software.ts";
 
 export { SOFTWARE } from "../sandbox/software.ts";
+export {
+  NAME_RULE,
+  nameProblem,
+  PASSWORD_RULE,
+  passwordProblem,
+  User,
+  UserId,
+} from "../auth/user.ts";
 
 export type { AssistantMessage, Message, Usage } from "@earendil-works/pi-ai";
 export type {
@@ -60,15 +76,20 @@ export {
   ConversationNotFound,
   EmptyMessage,
   EntryNotFound,
+  InvalidAccount,
+  InvalidCredentials,
   InvalidDomain,
   InvalidSetting,
   InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
+  SetupClosed,
   SkillNotFound,
   SubmissionNotFound,
   TitleGenerationFailed,
+  TooManyAttempts,
   TraceUnavailable,
+  Unauthorized,
   WorkspaceFileNotFound,
 } from "../errors.ts";
 
@@ -266,6 +287,9 @@ export type Capabilities = typeof Capabilities.Type;
 export const CapacityUsage = Schema.Struct({
   resource: Schema.Literals(["seat", "shell", "desktop"]),
   limit: Schema.Number,
+  /** How many are held, by anyone: the limit is shared by every User. */
+  inUse: Schema.Number,
+  /** The caller's own Conversations holding one; other people's are counted in `inUse` only. */
   holders: Schema.Array(Schema.Number),
   /** Conversations waiting for one: an agent's Upgrade waits until there is room. */
   waiting: Schema.Array(Schema.Number),
@@ -535,7 +559,16 @@ const AttachmentGroup = HttpApiGroup.make("attachments").add(
       prepared: PreparedAttachment,
     }),
     error: NoAttachment,
-  }),
+  })
+);
+
+/**
+ * An attachment's images: a PDF page drawn as WebP and an image's thumbnail. Outside `Authentication`, because
+ * artifact pages show them from a sandboxed iframe whose opaque origin makes every request cross-site, so the
+ * browser never sends the session cookie. The attachment id is the capability instead: 128 random bits, shown only
+ * to its owner, and it serves only with its own `conversation`. Originals and the viewer stay behind a session.
+ */
+const AttachmentImageGroup = HttpApiGroup.make("attachmentImages").add(
   // One page of a PDF drawn as a WebP image, so the console shows the page without opening the PDF itself.
   HttpApiEndpoint.get("page", "/attachments/:id/pages/:page", {
     params: { id: Schema.String, page: Schema.Int },
@@ -806,6 +839,66 @@ const InfoGroup = HttpApiGroup.make("info").add(
   })
 );
 
+/** The signed-in User of the request, provided by `Authentication` to every endpoint outside `auth`. */
+export class CurrentUser extends Context.Service<CurrentUser, User>()(
+  "effect-pi/CurrentUser"
+) {}
+
+/**
+ * Every endpoint outside the `auth` group needs a session cookie (401 `Unauthorized` without one), and any request
+ * naming a Conversation — `/conversations/:id/...` or a `conversation` query — must name one of the User's own;
+ * any other reads as `ConversationNotFound`, so ids of other people's Conversations are indistinguishable from
+ * missing ones.
+ */
+export class Authentication extends HttpApiMiddleware.Service<
+  Authentication,
+  { provides: CurrentUser }
+>()("effect-pi/Authentication", {
+  security: {
+    session: HttpApiSecurity.apiKey({ key: SESSION_COOKIE, in: "cookie" }),
+  },
+  error: [Unauthorized.pipe(HttpApiSchema.status(401)), NotFound],
+}) {}
+
+const Credentials = Schema.Struct({
+  name: Schema.String.check(Schema.isMaxLength(64)),
+  password: Schema.String.check(Schema.isMaxLength(1024)),
+});
+
+// Signing in and out. Outside `Authentication`: these are how a request gets a session.
+const AuthGroup = HttpApiGroup.make("auth").add(
+  // Who the session cookie signs in, if anyone, and whether first-run setup is open (no account exists).
+  HttpApiEndpoint.get("state", "/auth/state", {
+    success: Schema.Struct({
+      user: Schema.optionalKey(User),
+      setup: Schema.Boolean,
+    }),
+  }),
+  // Sets the session cookie.
+  HttpApiEndpoint.post("login", "/auth/login", {
+    payload: Credentials,
+    success: User,
+    error: [
+      InvalidCredentials.pipe(HttpApiSchema.status(401)),
+      TooManyAttempts.pipe(HttpApiSchema.status(429)),
+    ],
+  }),
+  // Creates the first account, which adopts every Conversation and Trusted domain that predates accounts, and
+  // signs it in. Closed once any account exists; later accounts come from `pnpm user add`.
+  HttpApiEndpoint.post("setup", "/auth/setup", {
+    payload: Credentials,
+    success: User.pipe(HttpApiSchema.status(201)),
+    error: [
+      SetupClosed.pipe(HttpApiSchema.status(409)),
+      InvalidAccount.pipe(HttpApiSchema.status(400)),
+    ],
+  }),
+  // Ends the session and clears the cookie; without one it is a no-op.
+  HttpApiEndpoint.post("logout", "/auth/logout", {
+    success: HttpApiSchema.NoContent,
+  })
+);
+
 export const Api = HttpApi.make("effect-pi")
   .add(ConversationGroup)
   .add(AttachmentGroup)
@@ -815,4 +908,8 @@ export const Api = HttpApi.make("effect-pi")
   .add(FileGroup)
   .add(SearchGroup)
   .add(InfoGroup)
+  // Only the groups above: `auth` and `attachmentImages` are added after, so they are reachable without a session.
+  .middleware(Authentication)
+  .add(AuthGroup)
+  .add(AttachmentImageGroup)
   .prefix("/api");

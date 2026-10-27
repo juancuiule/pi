@@ -59,6 +59,7 @@ export const ShellTerminal = ({
     const connect = () => {
       const client = connectShell({
         apiUrl,
+        pageHost: window.location.hostname,
         conversation: id,
         columns: size.current.columns,
         rows: size.current.rows,

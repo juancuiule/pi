@@ -20,6 +20,7 @@ import {
   offered,
   offeredIn,
 } from "../testing/faux.ts";
+import { alice } from "../testing/users.ts";
 import { Agents } from "./agents.ts";
 import { SETTINGS_ENTRY } from "./settings.ts";
 
@@ -42,6 +43,7 @@ const create = (
   Effect.gen(function* () {
     const agents = yield* Agents;
     return yield* agents.create({
+      owner: alice.id,
       prompt: "",
       title: "",
       level: "none",
