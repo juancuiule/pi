@@ -79,6 +79,8 @@ services:
     image: cloudflare/cloudflared:2026.9.3
     command: tunnel --no-autoupdate run
     network_mode: host
+    # The owner of credentials.json, which stays mode 600
+    user: "1000:1000"
     volumes:
       - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
       - ./.cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro

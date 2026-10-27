@@ -26,7 +26,7 @@ Yes, one at a time, slowly. What it costs:
 
 - A 64-bit OS (Raspberry Pi OS 64-bit or Ubuntu arm64): the sandbox images are `ubuntu:24.04`, and the pi-env daemon ships an arm64 build. 8 GB of RAM is comfortable; lower `MAX_SHELLS` on smaller boards, and leave desktops off below 8 GB.
 - A current Node (the one this repo develops on; `node server.ts` relies on type stripping), pnpm, and Docker Engine with your user in the `docker` group.
-- Leave Langfuse and SearXNG off unless you need them; both are heavy for a Pi.
+- SearXNG (`pnpm searxng:up`) is light and gives the agent `web_search`. Langfuse cannot run on a Pi 4: ClickHouse's arm64 builds stop with `Illegal instruction` on its Cortex-A72 (ARMv8.0); a Pi 5 or another machine can host it.
 
 ```sh
 git clone <this repo> && cd effect-pi

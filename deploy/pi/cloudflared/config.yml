@@ -6,7 +6,7 @@
 #   cloudflared tunnel create <name>                # -> ~/.cloudflared/<id>.json
 #   cloudflared tunnel route dns <name> <hostname>  # creates the CNAME
 # then updates `tunnel:` and the hostnames below, and copies the credentials file to ../.cloudflared/credentials.json.
-tunnel: TUNNEL_ID
+tunnel: 2786d678-3144-489b-a1fb-a9f76dd40863
 credentials-file: /etc/cloudflared/credentials.json
 
 ingress:
