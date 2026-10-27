@@ -44,6 +44,19 @@ const info = (
   createdAt: 0,
 });
 
+describe(formatBlocks, () => {
+  it("names a binary file and where the shell finds it, without contents", () => {
+    const prepared = doc([], "file");
+    const [block] = formatBlocks(
+      [{ info: { ...info("att_1", prepared, "src.zip"), size: 42 }, prepared }],
+      { budget: 1000, images: true }
+    );
+    expect(block).toBe(
+      '<attachment id="att_1" name="src.zip" type="file" status="ready" size="42 bytes">\n[A binary file, not shown here and not readable with read_attachment. In a shell or desktop workspace it is at /workspace/.attachments/att_1/src.zip; without one it cannot be opened, so tell the person if it matters.]\n</attachment>'
+    );
+  });
+});
+
 describe(classify, () => {
   it("accepts a file when its name, reported type and signature agree", () => {
     expect(classify("a.pdf", "application/pdf", textPdf(["x"]))).toStrictEqual({
@@ -66,8 +79,21 @@ describe(classify, () => {
     });
   });
 
-  it("refuses unknown extensions and contents that do not match the name or type", () => {
-    expect(classify("a.docx", "", bytes("x"))).toHaveProperty("unsupported");
+  it("takes any other file as a file to read later, ignoring its reported type", () => {
+    expect(classify("main.ts", "video/mp2t", bytes("let x"))).toStrictEqual({
+      kind: "file",
+      mediaType: "application/octet-stream",
+    });
+    expect(
+      classify("src.zip", "", new Uint8Array([0x50, 0x4b, 0x03, 0x04]))
+    ).toStrictEqual({ kind: "file", mediaType: "application/zip" });
+    expect(classify("Makefile", "", bytes("all:"))).toStrictEqual({
+      kind: "file",
+      mediaType: "application/octet-stream",
+    });
+  });
+
+  it("refuses contents that do not match a name or type it prepares", () => {
     expect(classify("a.pdf", "", bytes("not a pdf"))).toHaveProperty(
       "unsupported"
     );

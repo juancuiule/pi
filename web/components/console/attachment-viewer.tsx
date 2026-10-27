@@ -37,6 +37,7 @@ const KIND_LABEL: Record<AttachmentInfo["kind"], string> = {
   pdf: "PDF",
   table: "Table",
   image: "Image",
+  file: "File",
 };
 
 const ShowMore = ({
@@ -258,6 +259,9 @@ const Contents = ({
         </p>
       );
     }
+    case "file": {
+      return null;
+    }
     default: {
       throw new TypeError(`Unknown kind: ${prepared.kind satisfies never}`);
     }
@@ -300,7 +304,9 @@ const Details = ({
           </p>
         )
       )}
-      {info.kind === "image" || info.kind === "pdf" ? null : (
+      {info.kind === "image" ||
+      info.kind === "pdf" ||
+      info.kind === "file" ? null : (
         <p className="text-muted-foreground text-xs">
           Below is the text the agent reads, not the original layout.
         </p>

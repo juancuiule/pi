@@ -3,10 +3,6 @@
 // blocks and shows each file as a chip that downloads the original.
 import type { AttachmentInfo } from "effect-pi/api";
 
-/** What the picker offers; the server checks every file again. */
-export const ACCEPTED_FILES =
-  ".txt,.md,.markdown,.html,.htm,.csv,.tsv,.pdf,.png,.jpg,.jpeg,.webp";
-
 export type AttachmentKind = AttachmentInfo["kind"];
 
 /** A file in the transcript, as its block names it. */
@@ -23,7 +19,14 @@ const BLOCK_START = /(?:^|\n\n)<attachment id="att_[0-9a-f]{32}"/gu;
 const OPEN_TAG = "<attachment ";
 const CLOSE_TAG = "\n</attachment>";
 const ATTRIBUTE = /[a-z]+="[^"]*"/gu;
-const KINDS = new Set<string>(["text", "html", "pdf", "table", "image"]);
+const KINDS = new Set<string>([
+  "text",
+  "html",
+  "pdf",
+  "table",
+  "image",
+  "file",
+]);
 const STATUSES = new Set<string>(["ready", "partial", "needs_ocr"]);
 
 const unescape = (value: string) =>

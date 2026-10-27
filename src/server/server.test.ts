@@ -951,7 +951,7 @@ describe("HTTP API", () => {
           })
         );
         const unsupported = yield* Effect.flip(
-          client.attachments.upload({ payload: form("a.exe", "MZ") })
+          client.attachments.upload({ payload: form("a.pdf", "not a pdf") })
         );
         const staged = yield* client.attachments.upload({
           payload: form("brief.md", "# Brief\n\nKeep it short."),

@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -378,7 +385,7 @@ describe("upload checks and lifetimes", WORKERS, () => {
     const exits = await Effect.runPromise(
       Effect.gen(function* () {
         return [
-          yield* Effect.exit(upload("a.docx", "x")),
+          yield* Effect.exit(upload("a.pdf", "not a pdf")),
           yield* Effect.exit(upload("a.txt", "x".repeat(101))),
           yield* Effect.exit(upload("b.txt", "x".repeat(100))),
           yield* Effect.exit(upload("c.txt", "x".repeat(60))),
@@ -585,6 +592,55 @@ describe("claims and quotas", WORKERS, () => {
   });
 });
 
+describe("the original's stored key", WORKERS, () => {
+  it("keeps the upload's extension, and still serves an original stored before the key had it", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "originals-"));
+    const files = path.join(directory, "files");
+    const layer = Attachments.local({
+      directory: files,
+      database: path.join(directory, "db.sqlite"),
+    });
+    const ids = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const pdf = yield* upload("report.pdf", textPdf(["one page"]));
+          // Only a dotfile reaches a record with no extension: classify needs one in the name, extname finds none.
+          const bare = yield* upload(".txt", "plain text");
+          const legacy = yield* upload("legacy.txt", "legacy bytes");
+          return { pdf: pdf.id, bare: bare.id, legacy: legacy.id };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect(readdirSync(path.join(files, ids.pdf))).toContain("original.pdf");
+    expect(readdirSync(path.join(files, ids.bare))).toContain("original");
+    // An attachment stored before the key carried the extension.
+    renameSync(
+      path.join(files, ids.legacy, "original.txt"),
+      path.join(files, ids.legacy, "original")
+    );
+    const served = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const attachments = yield* Attachments;
+          const text = (id: string) =>
+            attachments
+              .file(id, undefined, "original")
+              .pipe(Effect.map(({ bytes }) => new TextDecoder().decode(bytes)));
+          return {
+            legacy: yield* text(ids.legacy),
+            bare: yield* text(ids.bare),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    rmSync(directory, { recursive: true, force: true });
+    expect(served).toStrictEqual({
+      legacy: "legacy bytes",
+      bare: "plain text",
+    });
+  });
+});
+
 describe("restarts", WORKERS, () => {
   it("commit a message's claim only when its message was admitted, and release the rest", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "restart-"));
@@ -693,6 +749,56 @@ describe("PDF pages for the console", WORKERS, () => {
     // The second request is the stored image, not a new drawing.
     expect(result.again).toStrictEqual(result.first);
     expect(result.refused).toStrictEqual([true, true, true]);
+  });
+});
+
+describe("other files", WORKERS, () => {
+  it("reads source code as text and keeps binary files for the shell", async () => {
+    const { layer, faux } = fauxAgents([]);
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const seat = yield* openSeat();
+          const code = yield* upload(
+            "app.py",
+            "import os\n\n\n\nprint(os.getcwd())\n",
+            Number(seat.id)
+          );
+          const zip = yield* upload(
+            "src.zip",
+            new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]),
+            Number(seat.id)
+          );
+          faux.setResponses([
+            fauxAssistantMessage([fauxText("ok")]),
+            callTool("search_attachment", { id: code.id, query: "print" }),
+            echoToolResult,
+            callTool("read_attachment", { id: zip.id }),
+            echoToolResult,
+          ]);
+          yield* seat.ask("Files.", [code.id, zip.id]);
+          return {
+            code,
+            zip,
+            found: yield* seat.ask("Find print."),
+            read: yield* seat.ask("Read the zip."),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+    expect([result.code.kind, result.code.mediaType]).toStrictEqual([
+      "text",
+      "text/plain",
+    ]);
+    expect([result.zip.kind, result.zip.mediaType]).toStrictEqual([
+      "file",
+      "application/zip",
+    ]);
+    expect(result.found).toContain("line 5: print(os.getcwd())");
+    expect(result.read).toContain("is a binary file");
+    expect(result.read).toContain(
+      `/workspace/.attachments/${result.zip.id}/src.zip`
+    );
   });
 });
 

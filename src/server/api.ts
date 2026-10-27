@@ -144,7 +144,7 @@ export const AttachmentInfo = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   mediaType: Schema.String,
-  kind: Schema.Literals(["text", "html", "pdf", "table", "image"]),
+  kind: Schema.Literals(["text", "html", "pdf", "table", "image", "file"]),
   size: Schema.Number,
   /** `partial`: some PDF pages need OCR; `needs_ocr`: none has text. */
   status: Schema.Literals(["ready", "partial", "needs_ocr"]),
@@ -163,8 +163,8 @@ export type AttachmentInfo = typeof AttachmentInfo.Type;
 
 /** What was prepared from an attachment: what the model reads (see src/attachments/format.ts `Prepared`). */
 export const PreparedAttachment = Schema.Struct({
-  kind: Schema.Literals(["text", "html", "pdf", "table", "image"]),
-  /** One entry per PDF page; a single one for text, HTML and tables (one line per row); none for images. */
+  kind: Schema.Literals(["text", "html", "pdf", "table", "image", "file"]),
+  /** One entry per PDF page; a single one for text, HTML and tables (one line per row); none for images and binary files. */
   pages: Schema.Array(Schema.String),
   ocrPages: Schema.Array(Schema.Number),
   warnings: Schema.Array(Schema.String),

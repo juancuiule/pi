@@ -161,10 +161,15 @@ const headOf = async (file: string) => {
 
 const megabytes = (bytes: number) => `${Math.round(bytes / MB)} MB`;
 
+const originalOf = (name: string): `original${string}` => {
+  const extension = path.extname(name);
+  return `original${extension === "." ? "" : extension}`;
+};
+
 const key = (
   id: string,
   file:
-    | "original"
+    | `original${string}`
     | "prepared.json"
     | "model"
     | "thumbnail.webp"
@@ -291,9 +296,14 @@ export class Attachments extends Context.Service<
               })
           );
 
-        const store = (id: string, file: string, extracted: Extracted) =>
+        const store = (
+          id: string,
+          name: string,
+          file: string,
+          extracted: Extracted
+        ) =>
           Effect.promise(async () => {
-            await blobs.put(key(id, "original"), { path: file });
+            await blobs.put(key(id, originalOf(name)), { path: file });
             await blobs.put(
               key(id, "prepared.json"),
               new TextEncoder().encode(JSON.stringify(extracted.prepared))
@@ -363,8 +373,12 @@ export class Attachments extends Context.Service<
             name:
               path.basename(file.name.replaceAll("\\", "/")).slice(0, 255) ||
               "file",
-            mediaType: kind.mediaType,
-            kind: kind.kind,
+            // An unknown file that turned out to be text downloads as text.
+            mediaType:
+              kind.kind === "file" && prepared.kind === "text"
+                ? "text/plain"
+                : kind.mediaType,
+            kind: prepared.kind,
             size,
             status: statusOf(prepared),
             ocrPages: prepared.ocrPages,
@@ -375,7 +389,9 @@ export class Attachments extends Context.Service<
             conversationId: file.conversationId,
             sentAt: undefined,
             ...(kind.kind === "pdf" ? { pages: prepared.pages.length } : {}),
-            ...(kind.kind === "image" ? {} : { chars: charsOf(prepared) }),
+            ...(prepared.kind === "image" || prepared.kind === "file"
+              ? {}
+              : { chars: charsOf(prepared) }),
             ...(prepared.image === undefined
               ? {}
               : { width: prepared.image.width, height: prepared.image.height }),
@@ -384,7 +400,7 @@ export class Attachments extends Context.Service<
               : { rows: prepared.table.rows, columns: prepared.table.columns }),
           };
           // Bytes first: a record never points at missing files. A failed write leaves no record.
-          yield* store(id, file.path, extracted).pipe(
+          yield* store(id, record.name, file.path, extracted).pipe(
             Effect.andThen(Effect.sync(() => records.insert(record))),
             Effect.onError(() =>
               Effect.promise(() => blobs.removeAll(id)).pipe(Effect.ignore)
@@ -509,13 +525,22 @@ export class Attachments extends Context.Service<
           ) {
             return yield* new AttachmentNotFound({ id });
           }
-          const bytes = yield* Effect.promise(() =>
-            blobs.get(key(id, which === "thumbnail" ? "thumbnail.webp" : which))
-          );
-          if (bytes === undefined) {
-            return yield* new AttachmentNotFound({ id });
+          const wanted: "original" | "thumbnail.webp" | "model" =
+            which === "thumbnail" ? "thumbnail.webp" : which;
+          // Attachments stored before the original's key carried the extension only have the bare key.
+          const candidates =
+            wanted === "original" && originalOf(record.name) !== "original"
+              ? [originalOf(record.name), wanted]
+              : [wanted];
+          for (const candidate of candidates) {
+            const bytes = yield* Effect.promise(() =>
+              blobs.get(key(id, candidate))
+            );
+            if (bytes !== undefined) {
+              return { record, bytes };
+            }
           }
-          return { record, bytes };
+          return yield* new AttachmentNotFound({ id });
         });
 
         const view = Effect.fn("Attachments.view")(function* (
@@ -687,11 +712,14 @@ const SECTION = [
   "When you quote or rely on a file, cite it by name with its page (PDFs) and line numbers, or its row numbers (tables).",
 ].join("\n");
 
-/** Tables need computing, not reading, for totals and groupings; what the agent can do depends on its machine. */
-const tableAdvice = (level: string) =>
+/**
+ * Tables need computing, not reading, for totals and groupings, and binary files (archives, Office documents) need a
+ * shell to open; what the agent can do depends on its machine.
+ */
+const levelAdvice = (level: string) =>
   level === "none"
-    ? "You cannot compute over a table here: for totals, averages or groupings over more rows than you have read, say so (or upgrade to a shell) rather than estimate."
-    : "The original files are also in /workspace/.attachments/<id>/. For totals, averages, groupings or filters over a table, compute with the shell on the original file instead of reading every row.";
+    ? 'You cannot compute over a table here: for totals, averages or groupings over more rows than you have read, say so (or upgrade to a shell) rather than estimate. Binary files (type="file") cannot be opened here either.'
+    : 'The original files are also in /workspace/.attachments/<id>/. For totals, averages, groupings or filters over a table, compute with the shell on the original file instead of reading every row. Open binary files (type="file": archives, Office documents, ...) there with the shell.';
 
 const textResult = (text: string) => ({
   content: [{ type: "text", text } satisfies TextContent],
@@ -705,6 +733,9 @@ const sourceOf = (bytes: Uint8Array): Prepared => ({
   warnings: [],
   extractor: "source",
 });
+
+const binaryNote = (record: AttachmentRecord) =>
+  `${record.name} (${record.id}) is a binary file; it cannot be read here. With a shell, open it at /workspace/${sandboxPath(record.id, record.name)}.`;
 
 /** Run an attachment lookup for a tool: an attachment outside the conversation is an error the model reads. */
 const run = <A>(effect: Effect.Effect<A, AttachmentNotFound>) =>
@@ -757,7 +788,7 @@ export const attachmentsExtension = (
           context
         );
         const level = workspace?.level ?? "none";
-        return `${SECTION}\n${tableAdvice(level)}`;
+        return `${SECTION}\n${levelAdvice(level)}`;
       }),
     ],
     tools: [
@@ -795,6 +826,9 @@ export const attachmentsExtension = (
           const conversationId = Number(api.conversationId);
           const loaded = await textOf(conversationId, id, which);
           const { record, prepared } = loaded;
+          if (prepared.kind === "file") {
+            return textResult(binaryNote(record));
+          }
           if (prepared.kind === "image") {
             const { model } = await api.agent(context);
             const vision =
@@ -857,6 +891,9 @@ export const attachmentsExtension = (
             return textResult(
               `${record.name} (${id}) is an image; it has no text to search.`
             );
+          }
+          if (prepared.kind === "file") {
+            return textResult(binaryNote(record));
           }
           return textResult(
             formatSearch(
