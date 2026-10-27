@@ -1,5 +1,7 @@
 // Accounts and their sessions: two tables of their own in the EFFECT_PI_DB file, like `artifacts`. A session row
 // keeps only the SHA-256 of its token, so the file alone cannot sign anyone in.
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { User, UserId } from "./user.ts";
@@ -56,6 +58,9 @@ export interface AuthRecords {
 export const sqliteRecords = (
   file: string
 ): AuthRecords & { close(): void } => {
+  if (file !== ":memory:") {
+    mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  }
   const db = new DatabaseSync(file);
   db.exec(`
     PRAGMA busy_timeout = 5000;
