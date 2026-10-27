@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "varlock run -- next dev",
+    "dev": "varlock run -- next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "varlock run -- next start",
+    "start": "varlock run -- next start -H 127.0.0.1",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "check": "pnpm typecheck && pnpm test"

@@ -54,7 +54,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ## Build and run
 
-Run the production console, not `pnpm dev`: the dev server is slow on a Pi and exposes Next's dev tooling.
+Run the production console, not `pnpm dev`: the dev server is slow on a Pi and exposes Next's dev tooling. Both listen on 127.0.0.1 only, like the server; the tunnel is the way in.
 
 ```sh
 pnpm --filter web build
