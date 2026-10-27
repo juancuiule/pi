@@ -460,7 +460,7 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       });
     });
 
-    it("holds a Sandbox to its memory and CPU limits", async () => {
+    it("holds a Sandbox to its memory and CPU limits and DNS servers", async () => {
       const dir = mkdtempSync(path.join(tmpdir(), "effect-pi-limits-"));
       const name = `effect-pi-limits-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -502,10 +502,18 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
               ["inspect", "--format", "{{.HostConfig.NanoCpus}}", name],
               { encoding: "utf-8" }
             ).trim(),
+            nameservers: execFileSync(
+              "docker",
+              ["exec", name, "grep", "^nameserver", "/etc/resolv.conf"],
+              { encoding: "utf-8" }
+            ).trim(),
           };
         }).pipe(
           Effect.provide(
-            DockerSandboxes.layer({ limits: { memoryMb: 256, cpus: 0.5 } })
+            DockerSandboxes.layer({
+              limits: { memoryMb: 256, cpus: 0.5 },
+              dns: ["1.1.1.1", "9.9.9.9"],
+            })
           ),
           Effect.scoped
         )
@@ -516,6 +524,7 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
         small: "ok",
         large: "killed",
         cpus: "500000000",
+        nameservers: "nameserver 1.1.1.1\nnameserver 9.9.9.9",
       });
     });
 

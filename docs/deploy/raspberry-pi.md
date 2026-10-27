@@ -44,6 +44,8 @@ MAX_SHELLS=2
 # Each Sandbox's memory (swap included) and CPUs, so an agent's build cannot starve the Pi
 SANDBOX_MEMORY_MB=2048
 SANDBOX_CPUS=2
+# Needed when the Pi runs Tailscale: its resolv.conf names 100.100.100.100, which containers cannot reach
+SANDBOX_DNS=1.1.1.1,8.8.8.8
 # A model: an API key (Anthropic, Vercel AI Gateway with AI_GATEWAY_API_KEY=vck_..., OpenAI), or Ollama on another machine
 ANTHROPIC_API_KEY=sk-ant-...
 ```

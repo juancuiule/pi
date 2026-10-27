@@ -51,10 +51,12 @@ export const capacity = {
   desktops: ENV.MAX_DESKTOPS,
 };
 
-/** Resource limits for each Docker Sandbox; unset, a Sandbox can take the whole machine. */
-export const sandboxLimits = {
-  memoryMb: ENV.SANDBOX_MEMORY_MB,
-  cpus: ENV.SANDBOX_CPUS,
+const sandboxDns = unset(ENV.SANDBOX_DNS);
+
+/** How each Docker Sandbox runs: resource limits (unset, it can take the whole machine) and DNS servers. */
+export const sandbox = {
+  limits: { memoryMb: ENV.SANDBOX_MEMORY_MB, cpus: ENV.SANDBOX_CPUS },
+  dns: sandboxDns?.split(",").map((address) => address.trim()),
 };
 
 /** Where the server keeps conversations and attachments, where skills are read from, and where desktop screenshots go. */

@@ -133,8 +133,8 @@ const CapacityLive = Capacity.layer(config.capacity);
 // workspaces bucket. Conversations needs the same layer for its run-end checkpoints, so it is merged in.
 const WorkspacesLive =
   store !== undefined && config.storage.workspace === "s3-copied"
-    ? S3Copied.workspaces({ store, limits: config.sandboxLimits })
-    : DockerVolumes.workspaces({ limits: config.sandboxLimits });
+    ? S3Copied.workspaces({ store, ...config.sandbox })
+    : DockerVolumes.workspaces(config.sandbox);
 
 // The `web` extension exists only with SEARXNG_URL set: no SearXNG, no `web_search` tool at all.
 const WebSearchLive =

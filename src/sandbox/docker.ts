@@ -251,6 +251,8 @@ export const layer = (
   options: {
     readonly images?: Partial<Record<SandboxKind, string>>;
     readonly limits?: Limits;
+    /** `--dns` servers; unset, Docker copies the host's resolv.conf. */
+    readonly dns?: readonly string[] | undefined;
   } = {}
 ) =>
   Layer.effect(
@@ -362,6 +364,7 @@ export const layer = (
           mount,
           ...publish,
           ...limitArgs(options.limits),
+          ...(options.dns ?? []).map((server) => `--dns=${server}`),
           image,
         ]);
         const started = Effect.gen(function* () {

@@ -116,6 +116,14 @@ export type CoercedEnvSchema = {
   SANDBOX_CPUS?: number;
   
   /**
+   * **SANDBOX_DNS**  
+   * DNS servers for each Sandbox, comma-separated (Docker's --dns); unset, Docker copies the host's resolv.conf, which  
+   * fails when it names a resolver only the host reaches, such as Tailscale's 100.100.100.100.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  SANDBOX_DNS?: string;
+  
+  /**
    * **CONVERSATION_IDLE_TIMEOUT**  
    * A conversation idle this long is closed and its sandbox removed.  
    * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M12%2020a7%207%200%200%201-7-7a7%207%200%200%201%207-7a7%207%200%200%201%207%207a7%207%200%200%201-7%207m7.03-12.61l1.42-1.42c-.45-.51-.9-.97-1.41-1.41L17.62%206c-1.55-1.26-3.5-2-5.62-2a9%209%200%200%200-9%209a9%209%200%200%200%209%209c5%200%209-4.03%209-9c0-2.12-.74-4.07-1.97-5.61M11%2014h2V8h-2m4-7H9v2h6z%22%2F%3E%3C%2Fsvg%3E)   
@@ -355,11 +363,11 @@ export type CoercedEnvSchema = {
   
 };
 
-type _CoercedEnvSchema_f4b96002 = CoercedEnvSchema;
+type _CoercedEnvSchema_09e2607b = CoercedEnvSchema;
 
 declare module 'varlock/env' {
-  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_f4b96002> {}
-  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_f4b96002, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'PUBLIC_URL' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'SANDBOX_MEMORY_MB' | 'SANDBOX_CPUS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SEARCH_DB' | 'SKILLS_DIR' | 'SKILLS_ORG_DIR' | 'SCREENSHOTS_DIR' | 'ATTACHMENTS_DIR' | 'STORAGE' | 'WORKSPACE_STORAGE' | 'S3_ENDPOINT' | 'SCREENSHOT_TTL_DAYS' | 'ATTACHMENT_MAX_FILE_MB' | 'ATTACHMENT_MAX_FILES' | 'ATTACHMENT_MAX_UNSENT_MB' | 'ATTACHMENT_MAX_PDF_PAGES' | 'ATTACHMENT_MAX_IMAGE_MEGAPIXELS' | 'ATTACHMENT_EXTRACT_TIMEOUT' | 'ATTACHMENT_EXTRACT_MEMORY_MB' | 'ATTACHMENT_EXTRACT_CONCURRENCY' | 'ATTACHMENT_UNSENT_TTL' | 'ATTACHMENT_INLINE_CHARS' | 'ATTACHMENT_READ_CHARS' | 'TRACE_ATTACHMENT_TEXT' | 'MCP_CONNECT_TIMEOUT' | 'SEARXNG_URL' | 'WEB_SEARCH_TIMEOUT' | 'WEB_SEARCH_CONCURRENCY' | 'WEB_SEARCH_LANGUAGE' | 'WEB_SEARCH_SAFESEARCH' | 'WEB_PORT' | 'API_URL'>> {}
+  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_09e2607b> {}
+  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_09e2607b, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'PUBLIC_URL' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'SANDBOX_MEMORY_MB' | 'SANDBOX_CPUS' | 'SANDBOX_DNS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SEARCH_DB' | 'SKILLS_DIR' | 'SKILLS_ORG_DIR' | 'SCREENSHOTS_DIR' | 'ATTACHMENTS_DIR' | 'STORAGE' | 'WORKSPACE_STORAGE' | 'S3_ENDPOINT' | 'SCREENSHOT_TTL_DAYS' | 'ATTACHMENT_MAX_FILE_MB' | 'ATTACHMENT_MAX_FILES' | 'ATTACHMENT_MAX_UNSENT_MB' | 'ATTACHMENT_MAX_PDF_PAGES' | 'ATTACHMENT_MAX_IMAGE_MEGAPIXELS' | 'ATTACHMENT_EXTRACT_TIMEOUT' | 'ATTACHMENT_EXTRACT_MEMORY_MB' | 'ATTACHMENT_EXTRACT_CONCURRENCY' | 'ATTACHMENT_UNSENT_TTL' | 'ATTACHMENT_INLINE_CHARS' | 'ATTACHMENT_READ_CHARS' | 'TRACE_ATTACHMENT_TEXT' | 'MCP_CONNECT_TIMEOUT' | 'SEARXNG_URL' | 'WEB_SEARCH_TIMEOUT' | 'WEB_SEARCH_CONCURRENCY' | 'WEB_SEARCH_LANGUAGE' | 'WEB_SEARCH_SAFESEARCH' | 'WEB_PORT' | 'API_URL'>> {}
 }
 
 
@@ -369,11 +377,11 @@ export type EnvSchemaAsStrings = {
       : (NonNullable<CoercedEnvSchema[Property]> extends boolean ? ('true' | 'false') : string)
 };
 
-type _EnvSchemaAsStrings_f4b96002 = EnvSchemaAsStrings;
+type _EnvSchemaAsStrings_09e2607b = EnvSchemaAsStrings;
 declare global {
 
   // add types for global import.meta.env
-  interface ImportMetaEnv extends _EnvSchemaAsStrings_f4b96002 {}
+  interface ImportMetaEnv extends _EnvSchemaAsStrings_09e2607b {}
   interface ImportMeta {
     readonly env: ImportMetaEnv;
   }
