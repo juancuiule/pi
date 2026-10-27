@@ -1,10 +1,8 @@
 // The interactive shell's socket (src/server/shell.ts): binary frames carry the PTY in both directions, a text
 // frame {"type":"resize","columns":n,"rows":n} resizes it, and the server announces the end with
 // {"type":"closed","reason":...} before its CloseEvent; {"type":"open",...} is the shell's `open` command,
-// sent only while it happens, never for scrollback. The console's /api rewrite cannot proxy WebSockets, so
-// the socket goes to the server's own apiUrl (from /api/info), not this page's origin. The session cookie was set
-// on the page's host, and cookies are per host, not per port, so a loopback server is reached under the page's own
-// loopback name: a page on localhost:3001 and an apiUrl of 127.0.0.1:4000 make ws://localhost:4000.
+// sent only while it happens, never for scrollback. Where the socket goes is `serverSocketUrl`'s rule.
+import { serverSocketUrl } from "./server-socket";
 import { normalizeWorkspacePath, WORKSPACE_ROOT } from "./workspace-links";
 import type {
   OpenTarget,
@@ -23,8 +21,8 @@ export type ShellCloseReason = (typeof CLOSE_REASONS)[number];
 export interface ShellOptions {
   /** The server's own http URL, from /api/info. */
   apiUrl: string;
-  /** The hostname this page was loaded from (`window.location.hostname`). */
-  pageHost: string;
+  /** The origin this page was loaded from (`window.location.origin`). */
+  pageOrigin: string;
   conversation: number;
   columns: number;
   rows: number;
@@ -107,28 +105,20 @@ export const shellOpenTargetOf = (
   return WORKSPACE_ROOT;
 };
 
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-/**
- * The socket's URL: `apiUrl` with the ws scheme, the shell route and the PTY's size in the query; its host is the
- * page's when both are loopback, so the browser sends the session cookie.
- */
+/** The socket's URL: the shell route, with the PTY's size in the query. */
 export const shellUrl = ({
   apiUrl,
-  pageHost,
+  pageOrigin,
   conversation,
   columns,
   rows,
-}: ShellOptions): string => {
-  const url = new URL(apiUrl);
-  if (LOOPBACK.has(url.hostname) && LOOPBACK.has(pageHost)) {
-    url.hostname = pageHost;
-  }
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = `/api/conversations/${conversation}/shell`;
-  url.search = `cols=${columns}&rows=${rows}`;
-  return url.toString();
-};
+}: ShellOptions): string =>
+  serverSocketUrl({
+    apiUrl,
+    pageOrigin,
+    pathname: `/api/conversations/${conversation}/shell`,
+    search: `cols=${columns}&rows=${rows}`,
+  });
 
 /** One shell session's socket. Reconnects are the caller's: a closed session stays closed. */
 export interface Shell {

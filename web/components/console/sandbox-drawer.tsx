@@ -43,7 +43,7 @@ export const SandboxContent = ({
     {conversation.sandbox === "desktop" ? (
       <DesktopPanel
         conversation={conversation.id}
-        vncUrl={conversation.vncUrl}
+        desktop={conversation.desktop === true}
         paused={seatlessOf(conversation)}
         resuming={resuming}
       />

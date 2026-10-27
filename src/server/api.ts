@@ -126,7 +126,8 @@ export const ConversationSummary = Schema.Struct({
   /** Installed in its Sandboxes on top of the Level's image, in catalog order. */
   software: Schema.Array(SoftwareId),
   sandboxId: Schema.optionalKey(Schema.String),
-  vncUrl: Schema.optionalKey(Schema.String),
+  /** The Sandbox has a desktop to watch, over the `/api/conversations/:id/desktop` WebSocket. */
+  desktop: Schema.optionalKey(Schema.Boolean),
   title: Schema.String,
   /** `running` and `idle` have a Seat; `paused` and `archived` do not. */
   status: Schema.Literals(["running", "idle", "paused", "archived"]),

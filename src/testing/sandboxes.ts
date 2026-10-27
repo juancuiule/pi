@@ -43,6 +43,8 @@ export const localSandboxes = (
   options: {
     /** Runs inside `create` before the Sandbox exists — a stand-in for a slow or failing image build. */
     readonly onCreate?: Effect.Effect<void, SandboxError>;
+    /** The `vncUrl` desktop Sandboxes report: a stand-in websockify for the desktop relay. */
+    readonly vncUrl?: string;
   } = {}
 ): LocalSandboxes => {
   const live = new Set<string>();
@@ -66,7 +68,13 @@ export const localSandboxes = (
                   mkdirSync(files.path, { recursive: true });
                   live.add(files.path);
                   created.push({ kind, software: [...software] });
-                  return { kind, id: files.path } satisfies SandboxInfo;
+                  return {
+                    kind,
+                    id: files.path,
+                    ...(kind === "desktop" && options.vncUrl !== undefined
+                      ? { vncUrl: options.vncUrl }
+                      : {}),
+                  } satisfies SandboxInfo;
                 })
               )
             )

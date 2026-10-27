@@ -1,16 +1,16 @@
-/** The sandbox's noVNC URL, view-only unless the user has taken control. */
-export const vncViewUrl = (vncUrl: string, control: boolean): string => {
-  const url = new URL(vncUrl);
-  url.searchParams.set("view_only", String(!control));
-  return url.toString();
-};
+import { serverSocketUrl } from "./server-socket";
 
 /**
- * The document the desktop panel frames: a same-origin page of this console, which carries its own `frame-src`
- * for the sandbox's loopback noVNC port, so the console's `frame-src 'self'` stays tight for artifact pages.
+ * The desktop's socket: the server relays it to the Sandbox's VNC server (src/server/desktop.ts), and the console's
+ * own noVNC client draws it, so nothing the Sandbox serves runs in this origin.
  */
-export const desktopFrameUrl = (
-  conversation: number,
-  control: boolean
-): string =>
-  `/desktop-frame?conversation=${conversation}&control=${control ? 1 : 0}`;
+export const desktopUrl = (options: {
+  readonly apiUrl: string;
+  readonly pageOrigin: string;
+  readonly conversation: number;
+}): string =>
+  serverSocketUrl({
+    apiUrl: options.apiUrl,
+    pageOrigin: options.pageOrigin,
+    pathname: `/api/conversations/${options.conversation}/desktop`,
+  });

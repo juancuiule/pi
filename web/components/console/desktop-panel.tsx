@@ -1,12 +1,7 @@
 "use client";
 
-import {
-  ExternalLink,
-  LoaderCircle,
-  Monitor,
-  MousePointer2,
-  RotateCw,
-} from "lucide-react";
+import { LoaderCircle, Monitor, MousePointer2, RotateCw } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -16,7 +11,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { desktopFrameUrl, vncViewUrl } from "@/lib/vnc";
+
+// noVNC reads `window` when imported, so the view loads only in the browser.
+const DesktopView = dynamic(
+  async () => {
+    const mod = await import("@/components/console/desktop-view");
+    return mod.DesktopView;
+  },
+  { ssr: false }
+);
 
 const placeholderText = (resuming: boolean, paused: boolean): string => {
   if (resuming) {
@@ -30,22 +33,23 @@ const placeholderText = (resuming: boolean, paused: boolean): string => {
 
 export const DesktopPanel = ({
   conversation,
-  vncUrl,
+  desktop,
   paused,
   resuming = false,
 }: {
   conversation: number;
-  vncUrl: string | undefined;
+  /** The Sandbox has a desktop to watch. */
+  desktop: boolean;
   /** Without a Seat, so without a desktop until it is resumed. */
   paused?: boolean;
   /** A resume is in flight: the new sandbox is still starting. */
   resuming?: boolean;
 }) => {
   const [control, setControl] = useState(false);
-  // Bumps to remount the iframe: the sandbox can be up while noVNC's page failed to load or stalled.
+  // Bumps to remount the view: the sandbox can be up while the connection dropped or stalled.
   const [reloadKey, setReloadKey] = useState(0);
 
-  if (vncUrl === undefined) {
+  if (!desktop) {
     return (
       <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4">
         {resuming ? (
@@ -61,7 +65,6 @@ export const DesktopPanel = ({
     );
   }
 
-  const src = vncViewUrl(vncUrl, control);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
@@ -91,37 +94,11 @@ export const DesktopPanel = ({
           />
           <TooltipContent>Reload the desktop view</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                nativeButton={false}
-                render={
-                  <a
-                    href={src}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label="Open in new tab"
-                  >
-                    <ExternalLink />
-                  </a>
-                }
-              />
-            }
-          />
-          <TooltipContent>Open in new tab</TooltipContent>
-        </Tooltip>
       </div>
-      {/* noVNC needs scripts and its own origin; it loads inside /desktop-frame, a same-origin page whose own frame-src allows the loopback port. */}
-      <iframe
+      <DesktopView
         key={reloadKey}
-        src={desktopFrameUrl(conversation, control)}
-        title="Sandbox desktop"
-        // oxlint-disable-next-line react/iframe-missing-sandbox
-        sandbox="allow-scripts allow-same-origin"
-        className="min-h-0 w-full flex-1 border-0"
+        conversation={conversation}
+        control={control}
       />
     </div>
   );

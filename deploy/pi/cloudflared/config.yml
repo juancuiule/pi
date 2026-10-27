@@ -1,0 +1,19 @@
+# Locally-managed tunnel: ingress lives here (versioned), not in the Zero Trust dashboard. The connector
+# authenticates with ../.cloudflared/credentials.json, which stays out of git.
+#
+# The tunnel id and hostname are specific to this deployment. A new operator provisions their own with:
+#   cloudflared tunnel login                        # browser auth
+#   cloudflared tunnel create <name>                # -> ~/.cloudflared/<id>.json
+#   cloudflared tunnel route dns <name> <hostname>  # creates the CNAME
+# then updates `tunnel:` and the hostnames below, and copies the credentials file to ../.cloudflared/credentials.json.
+tunnel: 2786d678-3144-489b-a1fb-a9f76dd40863
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  # First: the console's /api rewrite cannot carry WebSockets (the Shell tab and the desktop).
+  - hostname: harness.juancuiule.com
+    path: ^/api/conversations/[^/]+/(shell|desktop)$
+    service: http://127.0.0.1:4000
+  - hostname: harness.juancuiule.com
+    service: http://127.0.0.1:3001
+  - service: http_status:404

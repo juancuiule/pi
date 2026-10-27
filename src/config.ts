@@ -30,11 +30,15 @@ export const model: ModelConfig = {
   hasOpenAIKey: unset(ENV.OPENAI_API_KEY) !== undefined,
 };
 
+const publicUrl = unset(ENV.PUBLIC_URL);
+
 /** The HTTP server and its conversations; durations are milliseconds (varlock's `duration` type). */
 export const server = {
   port: ENV.SERVER_PORT,
   /** The console's port: browser pages may call the API only from it or from this server's own. */
   webPort: ENV.WEB_PORT,
+  /** Where a tunnel serves the console from outside this machine; accepted beside loopback. */
+  publicUrl: publicUrl === undefined ? undefined : new URL(publicUrl),
   idleTimeoutMs: ENV.CONVERSATION_IDLE_TIMEOUT,
   sweepEveryMs: ENV.CONVERSATION_SWEEP_INTERVAL,
   shutdownTimeoutMs: ENV.SHUTDOWN_TIMEOUT,
@@ -45,6 +49,14 @@ export const capacity = {
   seats: ENV.MAX_SEATS,
   shells: ENV.MAX_SHELLS,
   desktops: ENV.MAX_DESKTOPS,
+};
+
+const sandboxDns = unset(ENV.SANDBOX_DNS);
+
+/** How each Docker Sandbox runs: resource limits (unset, it can take the whole machine) and DNS servers. */
+export const sandbox = {
+  limits: { memoryMb: ENV.SANDBOX_MEMORY_MB, cpus: ENV.SANDBOX_CPUS },
+  dns: sandboxDns?.split(",").map((address) => address.trim()),
 };
 
 /** Where the server keeps conversations and attachments, where skills are read from, and where desktop screenshots go. */

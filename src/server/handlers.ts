@@ -40,7 +40,7 @@ import {
 import { Search } from "../search/search.ts";
 import { Skills } from "../skills/skills.ts";
 import { Api, CurrentUser } from "./api.ts";
-import { AuthHandlers, AuthenticationLive, requireOwner } from "./auth.ts";
+import { AuthenticationLive, authHandlers, requireOwner } from "./auth.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";
 
@@ -858,6 +858,8 @@ export const apiLayer = (options: {
   readonly tracing: boolean;
   /** The ports a browser page may call from: the console's and this server's. Unset, any loopback port. */
   readonly pagePorts?: readonly number[] | undefined;
+  /** Where a tunnel serves the console from outside this machine (`PUBLIC_URL`). */
+  readonly publicUrl?: URL | undefined;
 }) =>
   HttpApiBuilder.layer(Api).pipe(
     Layer.provide(
@@ -871,9 +873,14 @@ export const apiLayer = (options: {
         FilesHandlers,
         SearchHandlers,
         infoHandlers(options),
-        AuthHandlers
+        authHandlers({ publicUrl: options.publicUrl })
       )
     ),
     Layer.provide(AuthenticationLive),
-    Layer.merge(loopbackOnly({ pagePorts: options.pagePorts }))
+    Layer.merge(
+      loopbackOnly({
+        pagePorts: options.pagePorts,
+        publicUrl: options.publicUrl,
+      })
+    )
   );

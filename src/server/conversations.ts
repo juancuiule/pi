@@ -67,7 +67,8 @@ export interface ConversationSummary {
   readonly sandbox: SandboxChoice;
   readonly software: readonly SoftwareId[];
   readonly sandboxId?: string;
-  readonly vncUrl?: string;
+  /** The Sandbox has a desktop to watch, over `/api/conversations/:id/desktop`. */
+  readonly desktop?: boolean;
   readonly title: string;
   readonly status: ConversationStatus;
   /** True while a Pause waits for the current Run to end. */
@@ -130,7 +131,7 @@ const summaryOf = (
     sandbox: stored.level,
     software: stored.software,
     ...(sandbox === undefined ? {} : { sandboxId: sandbox.id }),
-    ...(sandbox?.vncUrl === undefined ? {} : { vncUrl: sandbox.vncUrl }),
+    ...(sandbox?.vncUrl === undefined ? {} : { desktop: true }),
     title: stored.meta.title,
     status,
     pausing: live?.pausing ?? false,

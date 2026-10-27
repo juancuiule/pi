@@ -35,6 +35,7 @@ import {
 } from "./src/screenshots.ts";
 import { Search } from "./src/search/search.ts";
 import { Conversations } from "./src/server/conversations.ts";
+import { desktopRoute } from "./src/server/desktop.ts";
 import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
 import { shellRoute } from "./src/server/shell.ts";
@@ -132,8 +133,8 @@ const CapacityLive = Capacity.layer(config.capacity);
 // workspaces bucket. Conversations needs the same layer for its run-end checkpoints, so it is merged in.
 const WorkspacesLive =
   store !== undefined && config.storage.workspace === "s3-copied"
-    ? S3Copied.workspaces({ store })
-    : DockerVolumes.workspaces();
+    ? S3Copied.workspaces({ store, ...config.sandbox })
+    : DockerVolumes.workspaces(config.sandbox);
 
 // The `web` extension exists only with SEARXNG_URL set: no SearXNG, no `web_search` tool at all.
 const WebSearchLive =
@@ -209,8 +210,10 @@ const ServerLive = HttpRouter.serve(
       apiUrl: `http://127.0.0.1:${config.server.port}`,
       tracing: config.langfuse !== undefined,
       pagePorts: [config.server.webPort, config.server.port],
+      publicUrl: config.server.publicUrl,
     }),
-    shellRoute
+    shellRoute,
+    desktopRoute
   )
 ).pipe(
   Layer.provide(ConversationsLive),

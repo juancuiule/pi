@@ -1,0 +1,98 @@
+# effect-pi on a Raspberry Pi behind a Cloudflare Tunnel; docs/deploy/raspberry-pi.md explains the choices.
+#
+# Every service uses the host's network: the server opens each desktop's VNC port, which Docker publishes on the
+# host's 127.0.0.1, and it accepts only loopback hosts (or PUBLIC_URL). Server and console still listen on
+# 127.0.0.1 only, so cloudflared is the one way in.
+
+name: effect-pi
+
+# json-file's default is unbounded; on an SD card that eventually fills the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app: &app
+  image: effect-pi:latest
+  network_mode: host
+  env_file: ../../.env
+  volumes:
+    - effect-pi-data:/app/data
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging: *default-logging
+  restart: unless-stopped
+
+services:
+  server:
+    <<: *app
+    build:
+      context: ../..
+      dockerfile: deploy/pi/Dockerfile
+    command: ["node", "server.ts"]
+    volumes:
+      - effect-pi-data:/app/data
+      # The socket is root on the host: the server can start any container. It needs that to run sandboxes.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The socket's group on this host (stat -c %g /var/run/docker.sock)
+    group_add:
+      - "${DOCKER_GID:-985}"
+    environment:
+      SCREENSHOTS_DIR: data/screenshots
+    # Removing every sandbox on shutdown takes a few seconds per container.
+    stop_grace_period: 60s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/api/auth/state').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  web:
+    <<: *app
+    command: ["pnpm", "--filter", "web", "start"]
+    volumes: []
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/login').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Locally-managed tunnel: ingress lives in cloudflared/config.yml (versioned); the connector authenticates with
+  # ./.cloudflared/credentials.json (git-ignored, a copy of ~/.cloudflared/<tunnel id>.json).
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.3
+    command: tunnel --no-autoupdate run
+    network_mode: host
+    # The owner of credentials.json, which stays mode 600
+    user: "1000:1000"
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./.cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  effect-pi-data:

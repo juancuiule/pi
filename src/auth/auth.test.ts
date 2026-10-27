@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -29,6 +33,22 @@ describe("passwords", () => {
 });
 
 describe(Auth, () => {
+  it("adds an account to a database whose folder does not exist yet", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "effect-pi-auth-"));
+    const database = path.join(dir, "data", "effect-pi.sqlite");
+    const names = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const auth = yield* Auth;
+          yield* auth.addUser("juan", "password-j");
+          return (yield* auth.users).map((user) => user.name);
+        })
+      ).pipe(Effect.provide(Auth.local({ database })))
+    );
+    rmSync(dir, { recursive: true, force: true });
+    expect(names).toStrictEqual(["juan"]);
+  });
+
   it("opens setup only until the first account, which it signs in", async () => {
     const result = await withAuth((auth) =>
       Effect.gen(function* () {

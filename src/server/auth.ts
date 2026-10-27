@@ -12,6 +12,7 @@ import { Auth, SESSION_COOKIE, SESSION_TTL_MS } from "../auth/auth.ts";
 import type { User, UserId } from "../auth/user.ts";
 import { ConversationNotFound } from "../errors.ts";
 import { Api, Authentication, CurrentUser } from "./api.ts";
+import { viaHttpsPublicUrl } from "./loopback.ts";
 
 /** A param or query value as an endpoint's schema could read it: a number when `Number` makes one of it. */
 const asNumber = (value: string | undefined): number | undefined => {
@@ -105,18 +106,32 @@ export const AuthenticationLive = Layer.effect(
   })
 );
 
-// Plain http on loopback: a `secure` cookie would not be stored by every browser on http://localhost.
 const cookieOptions = {
-  secure: false,
   httpOnly: true,
   sameSite: "lax",
   path: "/",
 } satisfies Cookies.Cookie["options"];
 
-const setSession = (token: string, maxAgeMs: number) =>
-  HttpApiBuilder.securitySetCookie(Authentication.security.session, token, {
-    ...cookieOptions,
-    maxAge: `${Math.floor(maxAgeMs / 1000)} seconds`,
+/**
+ * Set the session cookie, `Secure` when the request came through an https `publicUrl`. Plain http on loopback
+ * leaves it off: not every browser stores a `Secure` cookie on http://localhost.
+ */
+const setSession = (
+  token: string,
+  maxAgeMs: number,
+  publicUrl: URL | undefined
+) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    yield* HttpApiBuilder.securitySetCookie(
+      Authentication.security.session,
+      token,
+      {
+        ...cookieOptions,
+        secure: viaHttpsPublicUrl(request.headers, publicUrl),
+        maxAge: `${Math.floor(maxAgeMs / 1000)} seconds`,
+      }
+    );
   });
 
 const tokenOf = (request: HttpServerRequest.HttpServerRequest) =>
@@ -127,67 +142,70 @@ const tokenOf = (request: HttpServerRequest.HttpServerRequest) =>
  * Trusted domains without an owner): setup does it for the first account, and doing it again at every start
  * finishes an adoption a crash interrupted. Both adoptions are idempotent.
  */
-export const AuthHandlers = HttpApiBuilder.group(
-  Api,
-  "auth",
-  Effect.fnUntraced(function* (handlers) {
-    const auth = yield* Auth;
-    const agents = yield* Agents;
-    const domains = yield* TrustedDomains;
+export const authHandlers = (options: {
+  readonly publicUrl?: URL | undefined;
+}) =>
+  HttpApiBuilder.group(
+    Api,
+    "auth",
+    Effect.fnUntraced(function* (handlers) {
+      const auth = yield* Auth;
+      const agents = yield* Agents;
+      const domains = yield* TrustedDomains;
 
-    const adopt = (user: User) =>
-      Effect.gen(function* () {
-        const adopted = yield* agents.adopt(user.id);
-        yield* domains.adopt(user.id);
-        if (adopted > 0) {
-          yield* Effect.logInfo(
-            `${user.name} adopted ${adopted} conversation(s) from before accounts`
-          );
-        }
-      }).pipe(Effect.catchTag("AgentError", Effect.die));
-
-    const [oldest] = yield* auth.users;
-    if (oldest !== undefined) {
-      yield* adopt(oldest);
-    }
-
-    return handlers
-      .handle("state", () =>
+      const adopt = (user: User) =>
         Effect.gen(function* () {
-          return yield* auth.state(
-            tokenOf(yield* HttpServerRequest.HttpServerRequest)
-          );
-        })
-      )
-      .handle("login", ({ payload }) =>
-        Effect.gen(function* () {
-          const { user, token } = yield* auth.login(
-            payload.name,
-            payload.password
-          );
-          yield* setSession(token, SESSION_TTL_MS);
-          return user;
-        })
-      )
-      .handle("setup", ({ payload }) =>
-        Effect.gen(function* () {
-          const { user, token } = yield* auth.setup(
-            payload.name,
-            payload.password
-          );
-          yield* adopt(user);
-          yield* setSession(token, SESSION_TTL_MS);
-          return user;
-        })
-      )
-      .handle("logout", () =>
-        Effect.gen(function* () {
-          const token = tokenOf(yield* HttpServerRequest.HttpServerRequest);
-          if (token !== undefined) {
-            yield* auth.logout(token);
+          const adopted = yield* agents.adopt(user.id);
+          yield* domains.adopt(user.id);
+          if (adopted > 0) {
+            yield* Effect.logInfo(
+              `${user.name} adopted ${adopted} conversation(s) from before accounts`
+            );
           }
-          yield* setSession("", 0);
-        })
-      );
-  })
-);
+        }).pipe(Effect.catchTag("AgentError", Effect.die));
+
+      const [oldest] = yield* auth.users;
+      if (oldest !== undefined) {
+        yield* adopt(oldest);
+      }
+
+      return handlers
+        .handle("state", () =>
+          Effect.gen(function* () {
+            return yield* auth.state(
+              tokenOf(yield* HttpServerRequest.HttpServerRequest)
+            );
+          })
+        )
+        .handle("login", ({ payload }) =>
+          Effect.gen(function* () {
+            const { user, token } = yield* auth.login(
+              payload.name,
+              payload.password
+            );
+            yield* setSession(token, SESSION_TTL_MS, options.publicUrl);
+            return user;
+          })
+        )
+        .handle("setup", ({ payload }) =>
+          Effect.gen(function* () {
+            const { user, token } = yield* auth.setup(
+              payload.name,
+              payload.password
+            );
+            yield* adopt(user);
+            yield* setSession(token, SESSION_TTL_MS, options.publicUrl);
+            return user;
+          })
+        )
+        .handle("logout", () =>
+          Effect.gen(function* () {
+            const token = tokenOf(yield* HttpServerRequest.HttpServerRequest);
+            if (token !== undefined) {
+              yield* auth.logout(token);
+            }
+            yield* setSession("", 0, options.publicUrl);
+          })
+        );
+    })
+  );

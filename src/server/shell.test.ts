@@ -334,7 +334,13 @@ describe("the shell socket", () => {
           );
           second.send(ascii.encode("pwd\n"));
           const inTmp = yield* until(() =>
-            second.output.split("\n").some((line) => line.trim() === "/tmp")
+            second.output.split("\n").some(
+              (line) =>
+                // Bash 5.1+ wraps each command in bracketed-paste escapes
+                // oxlint-disable-next-line no-control-regex -- terminal escapes are control characters by design
+                line.replaceAll(/\u001B\[[0-9;?]*[A-Za-z]|\r/gu, "").trim() ===
+                "/tmp"
+            )
           );
           second.close();
           return { marked, replayed, inTmp };

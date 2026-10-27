@@ -718,7 +718,7 @@ describe("HTTP API", () => {
           ["python-data", "shell"],
           ["imagemagick", "shell"],
           ["ffmpeg", "shell"],
-          ...(process.arch === "x64" ? [["chrome", "desktop"]] : []),
+          ["chrome", "desktop"],
         ]);
         const created = yield* client.conversations.create({
           payload: { sandbox: "shell", software: ["node"], prompt: "hello" },

@@ -230,12 +230,30 @@ const vncUrl = (name: string) =>
     // `docker port` prints one line per address, e.g. "127.0.0.1:55012"
     Effect.map((ports) => {
       const [address] = ports.split("\n");
-      return `http://${address}/vnc.html?autoconnect=true&resize=scale`;
+      return `ws://${address}/websockify`;
     })
   );
 
+export interface Limits {
+  /** Memory with swap included, so a Sandbox cannot push the host into swap. */
+  readonly memoryMb?: number | undefined;
+  readonly cpus?: number | undefined;
+}
+
+const limitArgs = ({ memoryMb, cpus }: Limits = {}) => [
+  ...(memoryMb === undefined
+    ? []
+    : [`--memory=${memoryMb}m`, `--memory-swap=${memoryMb}m`]),
+  ...(cpus === undefined ? [] : [`--cpus=${cpus}`]),
+];
+
 export const layer = (
-  options: { readonly images?: Partial<Record<SandboxKind, string>> } = {}
+  options: {
+    readonly images?: Partial<Record<SandboxKind, string>>;
+    readonly limits?: Limits;
+    /** `--dns` servers; unset, Docker copies the host's resolv.conf. */
+    readonly dns?: readonly string[] | undefined;
+  } = {}
 ) =>
   Layer.effect(
     Sandboxes,
@@ -345,6 +363,8 @@ export const layer = (
           "--mount",
           mount,
           ...publish,
+          ...limitArgs(options.limits),
+          ...(options.dns ?? []).map((server) => `--dns=${server}`),
           image,
         ]);
         const started = Effect.gen(function* () {
