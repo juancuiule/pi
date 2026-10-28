@@ -656,8 +656,15 @@ const ArtifactGroup = HttpApiGroup.make("artifacts").add(
     query: ArtifactScope,
     success: HttpApiSchema.NoContent,
     error: NoArtifact,
-  }),
-  // The JavaScript files pages may load, an allowlist served from node_modules; no CDNs.
+  })
+);
+
+/**
+ * The JavaScript files artifact pages may load, an allowlist served from node_modules; no CDNs. Outside
+ * `Authentication` for the same reason as `attachmentImages`: the page's sandboxed iframe sends no cookie. They are
+ * public library code, with nothing of any User's in them.
+ */
+const ArtifactLibGroup = HttpApiGroup.make("artifactLibs").add(
   HttpApiEndpoint.get("lib", "/artifact-libs/:file", {
     params: { file: Schema.String },
     success: Schema.Uint8Array.pipe(
@@ -909,8 +916,10 @@ export const Api = HttpApi.make("effect-pi")
   .add(FileGroup)
   .add(SearchGroup)
   .add(InfoGroup)
-  // Only the groups above: `auth` and `attachmentImages` are added after, so they are reachable without a session.
+  // Only the groups above: `auth`, `attachmentImages` and `artifactLibs` are added after, so they are reachable
+  // without a session.
   .middleware(Authentication)
   .add(AuthGroup)
   .add(AttachmentImageGroup)
+  .add(ArtifactLibGroup)
   .prefix("/api");
