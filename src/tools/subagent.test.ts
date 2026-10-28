@@ -3,7 +3,7 @@ import path from "node:path";
 
 // `task`: a subagent works a child conversation on the parent's machine — its own context, the parent's files,
 // tools and skills — and reports back, while its gated calls wait on the root conversation's approval doc.
-// Several `task` calls in one round run in parallel, bounded by MAX_SUBAGENTS. See docs/plans/subagents.md.
+// Several `task` calls in one round run in parallel, bounded by MAX_SUBAGENTS. See docs/adr/0007-subagents-share-the-parents-machine.md.
 // Regression coverage for https://github.com/juancuiule/pi/issues/73.
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { FauxResponseStep } from "@earendil-works/pi-ai";

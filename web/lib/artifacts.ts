@@ -1,4 +1,4 @@
-// Artifacts in the console: sandboxed HTML pages the agent writes (docs/plans/artifacts.md). A committed
+// Artifacts in the console: sandboxed HTML pages the agent writes (docs/adr/0003-artifacts-fetch-nothing.md). A committed
 // `artifact_create`/`artifact_update` result carries `{ id, version, title }` in its `details` — the card and the
 // panel read it from there, the way `patchOf` reads an edit's patch.
 import type { ConversationSummary, EntryRecord } from "effect-pi/api";

@@ -1,4 +1,4 @@
-// Files people attach to their messages (see docs/plans/attachments.md). `Attachments` takes an upload, checks it,
+// Files people attach to their messages (see docs/adr/0002-attachments-prepared-at-upload.md). `Attachments` takes an upload, checks it,
 // prepares it in a worker and stores the original and the prepared text or image; a message then takes a
 // conversation's unsent uploads. The `attachments` extension gives the agent read and search over its conversation's
 // sent attachments, on the host, so they work at every Level.

@@ -1,5 +1,5 @@
 // Object storage behind one small interface, so attachments, skills, screenshots and workspaces can move from
-// local directories to S3 one adapter at a time (docs/plans/object-storage.md). `s3()` talks to a real endpoint
+// local directories to S3 one adapter at a time (docs/adr/0006-object-storage-beside-local-sqlite.md). `s3()` talks to a real endpoint
 // (SeaweedFS's gateway locally, `pnpm seaweed:up`); `memory()` is for tests. Methods take the bucket explicitly:
 // each adapter names its own bucket from BUCKETS.
 import { createReadStream } from "node:fs";

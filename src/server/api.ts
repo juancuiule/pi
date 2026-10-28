@@ -139,7 +139,7 @@ export const ConversationSummary = Schema.Struct({
 });
 export type ConversationSummary = typeof ConversationSummary.Type;
 
-/** A file uploaded for a message, checked and prepared (see docs/plans/attachments.md). */
+/** A file uploaded for a message, checked and prepared (see docs/adr/0002-attachments-prepared-at-upload.md). */
 export const AttachmentInfo = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -593,7 +593,7 @@ export const ArtifactVersionInfo = Schema.Struct({
   createdAt: Schema.Number,
 });
 
-/** A page the agent wrote for the person, with its versions (see docs/plans/artifacts.md). */
+/** A page the agent wrote for the person, with its versions (see docs/adr/0003-artifacts-fetch-nothing.md). */
 export const ArtifactInfo = Schema.Struct({
   id: Schema.String,
   /** The conversation the artifact belongs to; clients need it to build view/render/source URLs. */
