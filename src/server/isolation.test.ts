@@ -76,8 +76,11 @@ interface Route {
 }
 
 const routes: readonly Route[] = Object.values(Api.groups).flatMap((group) =>
-  // `auth` is how a session starts; `attachmentImages` is reached by capability (its own test below).
-  group.identifier === "auth" || group.identifier === "attachmentImages"
+  // `auth` is how a session starts; `attachmentImages` is reached by capability and `artifactLibs` is public
+  // library code (their own tests below).
+  group.identifier === "auth" ||
+  group.identifier === "attachmentImages" ||
+  group.identifier === "artifactLibs"
     ? []
     : Object.values(group.endpoints).map((endpoint) => ({
         name: `${group.identifier}.${endpoint.identifier}`,
@@ -225,6 +228,29 @@ describe("isolation between Users", () => {
       original: 401,
       view: 401,
     });
+  }, 30_000);
+
+  it("serves the artifact libraries without a session, and nothing outside the allowlist", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        // An artifact's iframe sends no cookie at all.
+        const anonymous = HttpClient.mapRequest(
+          yield* HttpClient.HttpClient,
+          HttpClientRequest.removeHeader("cookie")
+        );
+        const status = (file: string) =>
+          anonymous.get(`/api/artifact-libs/${file}`).pipe(
+            Effect.map((response) => response.status),
+            Effect.scoped
+          );
+        return {
+          pele: yield* status("pele.global.js"),
+          chart: yield* status("chart.umd.js"),
+          missing: yield* status("evil.js"),
+        };
+      }).pipe(Effect.provide(server()))
+    );
+    expect(result).toStrictEqual({ pele: 200, chart: 200, missing: 404 });
   }, 30_000);
 
   it("covers every endpoint the API defines", () => {
