@@ -34,6 +34,49 @@ const UV =
 const apt = (packages: string) =>
   `apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${packages} && rm -rf /var/lib/apt/lists/*`;
 
+// Managed policies, so nothing Chrome would ask an unattended agent ever appears: default-browser, sign-in, sync,
+// password and autofill offers, translate, notification and location prompts, Privacy Sandbox notices, promotions,
+// the --no-sandbox warning infobar. Policies cannot skip the first-run Terms of Service dialog; --no-first-run does.
+const CHROME_POLICY = JSON.stringify({
+  DefaultBrowserSettingEnabled: false,
+  BrowserSignin: 0,
+  SyncDisabled: true,
+  BrowserAddPersonEnabled: false,
+  BrowserGuestModeEnabled: false,
+  PasswordManagerEnabled: false,
+  AutofillAddressEnabled: false,
+  AutofillCreditCardEnabled: false,
+  TranslateEnabled: false,
+  DefaultNotificationsSetting: 2,
+  DefaultGeolocationSetting: 2,
+  PrivacySandboxPromptEnabled: false,
+  PromotionsEnabled: false,
+  MetricsReportingEnabled: false,
+  UserFeedbackAllowed: false,
+  BackgroundModeEnabled: false,
+  EnableMediaRouter: false,
+  CommandLineFlagSecurityWarningsEnabled: false,
+  RestoreOnStartup: 5,
+});
+
+// The sandbox runs as root in a container: Chrome refuses root without --no-sandbox, and Docker's 64MB /dev/shm
+// crashes tabs. A wrapper ahead of /usr/bin in PATH adds the flags, and the panel's Web Browser button, xdg-open
+// and the menu entry are pointed at it, so every way of opening Chrome gets them.
+const CHROME_WRAPPER = [
+  "#!/bin/sh",
+  'exec /usr/bin/google-chrome-stable --no-sandbox --no-first-run --no-default-browser-check --password-store=basic --disable-dev-shm-usage --start-maximized "$@"',
+].join("\\n");
+
+const CHROME_SETUP = [
+  `mkdir -p /etc/opt/chrome/policies/managed`,
+  `printf '%s\\n' '${CHROME_POLICY}' > /etc/opt/chrome/policies/managed/effect-pi.json`,
+  `printf '${CHROME_WRAPPER}\\n' > /usr/local/bin/google-chrome`,
+  `chmod 755 /usr/local/bin/google-chrome`,
+  `update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/local/bin/google-chrome 300`,
+  `update-alternatives --set x-www-browser /usr/local/bin/google-chrome`,
+  `sed -i 's#^Exec=/usr/bin/google-chrome-stable#Exec=/usr/local/bin/google-chrome#' /usr/share/applications/google-chrome.desktop`,
+].join(" && ");
+
 export const SOFTWARE: Record<SoftwareId, SoftwareSpec> = {
   node: {
     label: "Node.js 24",
@@ -80,8 +123,11 @@ export const SOFTWARE: Record<SoftwareId, SoftwareSpec> = {
     level: "desktop",
     install:
       // Google ships Chrome for amd64 and, since July 2026, arm64 Linux; dpkg names them as Google's packages do.
-      'curl -fsSL -o /tmp/chrome.deb "https://dl.google.com/linux/direct/google-chrome-stable_current_$(dpkg --print-architecture).deb" && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* /tmp/chrome.deb',
-    prompt: "Google Chrome (`google-chrome`)",
+      `curl -fsSL -o /tmp/chrome.deb "https://dl.google.com/linux/direct/google-chrome-stable_current_$(dpkg --print-architecture).deb" && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* /tmp/chrome.deb && ${
+        CHROME_SETUP
+      }`,
+    prompt:
+      "Google Chrome (`google-chrome`; it already runs with --no-sandbox and --no-first-run, and its first-run, sign-in, default-browser, translate and permission prompts are turned off by policy)",
     arch: ["x64", "arm64"],
   },
 };

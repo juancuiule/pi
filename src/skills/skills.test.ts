@@ -139,6 +139,7 @@ describe("Skills.directory", () => {
       names: [
         "artifact-design",
         "catch-up",
+        "chrome-desktop",
         "diagrams",
         "explain-diff",
         "grill",
