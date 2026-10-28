@@ -1,4 +1,4 @@
-// Workspace storage as a host-side cache synced through the object store (docs/plans/object-storage.md). A Sandbox
+// Workspace storage as a host-side cache synced through the object store (docs/adr/0006-object-storage-beside-local-sqlite.md). A Sandbox
 // mounts the cache (a Docker volume) as /workspace; `save` tars it inside the Sandbox and uploads the snapshot to
 // the `workspaces` bucket as `<id>/files.tar.zst`, and `restore` streams it back into a fresh Sandbox. The tar
 // leaves out `.attachments` and `.skills`, which every Seat copies in again. The cache only lets a remount (an

@@ -1,5 +1,5 @@
 // Software: programs installed in a Workspace's Sandboxes on top of its Level's image (see GLOSSARY.md and
-// docs/plans/software.md). The catalog and its rules, with no runtime imports: the HTTP API, which web/ bundles,
+// docs/adr/0004-software-as-layered-images.md). The catalog and its rules, with no runtime imports: the HTTP API, which web/ bundles,
 // reads them. Every entry installs on its own, so any selection builds.
 import type { SandboxChoice, SandboxKind } from "./sandbox.ts";
 

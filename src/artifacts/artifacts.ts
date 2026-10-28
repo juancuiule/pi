@@ -1,4 +1,4 @@
-// Pages the agent writes for the person to look at beside the chat (see docs/plans/artifacts.md): reports,
+// Pages the agent writes for the person to look at beside the chat (see docs/adr/0003-artifacts-fetch-nothing.md): reports,
 // charts, dashboards and prototypes as sandboxed HTML. `Artifacts` keeps one artifact per page with every version
 // in the EFFECT_PI_DB file, scoped to its conversation like a sent attachment. The `artifacts` extension gives the
 // agent `artifact_create` and `artifact_update`, on the host, so they work at every Level.

@@ -1,4 +1,4 @@
-// Measurement for s3-copied workspace storage (docs/plans/object-storage.md): a ~190MB workspace, three
+// Measurement for s3-copied workspace storage (docs/adr/0006-object-storage-beside-local-sqlite.md): a ~190MB workspace, three
 // save+restore cycles through the real SeaweedFS gateway and real Docker sandboxes, with the tar/untar
 // phases timed separately from the save/restore calls so the report can say what limits them.
 // Run with `pnpm test:docker` after `pnpm sandbox:build` and `pnpm seaweed:up`.

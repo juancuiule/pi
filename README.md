@@ -41,14 +41,14 @@ These principles drive the design.
 
 ## Where it is going
 
-Today it is a tool for one person on localhost, with no accounts. I wrote up the questions I am exploring in [`docs/plans/`](docs/plans/):
+Today it runs on one machine for a few people, each signing in to their own conversations. The questions I am exploring next:
 
-- Personal defaults, a library of files and procedures, and memory you can inspect and undo ([research](docs/plans/personal-agent-platform-research.md))
-- Agent profiles, object storage and collaboration between people ([research](docs/plans/agent-profiles-storage-and-collaboration-research.md))
-- Scheduled workflows, agents that run on a timer ([research](docs/plans/scheduled-workflows-research.md))
-- Sandbox backends other than local Docker ([research](docs/plans/opensandbox-research.md))
+- Personal defaults, a library of files and procedures, and memory you can inspect and undo
+- Agent profiles and collaboration between people
+- Scheduled workflows, agents that run on a timer
+- Sandbox backends other than local Docker
 
-These are proposals, not commitments.
+These are proposals, not commitments. Decisions already made, and why, are in [`docs/adr/`](docs/adr/).
 
 ## How it is built
 
