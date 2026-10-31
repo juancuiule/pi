@@ -6,7 +6,10 @@ export DISPLAY=:99
 Xvfb :99 -screen 0 "${SCREEN_WIDTH:-1280}x${SCREEN_HEIGHT:-800}x24" -nolisten tcp >/tmp/xvfb.log 2>&1 &
 until xdpyinfo -display :99 >/dev/null 2>&1; do sleep 0.1; done
 
-dbus-launch --exit-with-session startxfce4 >/tmp/xfce.log 2>&1 &
+# The session bus at the image's fixed DBUS_SESSION_BUS_ADDRESS; startxfce4 uses it instead of launching its own.
+mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --fork --nopidfile
+startxfce4 >/tmp/xfce.log 2>&1 &
 # Ready means the desktop and panel are drawn, so the first screenshot is not a blank screen
 until xdotool search --class xfdesktop >/dev/null 2>&1 \
   && xdotool search --class xfce4-panel >/dev/null 2>&1; do sleep 0.2; done

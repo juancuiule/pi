@@ -19,10 +19,13 @@ describe("Software", () => {
       ])
     ).toStrictEqual([
       [[], []],
-      [SHELL, SHELL],
       [
-        [...SHELL, "chrome"],
-        [...SHELL, "chrome"],
+        [...SHELL, "agent-browser"],
+        [...SHELL, "agent-browser"],
+      ],
+      [
+        [...SHELL, "chrome", "agent-browser", "agent-desktop"],
+        [...SHELL, "chrome", "agent-browser", "agent-desktop"],
       ],
     ]);
   });
