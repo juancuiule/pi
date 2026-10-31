@@ -1,0 +1,45 @@
+# effect-pi on a machine in the local network; docs/deploy/lan.md explains the choices.
+#
+# The server and the console are deploy/pi's, unchanged: host network, listening on 127.0.0.1 only. Caddy takes
+# cloudflared's place: it listens on every interface at LAN_PORT and forwards to them, and PUBLIC_URL (in the
+# repository's .env) names the address people type, so the server accepts it beside loopback.
+
+name: effect-pi
+
+services:
+  server:
+    extends:
+      file: ../pi/docker-compose.yml
+      service: server
+
+  web:
+    extends:
+      file: ../pi/docker-compose.yml
+      service: web
+
+  caddy:
+    image: caddy:2.10.2
+    network_mode: host
+    environment:
+      LAN_PORT: ${LAN_PORT:-80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    cap_drop:
+      - ALL
+    # Ports below 1024
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  effect-pi-data:
