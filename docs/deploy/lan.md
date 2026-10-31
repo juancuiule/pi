@@ -15,9 +15,9 @@ Traffic is plain http: anyone on the network can read sessions and conversations
 `.env` at the repository root (see `.env.schema` for every variable):
 
 ```sh
-# Every address people type, comma-separated: the LAN IP, the Tailscale MagicDNS names (short and full) and the
-# Tailscale IP. Requests naming any host left out here are 403.
-PUBLIC_URL=http://192.168.1.38,http://debian,http://debian.tailf8ca0e.ts.net,http://100.89.34.120
+# Every address people type, comma-separated: the LAN IP, the Tailscale short name and IP over http, and the
+# Tailscale full name over https (see "HTTPS on the tailnet"). Requests naming any host left out here are 403.
+PUBLIC_URL=http://192.168.1.38,http://debian,http://100.89.34.120,https://debian.tailf8ca0e.ts.net
 # Ollama on the same machine: the server container uses the host's network, so 127.0.0.1 reaches it
 MODEL_PROVIDER=ollama
 OLLAMA_URL=http://127.0.0.1:11434
@@ -28,7 +28,18 @@ SANDBOX_DNS=1.1.1.1,8.8.8.8
 
 Give the machine a DHCP reservation, so its LAN address stays in `PUBLIC_URL`. A `LAN_PORT` other than 80 goes in every URL too (`http://192.168.1.38:8080`).
 
-Caddy listens on every interface, so Tailscale needs nothing more: devices on the tailnet reach `http://debian` through MagicDNS (`tailscale status --self --json` shows the full name). Traffic over Tailscale is encrypted by the tunnel, but the browser still sees plain http.
+Caddy listens on every interface, so plain http over Tailscale needs nothing more: devices on the tailnet reach `http://debian` through MagicDNS (`tailscale status --self --json` shows the full name).
+
+### HTTPS on the tailnet
+
+Over plain http the browser withholds what it keeps for secure contexts (the clipboard, for one), even though Tailscale encrypts the traffic. `tailscale serve` gives the machine's full name a real certificate and forwards to Caddy, on the tailnet only (`funnel` would publish it to the internet):
+
+```sh
+sudo tailscale set --operator=$USER    # once, so serve needs no sudo afterwards
+tailscale serve --bg --https=443 http://127.0.0.1:80
+```
+
+It needs HTTPS certificates turned on for the tailnet (admin console, DNS). The full name goes in `PUBLIC_URL` as https only: the server reads which URL a request came through from its host, so one name cannot be both, and the session cookie is `Secure` through it. `tailscale serve reset` turns it off.
 
 `deploy/lan/.env` (read by Compose itself, git-ignored):
 
