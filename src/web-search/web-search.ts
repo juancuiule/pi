@@ -35,7 +35,7 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 /** The search's options: how many results, a recency window, a result page. */
 export interface SearchOptions {
   readonly count?: number | undefined;
-  readonly recency?: "day" | "month" | "year" | undefined;
+  readonly recency?: "day" | "week" | "month" | "year" | undefined;
   readonly page?: number | undefined;
 }
 
@@ -196,10 +196,15 @@ const Parameters = Type.Object({
   ),
   recency: Type.Optional(
     Type.Union(
-      [Type.Literal("day"), Type.Literal("month"), Type.Literal("year")],
+      [
+        Type.Literal("day"),
+        Type.Literal("week"),
+        Type.Literal("month"),
+        Type.Literal("year"),
+      ],
       {
         description:
-          "Only results from the last day, month or year, for engines that support it",
+          "Only results from the last day, week, month or year, for engines that support it",
       }
     )
   ),
