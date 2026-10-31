@@ -1,7 +1,7 @@
 ---
 name: agent-browser
-description: Drive a real Chrome browser from the shell with the agent-browser CLI — open pages, read them as accessibility snapshots with element refs, click, fill forms, take screenshots, extract data, test a web app. Use when a task needs to interact with a website beyond what web_search returns, and the sandbox has the agent-browser Software.
-compatibility: Needs a shell or desktop sandbox with the agent-browser Software installed.
+description: Drive a real Chrome browser from the shell with the agent-browser CLI — open pages, read them as accessibility snapshots with element refs, click, fill forms, take screenshots, extract data, test a web app. Use when a task needs to interact with a website beyond what web_search returns.
+compatibility: Needs a shell or desktop sandbox; both have agent-browser and Google Chrome.
 ---
 
 # agent-browser
@@ -14,7 +14,7 @@ compatibility: Needs a shell or desktop sandbox with the agent-browser Software 
 command -v agent-browser
 ```
 
-Not found: the sandbox does not have it. Tell the person it can be added as Software (agent-browser) from the conversation's Upgrade dialog; do not try to install it yourself.
+Every shell and desktop sandbox has it. Without a machine yet, call `upgrade_workspace` with level `"shell"` first (`"desktop"` when the person wants to watch the browser).
 
 ## 2. Load the guide for this version
 

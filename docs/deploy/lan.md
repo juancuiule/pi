@@ -21,7 +21,7 @@ PUBLIC_URL=http://192.168.1.38,http://debian,http://100.89.34.120,https://debian
 # Ollama on the same machine: the server container uses the host's network, so 127.0.0.1 reaches it
 MODEL_PROVIDER=ollama
 OLLAMA_URL=http://127.0.0.1:11434
-MODEL_ID=qwen2.5:3b
+MODEL_ID=qwen3.5:9b-32k
 # Needed when the host runs Tailscale: its resolv.conf names 100.100.100.100, which containers cannot reach
 SANDBOX_DNS=1.1.1.1,8.8.8.8
 ```
@@ -48,11 +48,12 @@ DOCKER_GID=989   # stat -c %g /var/run/docker.sock
 LAN_PORT=80
 ```
 
-An Ollama model without `num_ctx` in its Modelfile is taken to have a 4096-token context, too small for the agent's tools and prompt. Make a variant with a larger one and set `MODEL_ID` to it:
+An Ollama model without `num_ctx` in its Modelfile is taken to have a 4096-token context, too small for the agent's tools and prompt. Make a variant with a larger one and set `MODEL_ID` to it. On an 8 GB GPU (a GTX 1070 Ti), `qwen3.5:9b` at 32k fits entirely in video memory: about 18 tokens/s out and 200 tokens/s of prompt, and it picks tool arguments far better than `qwen2.5:3b`:
 
 ```sh
-printf 'FROM qwen2.5:3b\nPARAMETER num_ctx 32768\n' > /tmp/Modelfile
-ollama create qwen2.5:3b-32k -f /tmp/Modelfile
+ollama pull qwen3.5:9b
+printf 'FROM qwen3.5:9b\nPARAMETER num_ctx 32768\n' > /tmp/Modelfile
+ollama create qwen3.5:9b-32k -f /tmp/Modelfile
 ```
 
 ## Run

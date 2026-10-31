@@ -19,22 +19,32 @@ describe("Software", () => {
       ])
     ).toStrictEqual([
       [[], []],
-      [
-        [...SHELL, "agent-browser"],
-        [...SHELL, "agent-browser"],
-      ],
-      [
-        [...SHELL, "chrome", "agent-browser", "agent-desktop"],
-        [...SHELL, "chrome", "agent-browser", "agent-desktop"],
-      ],
+      [SHELL, SHELL],
+      [SHELL, SHELL],
     ]);
   });
 
   it("orders a selection as the catalog does, each entry once", () => {
-    expect(normalize(["chrome", "node", "chrome", "uv"])).toStrictEqual([
+    expect(normalize(["ffmpeg", "node", "ffmpeg", "uv"])).toStrictEqual([
       "node",
       "uv",
-      "chrome",
+      "ffmpeg",
+    ]);
+  });
+
+  it("drops a retired entry, which a base image has now, wherever it was recorded", () => {
+    // Chrome is in every image for agent-browser: a Workspace that recorded it still loads, builds no layer for it,
+    // and passes the checks even at the shell Level it once needed the desktop for.
+    expect([
+      offered("desktop", "x64").includes("chrome"),
+      normalize(["chrome", "node"]),
+      checkSoftware("shell", ["chrome"], "x64"),
+      dockerfile("effect-pi/sandbox-desktop", ["chrome"]),
+    ]).toStrictEqual([
+      false,
+      ["node"],
+      undefined,
+      "FROM effect-pi/sandbox-desktop\n",
     ]);
   });
 
@@ -42,19 +52,11 @@ describe("Software", () => {
     expect([
       checkSoftware("none", []),
       checkSoftware("shell", ["node", "ffmpeg"], "x64"),
-      checkSoftware("desktop", ["chrome"], "x64"),
       checkSoftware("none", ["node"], "x64"),
-      checkSoftware("shell", ["node", "chrome"], "x64"),
-      checkSoftware("desktop", ["chrome"], "arm64"),
-      checkSoftware("desktop", ["chrome"], "ia32"),
     ]).toStrictEqual([
       undefined,
       undefined,
-      undefined,
       "Software needs a shell or desktop",
-      "Google Chrome needs the desktop Level",
-      undefined,
-      "Google Chrome is not available on ia32 hosts",
     ]);
   });
 

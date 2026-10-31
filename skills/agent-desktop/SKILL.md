@@ -1,7 +1,7 @@
 ---
 name: agent-desktop
-description: Operate the desktop's apps (XFCE, Mousepad, the file manager, Chrome) through the accessibility tree with the agent-desktop CLI — read windows as text snapshots with element refs, click, type, set values, launch and close apps — instead of screenshots and pixel coordinates. Use for any task on the desktop when the sandbox has the agent-desktop Software.
-compatibility: Needs a desktop sandbox with the agent-desktop Software installed.
+description: Operate the desktop's apps (XFCE, Mousepad, the file manager, Chrome) through the accessibility tree with the agent-desktop CLI — read windows as text snapshots with element refs, click, type, set values, launch and close apps — instead of screenshots and pixel coordinates. Use for any task on the desktop.
+compatibility: Needs a desktop sandbox; every one has agent-desktop.
 ---
 
 # agent-desktop
@@ -14,7 +14,7 @@ compatibility: Needs a desktop sandbox with the agent-desktop Software installed
 agent-desktop status
 ```
 
-Not found: the sandbox does not have it. Tell the person it can be added as Software (agent-desktop) from the conversation's Upgrade dialog. `accessibility` should be `granted`.
+Every desktop sandbox has it; at another Level, call `upgrade_workspace` with level `"desktop"` first. `accessibility` should be `granted`.
 
 ## 2. Load the guide for this version
 

@@ -11,6 +11,18 @@ RUN apt-get update \
     x11vnc websockify xdotool scrot at-spi2-core \
   && rm -rf /var/lib/apt/lists/*
 
+# agent-desktop (skills/agent-desktop): the release archive for this architecture, checked against the release's
+# checksums.txt; it holds the CLI and the clipboard helper it expects beside it.
+RUN case $(dpkg --print-architecture) in \
+    amd64) TRIPLE=x86_64-unknown-linux-gnu SHA=ad661b7a3fd8f990a769243f4889a240ca0e2c8dab3ef5bddd6019086c71e0b4 ;; \
+    arm64) TRIPLE=aarch64-unknown-linux-gnu SHA=864cb782e0afc8bf0df19622016b24bdbd1a83fc7749f784ee82aa49a7f845eb ;; \
+    *) exit 1 ;; \
+  esac \
+  && curl -fsSL -o /tmp/agent-desktop.tar.gz "https://github.com/vercel-labs/agent-desktop/releases/download/v1.0.2/agent-desktop-v1.0.2-$TRIPLE.tar.gz" \
+  && echo "$SHA  /tmp/agent-desktop.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/agent-desktop.tar.gz -C /usr/local/bin \
+  && rm /tmp/agent-desktop.tar.gz
+
 COPY desktop-start.sh /usr/local/bin/desktop-start
 RUN chmod +x /usr/local/bin/desktop-start
 

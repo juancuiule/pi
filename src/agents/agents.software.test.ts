@@ -70,18 +70,14 @@ describe("Software", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const agents = yield* Agents;
-        const chrome = yield* Effect.flip(create({ software: ["chrome"] }));
         const chat = yield* Effect.flip(
           create({ level: "none", software: ["node"] })
         );
-        return { chrome, chat, all: yield* agents.list };
+        return { chat, all: yield* agents.list };
       }).pipe(Effect.provide(layer))
     );
 
-    expect([result.chrome._tag, result.chat._tag]).toStrictEqual([
-      "InvalidSetting",
-      "InvalidSetting",
-    ]);
+    expect(result.chat._tag).toBe("InvalidSetting");
     expect(result.all).toHaveLength(0);
   });
 
