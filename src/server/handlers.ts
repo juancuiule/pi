@@ -858,8 +858,8 @@ export const apiLayer = (options: {
   readonly tracing: boolean;
   /** The ports a browser page may call from: the console's and this server's. Unset, any loopback port. */
   readonly pagePorts?: readonly number[] | undefined;
-  /** Where a tunnel serves the console from outside this machine (`PUBLIC_URL`). */
-  readonly publicUrl?: URL | undefined;
+  /** Where a tunnel or proxy serves the console from outside this machine (`PUBLIC_URL`). */
+  readonly publicUrls?: readonly URL[] | undefined;
 }) =>
   HttpApiBuilder.layer(Api).pipe(
     Layer.provide(
@@ -873,14 +873,14 @@ export const apiLayer = (options: {
         FilesHandlers,
         SearchHandlers,
         infoHandlers(options),
-        authHandlers({ publicUrl: options.publicUrl })
+        authHandlers({ publicUrls: options.publicUrls })
       )
     ),
     Layer.provide(AuthenticationLive),
     Layer.merge(
       loopbackOnly({
         pagePorts: options.pagePorts,
-        publicUrl: options.publicUrl,
+        publicUrls: options.publicUrls,
       })
     )
   );

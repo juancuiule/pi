@@ -2,7 +2,7 @@
 #
 # The server and the console are deploy/pi's, unchanged: host network, listening on 127.0.0.1 only. Caddy takes
 # cloudflared's place: it listens on every interface at LAN_PORT and forwards to them, and PUBLIC_URL (in the
-# repository's .env) names the address people type, so the server accepts it beside loopback.
+# repository's .env) names every address people type (LAN IP, Tailscale names), so the server accepts them.
 
 name: effect-pi
 

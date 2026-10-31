@@ -1,6 +1,6 @@
 # Running on a machine in the local network
 
-The same containers as the Raspberry Pi deploy (`docs/deploy/raspberry-pi.md`), with Caddy in place of the Cloudflare Tunnel: Caddy listens on the LAN, the server and the console still listen on 127.0.0.1 only.
+The same containers as the Raspberry Pi deploy (`docs/deploy/raspberry-pi.md`), with Caddy in place of the Cloudflare Tunnel: Caddy listens on the LAN (and on a VPN such as Tailscale), the server and the console still listen on 127.0.0.1 only.
 
 ```
 browser on the LAN ──http──> Caddy :80 on the host
@@ -15,8 +15,9 @@ Traffic is plain http: anyone on the network can read sessions and conversations
 `.env` at the repository root (see `.env.schema` for every variable):
 
 ```sh
-# The address people type. One address only: requests naming another host (the machine's name, a Tailscale IP) are 403.
-PUBLIC_URL=http://192.168.1.38
+# Every address people type, comma-separated: the LAN IP, the Tailscale MagicDNS names (short and full) and the
+# Tailscale IP. Requests naming any host left out here are 403.
+PUBLIC_URL=http://192.168.1.38,http://debian,http://debian.tailf8ca0e.ts.net,http://100.89.34.120
 # Ollama on the same machine: the server container uses the host's network, so 127.0.0.1 reaches it
 MODEL_PROVIDER=ollama
 OLLAMA_URL=http://127.0.0.1:11434
@@ -25,7 +26,9 @@ MODEL_ID=qwen2.5:3b
 SANDBOX_DNS=1.1.1.1,8.8.8.8
 ```
 
-Give the machine a DHCP reservation, so `PUBLIC_URL` stays its address. A `LAN_PORT` other than 80 goes in the URL too (`http://192.168.1.38:8080`).
+Give the machine a DHCP reservation, so its LAN address stays in `PUBLIC_URL`. A `LAN_PORT` other than 80 goes in every URL too (`http://192.168.1.38:8080`).
+
+Caddy listens on every interface, so Tailscale needs nothing more: devices on the tailnet reach `http://debian` through MagicDNS (`tailscale status --self --json` shows the full name). Traffic over Tailscale is encrypted by the tunnel, but the browser still sees plain http.
 
 `deploy/lan/.env` (read by Compose itself, git-ignored):
 

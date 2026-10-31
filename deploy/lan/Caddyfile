@@ -1,5 +1,5 @@
 # Plain http on the local network: Caddy keeps the Host header and sets X-Forwarded-Host, both of which the server
-# checks against PUBLIC_URL. It overwrites X-Forwarded-* sent by clients, so they cannot claim another host.
+# checks against PUBLIC_URL's URLs. It overwrites X-Forwarded-* sent by clients, so they cannot claim another host.
 {
 	admin off
 	auto_https off
