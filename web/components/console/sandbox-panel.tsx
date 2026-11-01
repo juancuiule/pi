@@ -4,7 +4,6 @@ import { cn } from "cn";
 import { LoaderCircle, SquareTerminal } from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { buttonVariants } from "@/components/ui/button";
 import type { ConversationState } from "@/lib/conversation-state";
 import type {
   PanelTab,
@@ -13,39 +12,15 @@ import type {
 } from "@/lib/sandbox-view";
 
 import { FilesBrowser } from "./files-browser";
+import { PanelTabs } from "./panel-tabs";
 import { ShellTerminal } from "./shell-terminal";
 import { TerminalPanel } from "./terminal-panel";
 
-const PanelTabs = ({
-  tab,
-  onTab,
-}: {
-  tab: PanelTab;
-  onTab: (tab: PanelTab) => void;
-}) => (
-  <div className="flex shrink-0 gap-1">
-    {(
-      [
-        ["shell", "Shell"],
-        ["agent", "Agent"],
-        ["files", "Files"],
-      ] as const
-    ).map(([value, label]) => (
-      <button
-        key={value}
-        type="button"
-        aria-pressed={tab === value}
-        onClick={() => onTab(value)}
-        className={buttonVariants({
-          variant: tab === value ? "secondary" : "ghost",
-          size: "sm",
-        })}
-      >
-        {label}
-      </button>
-    ))}
-  </div>
-);
+const SHELL_TABS = [
+  ["shell", "Shell"],
+  ["agent", "Agent"],
+  ["files", "Files"],
+] as const;
 
 /**
  * The shell sandbox's side panel: an interactive Shell tab over the conversation's Sandbox, and the Agent tab
@@ -70,7 +45,10 @@ export const SandboxPanel = ({
   view: SandboxView;
   onView: (action: SandboxViewAction) => void;
 }) => {
-  const tab = view.tab ?? (live ? "shell" : "agent");
+  // "desktop" is the desktop panel's tab: an Upgrade never goes back, so only a stale view has it here.
+  const fallback = live ? "shell" : "agent";
+  const tab =
+    view.tab === undefined || view.tab === "desktop" ? fallback : view.tab;
   const [seen, setSeen] = useState<ReadonlySet<PanelTab>>(() => new Set([tab]));
   if (!seen.has(tab)) {
     setSeen(new Set([...seen, tab]));
@@ -92,6 +70,7 @@ export const SandboxPanel = ({
           />
         ) : null}
         <PanelTabs
+          tabs={SHELL_TABS}
           tab={tab}
           onTab={(next) => onView({ type: "tab", tab: next })}
         />
