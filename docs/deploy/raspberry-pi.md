@@ -25,7 +25,7 @@ Yes, one at a time, slowly. What it costs:
 ## The Pi
 
 - A 64-bit OS (Raspberry Pi OS 64-bit or Ubuntu arm64): the sandbox images are `ubuntu:24.04`, and the pi-env daemon ships an arm64 build. 8 GB of RAM is comfortable; lower `MAX_SHELLS` on smaller boards, and leave desktops off below 8 GB.
-- A current Node (the one this repo develops on; `node server.ts` relies on type stripping), pnpm, and Docker Engine with your user in the `docker` group.
+- Node and pnpm (for `pnpm sandbox:build`), and Docker Engine with your user in the `docker` group.
 - SearXNG (`pnpm searxng:up`) is light and gives the agent `web_search`. Langfuse cannot run on a Pi 4: ClickHouse's arm64 builds stop with `Illegal instruction` on its Cortex-A72 (ARMv8.0); a Pi 5 or another machine can host it.
 
 ```sh
@@ -68,39 +68,9 @@ docker compose -f deploy/pi/docker-compose.yml exec server node user.ts add <nam
 - Conversations, accounts and attachments live in the `effect-pi-data` volume. `.env` at the repository root is read as `env_file`.
 - `deploy/pi/cloudflared/config.yml` is a locally managed tunnel: set `tunnel:` to your tunnel id and copy `~/.cloudflared/<tunnel id>.json` to `deploy/pi/.cloudflared/credentials.json` (git-ignored), then `up -d cloudflared`.
 
-Without Docker, the next section runs the same two processes directly.
-
-## Build and run
-
-Run the production console, not `pnpm dev`: the dev server is slow on a Pi and exposes Next's dev tooling. Both listen on 127.0.0.1 only, like the server; the tunnel is the way in.
-
-```sh
-pnpm --filter web build
-pnpm server                 # terminal 1 (or a systemd unit)
-pnpm --filter web start     # terminal 2
-```
-
-Example systemd unit for the server (`/etc/systemd/system/effect-pi.service`); the console's is the same with `ExecStart=/usr/bin/env pnpm --filter web start`:
-
-```ini
-[Unit]
-Description=effect-pi server
-After=docker.service network-online.target
-Requires=docker.service
-
-[Service]
-User=pi
-WorkingDirectory=/home/pi/effect-pi
-ExecStart=/usr/bin/env pnpm server
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
 ## Create your account before opening the tunnel
 
-The first account comes from the setup screen, and anyone who reaches it first gets it. Open `http://localhost:3001` on the Pi (or over `ssh -L 3001:localhost:3001 pi`) and create it there. Later accounts come from `pnpm user add`.
+The first account comes from the setup screen, and anyone who reaches it first gets it. Create it with `docker compose -f deploy/pi/docker-compose.yml exec server node user.ts add <name>` before starting `cloudflared`.
 
 ## The tunnel
 
@@ -110,25 +80,7 @@ cloudflared tunnel create effect-pi
 cloudflared tunnel route dns effect-pi pi.example.com
 ```
 
-`~/.cloudflared/config.yml`; the socket rule must come first, because the console's `/api` rewrite cannot carry WebSockets (the Shell tab and the desktop):
-
-```yaml
-tunnel: effect-pi
-credentials-file: /home/pi/.cloudflared/<tunnel id>.json
-ingress:
-  - hostname: pi.example.com
-    path: ^/api/conversations/[^/]+/(shell|desktop)$
-    service: http://localhost:4000
-  - hostname: pi.example.com
-    service: http://localhost:3001
-  - service: http_status:404
-```
-
-Do not set `originRequest.httpHostHeader`: the server checks the Host header against `PUBLIC_URL`.
-
-Install it as a service with `sudo cloudflared service install`.
-
-A tunnel managed from the dashboard (Zero Trust → Networks → Tunnels) works too: it runs from a token (`cloudflared tunnel run --token-file ...`), and its public hostnames take the same two routes, in the same order: `pi.example.com` with path `^/api/conversations/[^/]+/(shell|desktop)$` to `http://localhost:4000`, then `pi.example.com` to `http://localhost:3001`. Run `cloudflared` on the host, not in a Docker container: inside a container `localhost` is the container itself (or give the container `network_mode: host`).
+Then point `deploy/pi/cloudflared/config.yml` at it, as in the previous section. Do not set `originRequest.httpHostHeader`: the server checks the Host header against `PUBLIC_URL`.
 
 ## Put Cloudflare Access in front
 
