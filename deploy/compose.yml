@@ -1,0 +1,153 @@
+# effect-pi on any Linux host with Docker; docs/deploy/README.md explains the choices. Run it through deploy.sh, which
+# picks the exposures in deploy/.env (EXPOSURE) and the edge's listen address from them.
+#
+# Every service uses the host's network: the server opens each desktop's VNC port, which Docker publishes on the
+# host's 127.0.0.1, and it accepts only loopback hosts (or PUBLIC_URL). Server and console listen on 127.0.0.1 only;
+# the edge is the one way in, and every exposure forwards to it.
+
+name: effect-pi
+
+# json-file's default is unbounded; on an SD card that eventually fills the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app: &app
+  image: effect-pi:latest
+  network_mode: host
+  env_file:
+    - path: ../.env
+      required: false
+  volumes:
+    - effect-pi-data:/app/data
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging: *default-logging
+  restart: unless-stopped
+
+services:
+  # Build-only: the images the server starts Sandboxes from (src/sandbox/docker.ts), built with the app so a deploy
+  # never runs a new server against old Sandbox images. The `build` profile keeps `up` from starting them.
+  sandbox-shell:
+    image: effect-pi/sandbox-shell
+    build:
+      context: ../docker/sandbox
+      dockerfile: shell.Dockerfile
+    profiles: [build]
+
+  sandbox-desktop:
+    image: effect-pi/sandbox-desktop
+    build:
+      context: ../docker/sandbox
+      dockerfile: desktop.Dockerfile
+      # FROM effect-pi/sandbox-shell resolves to the image built just above, not a stale local one.
+      additional_contexts:
+        effect-pi/sandbox-shell: service:sandbox-shell
+    profiles: [build]
+
+  server:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["node", "server.ts"]
+    volumes:
+      - effect-pi-data:/app/data
+      # The socket is root on the host: the server can start any container. It needs that to run sandboxes.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The socket's group on this host (stat -c %g /var/run/docker.sock)
+    group_add:
+      - "${DOCKER_GID:-985}"
+    environment:
+      SCREENSHOTS_DIR: data/screenshots
+    # Removing every sandbox on shutdown takes a few seconds per container.
+    stop_grace_period: 60s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/api/auth/state').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  web:
+    <<: *app
+    command: ["pnpm", "--filter", "web", "start"]
+    volumes: []
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/login').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # The one routing rule (Caddyfile). It listens on EDGE_BIND:EDGE_PORT, which deploy.sh sets: every interface on
+  # LAN_PORT with the lan exposure, 127.0.0.1 only otherwise.
+  edge:
+    image: caddy:2.10.2
+    network_mode: host
+    environment:
+      EDGE_BIND: ${EDGE_BIND:-127.0.0.1}
+      EDGE_PORT: ${EDGE_PORT:-8080}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    cap_drop:
+      - ALL
+    # Ports below 1024
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+
+  # Locally-managed tunnel forwarding everything to the edge; it authenticates with ./.cloudflared/credentials.json
+  # (git-ignored, a copy of ~/.cloudflared/<tunnel id>.json).
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.3
+    command:
+      [
+        "tunnel",
+        "--no-autoupdate",
+        "run",
+        "--url",
+        "http://127.0.0.1:${EDGE_PORT:-8080}",
+        "${CLOUDFLARE_TUNNEL:-}",
+      ]
+    network_mode: host
+    # The owner of credentials.json, which stays mode 600
+    user: "1000:1000"
+    environment:
+      TUNNEL_CRED_FILE: /etc/cloudflared/credentials.json
+    volumes:
+      - ./.cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    restart: unless-stopped
+    profiles: [cloudflare]
+    depends_on:
+      edge:
+        condition: service_started
+
+volumes:
+  effect-pi-data:
