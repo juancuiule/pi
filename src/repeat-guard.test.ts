@@ -10,10 +10,16 @@ import { Effect, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { Agents } from "./agents/agents.ts";
+import { resultKey } from "./repeat-guard.ts";
 import { callTool, fauxAgents, openSeat } from "./testing/faux.ts";
 
 const a = callTool("bash", { command: "echo a" });
 const b = callTool("bash", { command: "echo b" });
+
+/** A desktop screenshot's result: one PNG block, no text. */
+const shot = (data: string) => ({
+  content: [{ type: "image" as const, data, mimeType: "image/png" }],
+});
 
 const toolResults = (
   entries: readonly { kind: string; model?: unknown }[]
@@ -119,5 +125,12 @@ describe("repeat guard", () => {
     expect(answer).toBe("done");
     expect(results).toHaveLength(8);
     expect(results.every((result) => result.isError !== true)).toBeTruthy();
+  });
+
+  it("tells images apart by their bytes", () => {
+    // Conversation 1015: three different desktop screenshots (an image block each, no text) keyed
+    // alike, so the fourth screenshot was blocked and the sixth ended the run.
+    expect(resultKey(shot("aGVsbG8="))).not.toBe(resultKey(shot("d29ybGQ=")));
+    expect(resultKey(shot("aGVsbG8="))).toBe(resultKey(shot("aGVsbG8=")));
   });
 });
