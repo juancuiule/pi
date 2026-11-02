@@ -7,7 +7,7 @@ export interface FailedSend {
 
 /**
  * 128 random bits as hex. Not `crypto.randomUUID`: browsers expose it only in secure contexts, and the console
- * served over plain http on a LAN address (docs/deploy/lan.md) is not one; `getRandomValues` works everywhere.
+ * served over plain http on a LAN address (docs/deploy/exposure.md) is not one; `getRandomValues` works everywhere.
  */
 const randomId = (): string =>
   Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
