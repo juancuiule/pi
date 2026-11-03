@@ -12,7 +12,7 @@ import type { ConversationId, Extension } from "@earendil-works/pi-durable";
 import { withApproval } from "../approvals.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { SandboxDoc } from "../sandbox/sandbox.ts";
-import { SOFTWARE } from "../sandbox/software.ts";
+import { normalize, SOFTWARE } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
 import { WorkspaceDoc } from "../workspaces/workspaces.ts";
 
@@ -22,6 +22,12 @@ export const UPGRADE_WORKSPACE = "upgrade_workspace";
 // Both sandbox images have agent-browser and Google Chrome (docker/sandbox/shell.Dockerfile).
 const BROWSER =
   "To use a website — open pages, click, fill forms, read what search snippets do not show — use `agent-browser`, which drives Google Chrome; load the `agent-browser` skill first.";
+
+// What both sandbox images have (docker/sandbox/shell.Dockerfile), so the agent does not probe for it.
+const BASE = [
+  "Installed: python3 (also `python`) with `pip` and `uv`, git, curl, wget, jq, ripgrep (`rg`), sqlite3, zip and unzip, Google Chrome with `agent-browser`. `pip install` works system-wide; `uvx <tool>` runs a Python command-line tool from PyPI without installing it.",
+  "For anything else, run `apt-get update` before `apt-get install -y <package>`. What you install yourself is gone when this machine is replaced (an upgrade, a pause); software the person adds stays.",
+].join("\n");
 
 const levelSection = (level: SandboxChoice): string => {
   switch (level) {
@@ -36,12 +42,14 @@ const levelSection = (level: SandboxChoice): string => {
     case "shell": {
       return [
         'You have a Linux shell with file tools; your files are in /workspace. When a task needs a graphical desktop, call upgrade_workspace with level "desktop".',
+        BASE,
         BROWSER,
       ].join("\n");
     }
     case "desktop": {
       return [
         "You have a Linux desktop with a shell and file tools; your files are in /workspace.",
+        BASE,
         BROWSER,
         "To operate the desktop's apps, use `agent-desktop`, which reads them as text through the accessibility tree; load the `agent-desktop` skill first, and prefer it over screenshots and pixel coordinates.",
       ].join("\n");
@@ -59,9 +67,11 @@ const MENTIONS =
 /** What the agent is told about its machine, by its Workspace's Level and Software. */
 export const workspaceSection = (
   level: SandboxChoice,
-  software: readonly SoftwareId[] = []
-): string =>
-  [
+  recorded: readonly SoftwareId[] = []
+): string => {
+  // A Workspace may have recorded an entry its base image now has.
+  const software = normalize(recorded);
+  return [
     levelSection(level),
     ...(level === "none" ? [] : [MENTIONS]),
     ...(software.length === 0
@@ -71,6 +81,7 @@ export const workspaceSection = (
           ...software.map((id) => `- ${SOFTWARE[id].prompt}`),
         ]),
   ].join("\n");
+};
 
 /** Raise `conversationId`'s Workspace to `level`; resolves with a sentence for the model, rejects on failure. */
 export type UpgradeWorkspace = (

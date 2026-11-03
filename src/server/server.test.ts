@@ -714,7 +714,6 @@ describe("HTTP API", () => {
           capabilities.software.map((each) => [each.id, each.level])
         ).toStrictEqual([
           ["node", "shell"],
-          ["uv", "shell"],
           ["python-data", "shell"],
           ["imagemagick", "shell"],
           ["ffmpeg", "shell"],
@@ -724,7 +723,7 @@ describe("HTTP API", () => {
         });
         const upgraded = yield* client.conversations.upgrade({
           params: { id: created.id },
-          payload: { software: ["uv"] },
+          payload: { software: ["ffmpeg"] },
         });
         const nothing = yield* Effect.flip(
           client.conversations.upgrade({
@@ -737,7 +736,12 @@ describe("HTTP API", () => {
           upgraded.software,
           upgraded.sandbox,
           nothing._tag,
-        ]).toStrictEqual([["node"], ["node", "uv"], "shell", "InvalidUpgrade"]);
+        ]).toStrictEqual([
+          ["node"],
+          ["node", "ffmpeg"],
+          "shell",
+          "InvalidUpgrade",
+        ]);
       }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("a")])])))
     );
   });
