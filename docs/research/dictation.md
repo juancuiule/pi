@@ -1,6 +1,6 @@
 # Dictation with live transcription: research
 
-Researched 2026-11-03 for the composer's mic button ([#55](https://github.com/juancuiule/pi/issues/55)). #55 designs a batch upload after stop over `POST /v1/audio/transcriptions`; this note compares that with ways to show text while the person is still speaking. Prices and model names move fast: each claim links the page it came from, read on that date.
+Researched 2026-11-03 for the composer's mic button, before it was built (decisions: [ADR-0013](../adr/0013-dictation-segments-over-one-openai-compatible-url.md)) ([#55](https://github.com/juancuiule/pi/issues/55)). #55 designs a batch upload after stop over `POST /v1/audio/transcriptions`; this note compares that with ways to show text while the person is still speaking. Prices and model names move fast: each claim links the page it came from, read on that date.
 
 ## Recommendation
 
@@ -111,46 +111,12 @@ References: Apple's dictation (inline text, a mic glyph at the caret, uncertain 
 - **Accessibility**: the button is a toggle with `aria-pressed` and a label that changes ("Start dictation" / "Stop dictation"); the strip is not a live region for interim text (it would chatter), but each finalized segment is announced politely through the composer's existing `aria-live="polite"` span; the level meter is `aria-hidden`; focus stays in the textarea; `prefers-reduced-motion` freezes the meter and caret blink.
 - **Unconfigured**: no mic button at all when no backend is set, read from `GET /api/info` (the `transcribe: boolean` #55 proposes).
 
-## Configuration it would need
+## What was decided
 
-Mirroring `.env.schema` (`MODEL_*`, `OLLAMA_URL`, `WEB_SEARCH_*`) and keeping #55's prefix:
+The v1 above shipped: [ADR-0013](../adr/0013-dictation-segments-over-one-openai-compatible-url.md) records the decisions, `.env.schema` (`TRANSCRIBE_*`) the configuration, and [docker/speaches/README.md](../../docker/speaches/README.md) the local backend and the model comparison. The open questions were answered as follows:
 
-```
-# --- Dictation (src/transcribe/): the composer's mic; unset TRANSCRIBE_URL, no mic button ---
-# An OpenAI-compatible API base: https://api.groq.com/openai/v1, https://api.openai.com/v1, or Speaches'
-# http://<host>:8000/v1. The server posts WAV segments to <url>/audio/transcriptions.
-# @type=url
-TRANSCRIBE_URL=
-# @sensitive
-TRANSCRIBE_API_KEY=
-# e.g. whisper-large-v3-turbo (Groq), gpt-transcribe (OpenAI), Systran/faster-whisper-small (Speaches)
-TRANSCRIBE_MODEL=
-# ISO 639-1 hint sent with each request unless the person picks one; unset, the backend detects it.
-TRANSCRIBE_LANGUAGE=
-# Prompt sent with each request, to bias spelling (names, "vos", product terms).
-TRANSCRIBE_PROMPT=
-# How often the open segment is re-transcribed for live text; 0 sends only final text at each pause.
-# @type=number(isInt=true, min=0)
-TRANSCRIBE_INTERIM_MS=1000
-# Longest dictation; the client stops there and keeps the text.
-# @type=number(isInt=true, min=10)
-TRANSCRIBE_MAX_SECONDS=300
-# Transcription requests at once, across everyone.
-# @type=number(isInt=true, min=1)
-TRANSCRIBE_CONCURRENCY=2
-# @type=duration
-TRANSCRIBE_TIMEOUT=30s
-```
-
-#55's `TRANSCRIBE_MAX_FILE_MB` is not needed with streamed PCM: `TRANSCRIBE_MAX_SECONDS` bounds the memory (300 s × 32 KB/s ≈ 9.6 MB). A later `TRANSCRIBE_ENGINE=chunked|realtime` would select the Realtime relay. Like `SEARXNG_URL`, the key belongs in `src/config.ts` only and is never sent to `web/`.
-
-## Open questions for the user
-
-1. **Where may audio go?** Cloud (Groq/OpenAI) gives the best quality and speed now; self-hosted keeps audio on the LAN. Recommended: support both through the one URL; default to Groq for daily use if leaving the host is acceptable, Speaches otherwise.
-2. **Which machine would run Speaches?** This host has a GTX 1070 Ti (8 GB, Pascal) and an i7-8700K: enough for faster-whisper `large-v3-turbo` int8 on the GPU, not for Voxtral (16 GB). The Ollama box at 192.168.1.20 was unreachable from here; its GPU is unknown. A Raspberry Pi is too slow for Whisper partials (fine for Moonshine).
-3. **Live partials every ~1 s, or a phrase at a time?** Recommended: partials (`TRANSCRIBE_INTERIM_MS=1000`) on Groq or a GPU, final-only on CPU.
-4. **Spanish, English, or mixed in one message?** Mixed sentences decide between Whisper (one language per request, auto or fixed) and future engines. Recommended: a per-session ES/EN/Auto toggle defaulting to `es`.
-5. **Is dictation over the plain-http LAN exposure required?** Browsers forbid the mic there. Recommended: use Tailscale's https URL on phones; the console explains it on http.
-6. **Is a zero-config Web Speech mode wanted** (works with no backend, but audio goes to Google/Apple)? Recommended: no for v1; revisit if nobody configures a backend.
-7. **Quality check before choosing**: record ten short Rioplatense and English clips and run them through Groq turbo, Speaches `small`/`turbo`, and `gpt-transcribe`. No public benchmark covers Rioplatense specifically (the figures above are FLEURS/MLS Spanish).
-8. **Where should this note live?** AGENTS.md keeps unshipped sketches in the git-ignored `docs/plans/`; this was committed under `docs/research/` as asked. Move or drop it once an ADR records the decision.
+- Backend: one OpenAI-compatible URL; v1 runs Speaches locally on this host's GPU (CPU when Docker has no NVIDIA runtime). Groq and OpenAI `gpt-transcribe` are documented alternatives.
+- Language: a per-dictation ES/EN/Auto toggle, ES by default, remembered per browser.
+- Quality: measured locally with `pnpm speaches:compare` on clips the user records; the default model is `large-v3-turbo` on a GPU, `small` on a CPU.
+- Plain-http LAN: not supported; the mic button explains that https or localhost is needed.
+- Web Speech API: not offered.
