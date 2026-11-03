@@ -8,17 +8,13 @@ A conversation asked for a summary of a YouTube video. The agent upgraded to a s
 - **Small, commonly needed tools go in the base image** (`file less procps python-is-python3 sqlite3 unzip wget xz-utils zip`). Large or specialized ones stay Software (Node.js, FFmpeg, ImageMagick, Python data science), so a plain shell does not carry hundreds of MB that most conversations never use.
 - **The `workspace` prompt section lists the base tools**, says to run `apt-get update` before `apt-get install`, and says what the agent installs is lost when the machine is replaced. A few dozen tokens on every request cost less than the turns spent finding this out.
 - **`command_not_found_handle`** (`docker/sandbox/sandbox-env.sh`) answers a missing command with the next step: the catalog entry that provides it, `uvx`/`pip` for Python tools, or `apt-get update` first. The agent's commands run as non-interactive `bash -c`, which reads only `BASH_ENV`, so the image sets it. The Shell tab's interactive `bash -l` sources it from `/etc/bash.bashrc`. Each catalog entry lists its `commands`, and a test checks the handler against them.
+- **The agent adds catalog Software itself**: `upgrade_workspace` takes `software` beside `level`, so the handler's hint can be acted on, and what the agent adds stays across Upgrades and Pauses, unlike an `apt-get install`. It is gated like the Level under `ask`. The first use of a new combination waits for its image build, and the tool's description says so.
+- **Missing commands are counted in traces**: each `bash` call's span carries the commands its output says were not found, as `missing_commands` metadata in Langfuse. What goes in the base image or the catalog next can then follow what agents actually look for. Only bash's own `command not found` line is read, so output that merely quotes it elsewhere on a line is not counted.
 
 Cost, measured on Intel Linux, Docker 29: the extra apt packages add 11MB (132MB to 143MB for that layer), and uv with pip adds 60MB. The shell image has 831MB of Chrome next to it.
-
-- **The agent adds catalog Software itself**: `upgrade_workspace` takes `software` beside `level`, so the handler's hint can be acted on, and what the agent adds stays across Upgrades and Pauses, unlike an `apt-get install`. It is gated like the Level under `ask`. The first use of a new combination waits for its image build, and the tool's description says so.
 
 ## Rejected
 
 - **Ubuntu's `command-not-found` package**: it needs apt's package lists, which the image deletes to stay small, and it suggests only apt, never catalog Software or `uvx`.
 - **Keeping apt's package lists in the image**: about 40MB, and they go stale after the build. The prompt and the handler say to run `apt-get update`.
 - **Node.js in the base image**: 58MB, and fewer tasks need it than Python. It stays Software, and the handler points to it.
-
-## Open
-
-- How often each missing command comes up is not measured, so what goes in the base image is a guess. Counting exit-127 results in traces would turn it into data.
