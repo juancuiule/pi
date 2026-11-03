@@ -211,6 +211,7 @@ const ServerLive = HttpRouter.serve(
       tracing: config.langfuse !== undefined,
       pagePorts: [config.server.webPort, config.server.port],
       publicUrls: config.server.publicUrls,
+      services: config.services,
     }),
     shellRoute,
     desktopRoute

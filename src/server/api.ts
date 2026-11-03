@@ -30,6 +30,8 @@ import {
   InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
+  ServiceForbidden,
+  ServiceNotFound,
   SetupClosed,
   SkillNotFound,
   SubmissionNotFound,
@@ -40,8 +42,11 @@ import {
   WorkspaceFileNotFound,
 } from "../errors.ts";
 import { SOFTWARE_IDS } from "../sandbox/software.ts";
+import { SERVICE_NAMES } from "../services.ts";
 
 export { SOFTWARE } from "../sandbox/software.ts";
+export { SERVICES } from "../services.ts";
+export type { ServiceName } from "../services.ts";
 export {
   NAME_RULE,
   nameProblem,
@@ -83,6 +88,8 @@ export {
   InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
+  ServiceForbidden,
+  ServiceNotFound,
   SetupClosed,
   SkillNotFound,
   SubmissionNotFound,
@@ -840,6 +847,33 @@ const InfoGroup = HttpApiGroup.make("info").add(
   })
 );
 
+/** A Service the edge serves at `path` (src/services.ts). */
+export const Service = Schema.Struct({
+  name: Schema.Literals(SERVICE_NAMES),
+  label: Schema.String,
+  path: Schema.String,
+  description: Schema.String,
+});
+export type Service = typeof Service.Type;
+
+// The Services beside the console (docs/deploy/services.md). Behind `Authentication` like the rest.
+const ServiceGroup = HttpApiGroup.make("services").add(
+  // The Services the caller may open: those in EDGE_SERVICES, for an account SERVICE_USERS allows; else none.
+  HttpApiEndpoint.get("list", "/services", {
+    success: Schema.Array(Service),
+  }),
+  // The edge's forward_auth asks this before every request to /_/<name>/...: a 2xx forwards it, anything else is
+  // the answer (401 sends the browser to sign in).
+  HttpApiEndpoint.get("get", "/services/:name", {
+    params: { name: Schema.String },
+    success: Service,
+    error: [
+      ServiceNotFound.pipe(HttpApiSchema.status(404)),
+      ServiceForbidden.pipe(HttpApiSchema.status(403)),
+    ],
+  })
+);
+
 /** The signed-in User of the request, provided by `Authentication` to every endpoint outside `auth`. */
 export class CurrentUser extends Context.Service<CurrentUser, User>()(
   "effect-pi/CurrentUser"
@@ -909,6 +943,7 @@ export const Api = HttpApi.make("effect-pi")
   .add(FileGroup)
   .add(SearchGroup)
   .add(InfoGroup)
+  .add(ServiceGroup)
   // Only the groups above: `auth` and `attachmentImages` are added after, so they are reachable without a session.
   .middleware(Authentication)
   .add(AuthGroup)

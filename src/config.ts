@@ -5,6 +5,7 @@ import { ENV } from "varlock/env";
 
 import { langfuseOptions } from "./langfuse.ts";
 import type { ModelConfig } from "./models.ts";
+import { parseServiceNames } from "./services.ts";
 
 /**
  * For a variable without a default, a blank value from the shell (`X= pnpm server`) arrives as "", while a blank in
@@ -135,3 +136,12 @@ export const webSearch =
         language: ENV.WEB_SEARCH_LANGUAGE,
         safeSearch: ENV.WEB_SEARCH_SAFESEARCH,
       };
+
+/** The Services the edge serves, and the accounts that may open them (unset: the oldest account). */
+export const services = {
+  enabled: parseServiceNames(unset(ENV.EDGE_SERVICES)),
+  users: unset(ENV.SERVICE_USERS)
+    ?.split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter((name) => name !== ""),
+};

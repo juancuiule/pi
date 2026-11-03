@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/card";
 import { apiError, ApiFailureError } from "@/lib/api";
 import { useAuthState, useSignIn } from "@/lib/queries";
-import { safeNext } from "@/lib/session";
+import { isServicePath, safeNext } from "@/lib/session";
 import { formProblem } from "@/lib/sign-in";
 import type { FormProblem, SignInForm, SignInMode } from "@/lib/sign-in";
 
@@ -217,7 +217,13 @@ const LoginView = () => {
   const signedIn = data?.user !== undefined;
 
   useEffect(() => {
-    if (signedIn) {
+    if (!signedIn) {
+      return;
+    }
+    // A Service (/_/langfuse/, ...) is the edge's, not a console route.
+    if (isServicePath(next)) {
+      window.location.replace(next);
+    } else {
       router.replace(next);
     }
   }, [signedIn, next, router]);
