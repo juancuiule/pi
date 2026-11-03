@@ -291,13 +291,15 @@ describe("HTTP API", () => {
         "artifact_create",
         "artifact_update",
         "ask_user",
+        "update_todos",
+        "end_goal",
         "task",
         "skill",
         "skill_save",
         "skill_delete",
       ],
       ["coding-tools", "desktop"],
-      ["workspace", "attachments", "artifacts", "skills"],
+      ["workspace", "attachments", "artifacts", "todos", "goal", "skills"],
     ]);
   });
 

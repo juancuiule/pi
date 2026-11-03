@@ -3,6 +3,7 @@ import type { Message } from "effect-pi/api";
 
 import type { AttachmentRef } from "./attachments";
 import { splitAttachments } from "./attachments";
+import { continuationOf, goalObjectiveOf } from "./goal";
 import type { SkillMessage } from "./skill-message";
 import { parseSkillMessage, splitSkillHints } from "./skill-message";
 
@@ -61,18 +62,27 @@ export interface DisplayedMessage {
   readonly hinted: readonly string[];
   /** The files the message carried, as chips. */
   readonly attachments: readonly AttachmentRef[];
+  /** The message started a goal (`/goal`): `shown` is its objective. */
+  readonly goal: boolean;
+  /** An automatic message that continued a goal, not the person's. */
+  readonly continuation:
+    | { readonly turn: number; readonly of: number }
+    | undefined;
 }
 
 /** What a person's message text resolves to for display: skill chip, text as typed, file chips. */
 export const displayParts = (text: string): DisplayedMessage => {
   // Attachment blocks come last, after any skill hints.
   const files = splitAttachments(text);
-  const { text: body, hinted } = splitSkillHints(files.text);
+  const objective = goalObjectiveOf(files.text);
+  const { text: body, hinted } = splitSkillHints(objective ?? files.text);
   const skill = parseSkillMessage(body);
   return {
     shown: skill === undefined ? body : skill.request,
     skill,
     hinted,
     attachments: files.attachments,
+    goal: objective !== undefined,
+    continuation: continuationOf(files.text),
   };
 };

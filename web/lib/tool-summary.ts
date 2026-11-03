@@ -73,6 +73,17 @@ const askUser = (args: Args): string => {
   return questions.length > 1 ? `${first} (+${questions.length - 1})` : first;
 };
 
+const updateTodos = (args: Args): string => {
+  const todos = Array.isArray(args.todos) ? args.todos : [];
+  if (todos.length === 0) {
+    return "";
+  }
+  const done = todos.filter(
+    (todo) => asArgs(todo).status === "completed"
+  ).length;
+  return `${done}/${todos.length} done`;
+};
+
 const SUMMARIES: Record<string, (args: Args) => string> = {
   bash: (args) => text(args.command) ?? "",
   read: (args) => text(args.path) ?? "",
@@ -93,6 +104,8 @@ const SUMMARIES: Record<string, (args: Args) => string> = {
   web_search: (args) => text(args.query) ?? "",
   artifact_create: (args) => text(args.title) ?? "",
   artifact_update: (args) => text(args.title) ?? "",
+  update_todos: updateTodos,
+  end_goal: (args) => text(args.status) ?? "",
 };
 
 /** A compact one-line description of a call's arguments; "" when there is nothing meaningful to show. */

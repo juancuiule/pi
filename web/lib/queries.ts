@@ -76,6 +76,69 @@ export const useConversationArtifacts = (
   return query;
 };
 
+/** Poll while `running`, and fetch once more when a run ends, since its last write can land after the last poll. */
+const usePolledWhileRunning = <A>(
+  key: readonly unknown[],
+  conversation: number | undefined,
+  running: boolean,
+  fetch: (conversation: number) => Promise<A>
+) => {
+  const query = useQuery({
+    queryKey: key,
+    queryFn: conversation === undefined ? skipToken : () => fetch(conversation),
+    refetchInterval: running ? 2000 : false,
+  });
+  const { refetch } = query;
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running && conversation !== undefined) {
+      void refetch();
+    }
+    wasRunning.current = running;
+  }, [conversation, running, refetch]);
+  return query;
+};
+
+/** The agent's todo list (`update_todos`), for the plan strip. */
+export const useTodos = (conversation: number | undefined, running: boolean) =>
+  usePolledWhileRunning(["todos", conversation], conversation, running, (id) =>
+    runApi((c) => c.conversations.todos({ params: { id } }))
+  );
+
+/** The latest goal (`/goal`) with its progress and spend, for the goal banner. */
+export const useGoal = (conversation: number | undefined, running: boolean) =>
+  usePolledWhileRunning(["goal", conversation], conversation, running, (id) =>
+    runApi((c) => c.conversations.goal({ params: { id } }))
+  );
+
+/** Cancel the active goal, or continue it when no Run is going (resuming a paused conversation first). */
+export const useGoalAction = () => {
+  const client = useQueryClient();
+  const guard = useCapacityGuard();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      action,
+    }: {
+      id: number;
+      action: "cancel" | "continue";
+    }) => {
+      if (action === "cancel") {
+        await runApi((c) => c.conversations.cancelGoal({ params: { id } }));
+        return;
+      }
+      await guard(() =>
+        runApi((c) => c.conversations.continueGoal({ params: { id } }))
+      );
+    },
+    onSettled: (_data, _error, { id }) =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: ["goal", id] }),
+        client.invalidateQueries({ queryKey: LIST }),
+      ]),
+  });
+};
+
 /** Full-text over Conversation titles and messages, for the ⌘K palette; fetched while it is open. */
 export const useSearch = (q: string, enabled: boolean) =>
   useQuery({

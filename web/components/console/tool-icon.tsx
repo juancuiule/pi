@@ -9,11 +9,13 @@ import {
   Globe,
   Keyboard,
   LayoutTemplate,
+  ListTodo,
   MessageCircleQuestionMark,
   MousePointerClick,
   MoveVertical,
   Search,
   SquareTerminal,
+  Target,
   Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -30,6 +32,8 @@ const ICONS: Record<string, LucideIcon> = {
   skill: BookOpen,
   ask_user: MessageCircleQuestionMark,
   task: Bot,
+  update_todos: ListTodo,
+  end_goal: Target,
   web_search: Globe,
   artifact_create: LayoutTemplate,
   artifact_update: LayoutTemplate,

@@ -20,9 +20,11 @@ import {
   Info,
   ListCollapse,
   LoaderCircle,
+  Repeat,
   RotateCcw,
   SeparatorHorizontal,
   SlidersHorizontal,
+  Target,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -147,6 +149,14 @@ const SkillChip = ({
       </TraceCollapsibleContent>
     </TraceCollapsible>
   </Trace>
+);
+
+/** A message that started a goal: its text is the objective. */
+const GoalChip = () => (
+  <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+    <Target aria-hidden className="size-3.5" strokeWidth={1.5} />
+    Goal
+  </span>
 );
 
 /** A `/skill:<name>` hint in the user's text: the model was told about the skill, not made to use it. */
@@ -542,11 +552,21 @@ const Entry = ({
     case "user": {
       const parsed = userParts(message);
       const parts = displayParts(parsed.text);
+      if (parts.continuation !== undefined) {
+        return (
+          <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+            <Repeat aria-hidden className="size-3.5" strokeWidth={1.5} />
+            Automatic: goal turn {parts.continuation.turn} of{" "}
+            {parts.continuation.of}
+          </p>
+        );
+      }
       // A message's images are its attached images, already shown as chips that open them.
       const images = parts.attachments.length > 0 ? [] : parsed.images;
       return (
         <div className="group/msg ml-auto flex max-w-[85%] flex-col">
           <div className="bg-muted text-foreground flex flex-col gap-2 rounded-2xl px-4 py-2.5">
+            {parts.goal ? <GoalChip /> : null}
             {parts.skill === undefined ? null : (
               <SkillChip
                 skill={parts.skill.skill}
