@@ -221,6 +221,16 @@ const ConversationsHandlers = HttpApiBuilder.group(
           .unarchive(params.id)
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
+      .handle("pin", ({ params }) =>
+        conversations
+          .pin(params.id, true)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("unpin", ({ params }) =>
+        conversations
+          .pin(params.id, false)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
       .handle("rename", ({ params, payload }) =>
         conversations
           .rename(params.id, payload.title)

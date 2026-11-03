@@ -1492,6 +1492,53 @@ describe("HTTP API", () => {
     expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
   });
 
+  it("pins and unpins a conversation, refusing unknown ids", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const older = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "older" },
+        });
+        yield* Effect.sleep("2 millis");
+        const newer = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "newer" },
+        });
+        const pinned = yield* client.conversations.pin({
+          params: { id: older.id },
+        });
+        const whilePinned = yield* client.conversations.list();
+        const unpinned = yield* client.conversations.unpin({
+          params: { id: older.id },
+        });
+        const afterwards = yield* client.conversations.list();
+        const missing = yield* Effect.flip(
+          client.conversations.pin({ params: { id: 424_242 } })
+        );
+        return {
+          ids: [older.id, newer.id],
+          pinned,
+          whilePinned,
+          unpinned,
+          afterwards,
+          missing,
+        };
+      }).pipe(
+        Effect.provide(
+          server([
+            fauxAssistantMessage([fauxText("one")]),
+            fauxAssistantMessage([fauxText("two")]),
+          ])
+        )
+      )
+    );
+    const [older, newer] = result.ids;
+    expect(result.pinned.pinnedAt).toBeTypeOf("number");
+    expect(result.whilePinned.map((c) => c.id)).toStrictEqual([older, newer]);
+    expect(result.unpinned).not.toHaveProperty("pinnedAt");
+    expect(result.afterwards.map((c) => c.id)).toStrictEqual([newer, older]);
+    expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
+  });
+
   it("generates and regenerates titles over HTTP", async () => {
     const agents = fauxAgents(
       [

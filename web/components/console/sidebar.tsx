@@ -6,6 +6,7 @@ import {
   LogOut,
   Monitor,
   Moon,
+  Pin,
   Plus,
   Search,
   ShieldAlert,
@@ -37,12 +38,14 @@ import {
   useInfo,
   useSignOut,
 } from "@/lib/queries";
+import { byPinThenRecency } from "@/lib/row-actions";
 import { useOpenSearch } from "@/lib/search-context";
 import { useConversationStore } from "@/lib/store";
 import { useMounted } from "@/lib/use-media-query";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 
+import { ConversationRow } from "./conversation-row";
 import { SANDBOX_INFO } from "./sandbox-badge";
 import { StatusDot } from "./status-dot";
 
@@ -160,7 +163,8 @@ export const Sidebar = () => {
   const ended = useConversationStore((store) => store.ended);
   const now = useNow();
   const [showArchived, setShowArchived] = useState(false);
-  const all = [...(data ?? [])].toSorted((a, b) => b.createdAt - a.createdAt);
+  // Pinned first, then newest first.
+  const all = [...(data ?? [])].toSorted(byPinThenRecency);
   const archivedCount = all.filter((c) => c.status === "archived").length;
   // Archived conversations are hidden unless asked for, or unless one is open.
   const conversations = all.filter(
@@ -203,60 +207,76 @@ export const Sidebar = () => {
             const activity = activityOf(conversation, isResuming);
             return (
               <li key={conversation.id}>
-                <Link
-                  href={`/?c=${conversation.id}`}
-                  aria-current={selected ? "page" : undefined}
-                  className={cn(
-                    "hover:bg-muted focus-visible:ring-ring flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2",
-                    selected && "bg-accent text-accent-foreground font-medium"
-                  )}
+                <ConversationRow
+                  conversation={conversation}
+                  resuming={isResuming}
                 >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <StatusDot
-                      conversation={conversation}
-                      ended={isEnded}
-                      resuming={isResuming}
-                    />
-                    <span
-                      className={cn(
-                        "min-w-0 flex-1 truncate text-sm",
-                        inactive && "text-muted-foreground"
-                      )}
-                      title={conversation.title}
-                    >
-                      {conversation.title}
-                    </span>
-                    {needsApproval ? (
-                      <>
-                        <ShieldAlert
-                          aria-hidden
-                          className="text-warning size-3.5 shrink-0"
-                          strokeWidth={1.5}
-                        />
-                        <span className="sr-only">Needs approval</span>
-                      </>
-                    ) : null}
-                    {activity === undefined ? null : (
-                      <>
-                        <LoaderCircle
-                          aria-hidden
-                          className="text-muted-foreground size-3.5 shrink-0 motion-safe:animate-spin"
-                          strokeWidth={1.5}
-                        />
-                        <span className="sr-only">{activity}</span>
-                      </>
+                  <Link
+                    href={`/?c=${conversation.id}`}
+                    aria-current={selected ? "page" : undefined}
+                    className={cn(
+                      // A touch screen keeps the row menu button showing at the right; the text stops short of it.
+                      "hover:bg-muted focus-visible:ring-ring flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2 pointer-coarse:pr-10",
+                      selected && "bg-accent text-accent-foreground font-medium"
                     )}
-                  </span>
-                  <span className="text-muted-foreground flex items-center gap-1 text-xs">
-                    <Icon className="size-3" strokeWidth={1.5} />
-                    {label}
-                    {" · "}
-                    {relativeTime(conversation.createdAt, now)}
-                    {statusSuffix(conversation, isResuming, isEnded)}
-                    {conversation.pausing ? " · Pausing" : ""}
-                    {needsApproval ? " · Needs approval" : ""}
-                  </span>
-                </Link>
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <StatusDot
+                        conversation={conversation}
+                        ended={isEnded}
+                        resuming={isResuming}
+                      />
+                      <span
+                        className={cn(
+                          "min-w-0 flex-1 truncate text-sm",
+                          inactive && "text-muted-foreground"
+                        )}
+                        title={conversation.title}
+                      >
+                        {conversation.title}
+                      </span>
+                      {conversation.pinnedAt === undefined ? null : (
+                        <>
+                          <Pin
+                            aria-hidden
+                            className="text-muted-foreground size-3 shrink-0"
+                            strokeWidth={1.5}
+                          />
+                          <span className="sr-only">Pinned</span>
+                        </>
+                      )}
+                      {needsApproval ? (
+                        <>
+                          <ShieldAlert
+                            aria-hidden
+                            className="text-warning size-3.5 shrink-0"
+                            strokeWidth={1.5}
+                          />
+                          <span className="sr-only">Needs approval</span>
+                        </>
+                      ) : null}
+                      {activity === undefined ? null : (
+                        <>
+                          <LoaderCircle
+                            aria-hidden
+                            className="text-muted-foreground size-3.5 shrink-0 motion-safe:animate-spin"
+                            strokeWidth={1.5}
+                          />
+                          <span className="sr-only">{activity}</span>
+                        </>
+                      )}
+                    </span>
+                    <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                      <Icon className="size-3" strokeWidth={1.5} />
+                      {label}
+                      {" · "}
+                      {relativeTime(conversation.createdAt, now)}
+                      {statusSuffix(conversation, isResuming, isEnded)}
+                      {conversation.pausing ? " · Pausing" : ""}
+                      {needsApproval ? " · Needs approval" : ""}
+                    </span>
+                  </Link>
+                </ConversationRow>
               </li>
             );
           })}

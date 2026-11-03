@@ -657,6 +657,11 @@ export class Agents extends Context.Service<
     unarchive(
       id: ConversationId
     ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Pin a Conversation to the top of its owner's list (`at`), or unpin it (`undefined`). Works in any state. */
+    pin(
+      id: ConversationId,
+      at: number | undefined
+    ): Effect.Effect<StoredConversation, AgentError | ConversationNotFound>;
     /**
      * Watch a conversation, with or without a Seat: a `snapshot` first, then the events of every later commit.
      * The watch starts when this effect completes, so the stream is single-use and must be run: finishing or
@@ -2323,6 +2328,28 @@ export class Agents extends Context.Service<
           );
         });
 
+        const pin = Effect.fn("Agents.pin")(function* (
+          id: ConversationId,
+          at: number | undefined
+        ) {
+          yield* handleOf(id);
+          const found = yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const doc = await tx.doc(MetaDoc, id);
+              if (doc.meta === undefined) {
+                return false;
+              }
+              const { pinnedAt: _pinnedAt, ...meta } = doc.meta;
+              doc.meta = at === undefined ? meta : { ...meta, pinnedAt: at };
+              return true;
+            }, context)
+          );
+          if (!found) {
+            return yield* new ConversationNotFound({ id: Number(id) });
+          }
+          return yield* get(id);
+        });
+
         const upgradeStored = Effect.fn("Agents.upgrade")(function* (
           id: ConversationId,
           request: UpgradeRequest
@@ -3072,6 +3099,7 @@ export class Agents extends Context.Service<
           adopt,
           archive,
           unarchive,
+          pin,
           events,
           history,
           entryTrace,

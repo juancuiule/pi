@@ -75,6 +75,8 @@ export interface ConversationSummary {
   /** The Sandbox has a desktop to watch, over `/api/conversations/:id/desktop`. */
   readonly desktop?: boolean;
   readonly title: string;
+  /** When the person pinned it; pinned Conversations list first. */
+  readonly pinnedAt?: number;
   readonly status: ConversationStatus;
   /** True while a Pause waits for the current Run to end. */
   readonly pausing: boolean;
@@ -137,6 +139,12 @@ interface Live {
 
 const asId = (id: number) => id as ConversationId;
 
+/** Pinned first, the most recently pinned on top; then newest first. */
+const byPinThenRecency = (
+  a: ConversationSummary,
+  b: ConversationSummary
+): number => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0) || b.createdAt - a.createdAt;
+
 const summaryOf = (
   stored: StoredConversation,
   live: Live | undefined,
@@ -155,6 +163,9 @@ const summaryOf = (
     ...(sandbox === undefined ? {} : { sandboxId: sandbox.id }),
     ...(sandbox?.vncUrl === undefined ? {} : { desktop: true }),
     title: stored.meta.title,
+    ...(stored.meta.pinnedAt === undefined
+      ? {}
+      : { pinnedAt: stored.meta.pinnedAt }),
     status,
     pausing: live?.pausing ?? false,
     pendingApprovals,
@@ -194,7 +205,7 @@ export class Conversations extends Context.Service<
       ConversationSummary & { readonly submission: SubmissionRecord },
       SeatError | SkillNotFound | InvalidSetting | AttachmentError
     >;
-    /** `owner`'s Conversations, newest first. */
+    /** `owner`'s Conversations: pinned ones first, most recently pinned on top, then the rest newest first. */
     list(
       owner: UserId
     ): Effect.Effect<readonly ConversationSummary[], AgentError>;
@@ -236,6 +247,11 @@ export class Conversations extends Context.Service<
     unarchive(
       id: number
     ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Pin a Conversation above the rest of its owner's list, or unpin it. Works in any state. */
+    pin(
+      id: number,
+      pinned: boolean
+    ): Effect.Effect<ConversationSummary, AgentError | ConversationNotFound>;
     /** Rename a Conversation's title; marks it manual. */
     rename(
       id: number,
@@ -1024,7 +1040,7 @@ export class Conversations extends Context.Service<
               )
             );
           }
-          return listed.toSorted((a, b) => b.createdAt - a.createdAt);
+          return listed.toSorted(byPinThenRecency);
         });
 
         const sweep = Effect.gen(function* () {
@@ -1058,6 +1074,19 @@ export class Conversations extends Context.Service<
           withdraw: (id, submission) => agents.withdraw(asId(id), submission),
           feedback,
           report,
+          pin: Effect.fn("Conversations.pin")(function* (id, pinned) {
+            const entry = live.get(id);
+            const stored = yield* agents.pin(
+              asId(id),
+              pinned ? yield* Clock.currentTimeMillis : undefined
+            );
+            return summaryOf(
+              stored,
+              entry,
+              entry === undefined ? 0 : yield* entry.seat.pendingApprovals,
+              yield* attentionOf(id)
+            );
+          }),
           rename: Effect.fn("Conversations.rename")(function* (id, title) {
             const entry = live.get(id);
             const stored = yield* agents.renameTitle(asId(id), title);
