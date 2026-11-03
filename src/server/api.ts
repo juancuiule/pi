@@ -129,6 +129,8 @@ export const ConversationSummary = Schema.Struct({
   /** The Sandbox has a desktop to watch, over the `/api/conversations/:id/desktop` WebSocket. */
   desktop: Schema.optionalKey(Schema.Boolean),
   title: Schema.String,
+  /** When the person pinned it; pinned Conversations list first, the most recently pinned on top. */
+  pinnedAt: Schema.optionalKey(Schema.Number),
   /** `running` and `idle` have a Seat; `paused` and `archived` do not. */
   status: Schema.Literals(["running", "idle", "paused", "archived"]),
   /** True while a Pause waits for the current Run to end. */
@@ -464,6 +466,17 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
   HttpApiEndpoint.post("unarchive", "/conversations/:id/unarchive", {
     params: ById,
     success: HttpApiSchema.NoContent,
+    error: NotFound,
+  }),
+  // Pin above the recency order of the owner's list, or unpin; kept across Pause, Archive and restarts.
+  HttpApiEndpoint.post("pin", "/conversations/:id/pin", {
+    params: ById,
+    success: ConversationSummary,
+    error: NotFound,
+  }),
+  HttpApiEndpoint.post("unpin", "/conversations/:id/unpin", {
+    params: ById,
+    success: ConversationSummary,
     error: NotFound,
   }),
   // The person's rename: marks the title manual; automation never touches it again.
