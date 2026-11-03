@@ -11,6 +11,8 @@ A conversation asked for a summary of a YouTube video. The agent upgraded to a s
 
 Cost, measured on Intel Linux, Docker 29: the extra apt packages add 11MB (132MB to 143MB for that layer), and uv with pip adds 60MB. The shell image has 831MB of Chrome next to it.
 
+- **The agent adds catalog Software itself**: `upgrade_workspace` takes `software` beside `level`, so the handler's hint can be acted on, and what the agent adds stays across Upgrades and Pauses, unlike an `apt-get install`. It is gated like the Level under `ask`. The first use of a new combination waits for its image build, and the tool's description says so.
+
 ## Rejected
 
 - **Ubuntu's `command-not-found` package**: it needs apt's package lists, which the image deletes to stay small, and it suggests only apt, never catalog Software or `uvx`.
@@ -19,5 +21,4 @@ Cost, measured on Intel Linux, Docker 29: the extra apt packages add 11MB (132MB
 
 ## Open
 
-- The agent cannot add catalog Software itself; the handler tells it to ask the person. Letting `upgrade_workspace` take `software` would let the agent add it, at the cost of an image build on first use.
 - How often each missing command comes up is not measured, so what goes in the base image is a guess. Counting exit-127 results in traces would turn it into data.

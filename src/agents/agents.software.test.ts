@@ -4,7 +4,13 @@ import { describe, expect, it } from "vitest";
 
 import { Capacity } from "../capacity.ts";
 import type { Resource } from "../capacity.ts";
-import { fauxAgents, offered, offeredIn } from "../testing/faux.ts";
+import {
+  callTool,
+  echoToolResult,
+  fauxAgents,
+  offered,
+  offeredIn,
+} from "../testing/faux.ts";
 import { alice } from "../testing/users.ts";
 import { Agents } from "./agents.ts";
 import { SETTINGS_ENTRY } from "./settings.ts";
@@ -276,5 +282,73 @@ describe("Software", () => {
     expect(after).toContain(
       `Installed beyond the base system:\\n${node}\\n${ffmpeg}\\n</workspace>`
     );
+  });
+
+  it("is added by the agent's upgrade_workspace, with a Level in the same call", async () => {
+    const { layer, sandboxes } = fauxAgents([
+      callTool("upgrade_workspace", {
+        level: "shell",
+        software: ["ffmpeg"],
+        reason: "to cut the video",
+      }),
+      echoToolResult,
+    ]);
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create({ level: "none" });
+          const seat = yield* agents.open(id);
+          return {
+            reply: yield* seat.ask("Cut this video."),
+            stored: yield* agents.get(id),
+            by: (yield* recordsOf(id)).map(
+              (each) => (each as { by: string }).by
+            ),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(sandboxes.created).toStrictEqual([
+      { kind: "shell", software: ["ffmpeg"] },
+    ]);
+    expect(result.reply).toBe(
+      "The workspace has a shell; your files are in /workspace. Installed: FFmpeg."
+    );
+    expect([result.stored.level, result.stored.software]).toStrictEqual([
+      "shell",
+      ["ffmpeg"],
+    ]);
+    expect(result.by).toStrictEqual(["agent"]);
+  });
+
+  it("tells the agent why upgrade_workspace cannot add software", async () => {
+    const { layer, sandboxes } = fauxAgents([
+      callTool("upgrade_workspace", { software: ["node"], reason: "js" }),
+      echoToolResult,
+      callTool("upgrade_workspace", { reason: "nothing" }),
+      echoToolResult,
+    ]);
+
+    const replies = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const chat = yield* agents.open(yield* create({ level: "none" }));
+          const shell = yield* agents.open(yield* create({ level: "shell" }));
+          return [yield* chat.ask("Run js."), yield* shell.ask("Again.")];
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(replies).toStrictEqual(
+      [
+        "The upgrade cannot be done: Software needs a shell or desktop.",
+        "Nothing to upgrade: the workspace is already shell with that software.",
+      ].map((message) => `error: <harness>\n[error] ${message}\n</harness>`)
+    );
+    expect(sandboxes.created).toStrictEqual([{ kind: "shell", software: [] }]);
   });
 });

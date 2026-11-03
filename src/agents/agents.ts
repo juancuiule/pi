@@ -819,23 +819,40 @@ export class Agents extends Context.Service<
         // The upgrade of each conversation with a Seat, for the `upgrade_workspace` tool.
         const upgrades = new Map<
           ConversationId,
-          (request: UpgradeRequest) => Effect.Effect<void, unknown>
+          (
+            request: UpgradeRequest
+          ) => Effect.Effect<
+            { level: SandboxChoice; software: readonly SoftwareId[] },
+            unknown
+          >
         >();
-        const workspaceExt = workspaceExtension(async (id, level, signal) => {
+        const workspaceExt = workspaceExtension(async (id, request, signal) => {
           const upgrade = upgrades.get(id);
           if (upgrade === undefined) {
             throw new Error("This conversation is not running here.");
           }
           const exit = await Effect.runPromiseExit(
-            upgrade({ level }),
+            upgrade(request),
             signal === undefined ? {} : { signal }
           );
           if (Exit.isSuccess(exit)) {
-            return level === "desktop"
-              ? "The workspace is now a desktop, with a shell and your files in /workspace."
-              : "The workspace now has a shell; your files are in /workspace.";
+            const { level, software } = exit.value;
+            const machine =
+              level === "desktop"
+                ? "The workspace is a desktop, with a shell and your files in /workspace."
+                : "The workspace has a shell; your files are in /workspace.";
+            return software.length === 0
+              ? machine
+              : `${machine} Installed: ${software.map((each) => SOFTWARE[each].label).join(", ")}.`;
           }
           const failure = Cause.squash(exit.cause);
+          if (failure instanceof InvalidUpgrade) {
+            throw new TypeError(
+              failure.reason === undefined
+                ? `Nothing to upgrade: the workspace is already ${failure.from} with that software.`
+                : `The upgrade cannot be done: ${failure.reason}.`
+            );
+          }
           const tag =
             typeof failure === "object" && failure !== null && "_tag" in failure
               ? failure._tag
@@ -1853,7 +1870,9 @@ export class Agents extends Context.Service<
             (effect) => upgrading.withPermit(effect)
           );
           upgrades.set(id, (request) =>
-            upgrade(request, { wait: true, by: "agent" })
+            upgrade(request, { wait: true, by: "agent" }).pipe(
+              Effect.map(() => ({ level, software }))
+            )
           );
           seatSandboxes.set(id, () => machine?.sandbox);
           // A settings change between the Sandbox's copy and this registration found no Sandbox to update.

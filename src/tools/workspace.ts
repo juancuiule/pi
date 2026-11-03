@@ -12,7 +12,7 @@ import type { ConversationId, Extension } from "@earendil-works/pi-durable";
 import { withApproval } from "../approvals.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { SandboxDoc } from "../sandbox/sandbox.ts";
-import { normalize, SOFTWARE } from "../sandbox/software.ts";
+import { normalize, offered, SOFTWARE } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
 import { WorkspaceDoc } from "../workspaces/workspaces.ts";
 
@@ -26,7 +26,7 @@ const BROWSER =
 // What both sandbox images have (docker/sandbox/shell.Dockerfile), so the agent does not probe for it.
 const BASE = [
   "Installed: python3 (also `python`) with `pip` and `uv`, git, curl, wget, jq, ripgrep (`rg`), sqlite3, zip and unzip, Google Chrome with `agent-browser`. `pip install` works system-wide; `uvx <tool>` runs a Python command-line tool from PyPI without installing it.",
-  "For anything else, run `apt-get update` before `apt-get install -y <package>`. What you install yourself is gone when this machine is replaced (an upgrade, a pause); software the person adds stays.",
+  "For anything else, run `apt-get update` before `apt-get install -y <package>`. What you install yourself is gone when this machine is replaced (an upgrade, a pause); software added with upgrade_workspace stays.",
 ].join("\n");
 
 const levelSection = (level: SandboxChoice): string => {
@@ -83,12 +83,28 @@ export const workspaceSection = (
   ].join("\n");
 };
 
-/** Raise `conversationId`'s Workspace to `level`; resolves with a sentence for the model, rejects on failure. */
+/** What the agent asks `upgrade_workspace` for: a higher Level, catalog Software, or both. */
+export interface WorkspaceRequest {
+  readonly level?: "shell" | "desktop" | undefined;
+  readonly software?: readonly SoftwareId[] | undefined;
+}
+
+/** Upgrade `conversationId`'s Workspace; resolves with a sentence for the model, rejects on failure. */
 export type UpgradeWorkspace = (
   conversationId: ConversationId,
-  level: "shell" | "desktop",
+  request: WorkspaceRequest,
   signal: AbortSignal | undefined
 ) => Promise<string>;
+
+// What the agent can add on this host: every Level's, since the tool can raise the Level in the same call.
+const AVAILABLE = offered("desktop");
+
+const softwareParameter = () =>
+  Type.Array(Type.Union(AVAILABLE.map((id) => Type.Literal(id))), {
+    description: `Catalog software to install for good: ${AVAILABLE.map(
+      (id) => `\`${id}\` (${SOFTWARE[id].label}: ${SOFTWARE[id].description})`
+    ).join(", ")}`,
+  });
 
 export const workspaceExtension = (upgrade: UpgradeWorkspace): Extension =>
   defineExtension({
@@ -117,27 +133,27 @@ export const workspaceExtension = (upgrade: UpgradeWorkspace): Extension =>
         defineTool({
           name: UPGRADE_WORKSPACE,
           description:
-            "Get a bigger machine for this conversation: `shell` adds a Linux shell with file tools, `desktop` adds a graphical desktop on top. Your files in /workspace carry over, and so does the software the person picked; what you installed yourself does not. Use it only when the task needs it, and say why.",
+            "Get a bigger machine for this conversation, or add software to it. `level`: `shell` adds a Linux shell with file tools, `desktop` adds a graphical desktop on top. `software`: programs from this server's catalog, which stay installed in this conversation's machine from then on; the first time a combination is used its image is built, which can take a few minutes. Pass either or both. Your files in /workspace carry over, and so does added software; what you install yourself with apt or pip does not. Use it only when the task needs it, and say why.",
           parameters: Type.Object({
-            level: Type.Union(
-              [Type.Literal("shell"), Type.Literal("desktop")],
-              {
+            level: Type.Optional(
+              Type.Union([Type.Literal("shell"), Type.Literal("desktop")], {
                 description: "The Level to raise the workspace to",
-              }
+              })
             ),
+            software: Type.Optional(softwareParameter()),
             reason: Type.String({
               description: "Why the task needs it, shown to the person",
             }),
           }),
           // Creates a Sandbox and takes Capacity: never rerun blindly after a crash.
           replay: "unsafe",
-          execute: async ({ level }, api, context) => ({
+          execute: async ({ level, software }, api, context) => ({
             content: [
               {
                 type: "text",
                 text: await upgrade(
                   api.conversationId,
-                  level,
+                  { level, software },
                   context.abortSignal
                 ),
               },

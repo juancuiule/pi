@@ -12,8 +12,8 @@ command_not_found_handle() {
   esac
   printf 'bash: %s: command not found\n' "$command" >&2
   if [ -n "$software" ]; then
-    printf '%s is Software (id "%s") the person can add from the conversation menu (Add software...); it then stays installed. To go on now: apt-get update && apt-get install -y <package>.\n' \
-      "${software#*:}" "${software%%:*}" >&2
+    printf '%s is Software (id "%s"): the agent adds it with upgrade_workspace (software ["%s"]), the person from the conversation menu (Add software...), and it stays installed. Otherwise, for now: apt-get update && apt-get install -y <package>.\n' \
+      "${software#*:}" "${software%%:*}" "${software%%:*}" >&2
   else
     printf 'A Python tool: `uvx %s` runs it from PyPI without installing (`uvx --from <package> %s` when the names differ), or `pip install <package>`. Anything else: apt-get update && apt-get install -y <package> (apt has no package lists until apt-get update). What you install yourself is gone when this machine is replaced.\n' \
       "$command" "$command" >&2
