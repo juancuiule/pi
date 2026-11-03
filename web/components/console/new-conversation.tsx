@@ -262,7 +262,7 @@ export const NewConversation = ({
               Customize tools and skills
               {customized === undefined ? "" : " · changed"}
             </Collapsible.Trigger>
-            <Collapsible.Panel>
+            <Collapsible.Panel className="collapsible-panel">
               <div className="pt-3">
                 <SettingsPanel
                   settings={settings}
