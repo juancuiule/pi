@@ -41,6 +41,20 @@ if (!existsSync(seaweedEnv)) {
   console.log(`Wrote ${path.relative(process.cwd(), seaweedEnv)}`);
 }
 
+// The admin UI's password (docker-compose.yml's `admin`), added to a .env written before it existed.
+if (readEnv(seaweedEnv).SEAWEEDFS_ADMIN_PASSWORD === undefined) {
+  const existing = readFileSync(seaweedEnv, "utf-8");
+  writeFileSync(
+    seaweedEnv,
+    `${existing}${existing.endsWith("\n") ? "" : "\n"}${lines({
+      SEAWEEDFS_ADMIN_PASSWORD: randomBytes(12).toString("hex"),
+    })}`
+  );
+  console.log(
+    `Added SEAWEEDFS_ADMIN_PASSWORD to ${path.relative(process.cwd(), seaweedEnv)}`
+  );
+}
+
 const seaweed = readEnv(seaweedEnv);
 
 if (!existsSync(s3Config)) {
@@ -85,3 +99,6 @@ if (appValues.S3_ACCESS_KEY_ID === undefined) {
 }
 
 console.log("SeaweedFS S3: http://127.0.0.1:8333");
+console.log(
+  `SeaweedFS admin: http://127.0.0.1:23646/admin (behind the edge: /_/seaweedfs/admin), sign in as admin with password ${seaweed.SEAWEEDFS_ADMIN_PASSWORD}`
+);

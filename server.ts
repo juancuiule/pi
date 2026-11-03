@@ -221,6 +221,7 @@ const ServerLive = HttpRouter.serve(
       dictation: config.dictation !== undefined,
       pagePorts: [config.server.webPort, config.server.port],
       publicUrls: config.server.publicUrls,
+      services: config.services,
     }),
     shellRoute,
     desktopRoute,

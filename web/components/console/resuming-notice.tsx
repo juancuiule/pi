@@ -18,7 +18,10 @@ export const ResumingNotice = ({
     return null;
   }
   return (
-    <div aria-live="polite" className="bg-muted/50 border-b px-3 py-2 md:px-4">
+    <div
+      aria-live="polite"
+      className="bg-muted/50 animate-in fade-in-0 border-b px-3 py-2 md:px-4"
+    >
       <Trace>
         <TraceLine status="running">
           <TraceIcon>

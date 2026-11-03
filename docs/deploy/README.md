@@ -12,10 +12,11 @@ browser ──> exposure ┼─ tailscale: tailscale serve ──┐
                                                       v
                                edge (Caddy) on the host
                                ├── /api/conversations/*/(shell|desktop), /api/dictation ──> server :4000 (WebSockets)
+                               ├── /_/<service>/ ──(signed in? server :4000)──> Langfuse, SeaweedFS, SearXNG
                                └── everything else ──> console :3001 ──/api──> server :4000
 ```
 
-The server and the console listen on 127.0.0.1 only. The edge (`deploy/Caddyfile`) holds the one routing rule: the console's `/api` rewrite cannot carry WebSockets, so the Shell tab, the desktop and dictation go straight to the server. The microphone needs a secure context, so dictation works through an https exposure (tailscale, cloudflare) or on localhost, not over the plain-http LAN URL. Every exposure forwards everything to the edge.
+The server and the console listen on 127.0.0.1 only. The edge (`deploy/Caddyfile`) holds the routing rules: the console's `/api` rewrite cannot carry WebSockets, so the Shell tab, the desktop and dictation go straight to the server, and the Services under `/_/` are forwarded only after the server accepts the request's session ([services.md](services.md)). The microphone needs a secure context, so dictation works through an https exposure (tailscale, cloudflare) or on localhost, not over the plain-http LAN URL. Every exposure forwards everything to the edge.
 
 ## Configure
 
@@ -45,7 +46,7 @@ It converges the host to `deploy/.env`, so rerun it after every pull or configur
 2. Starts the server and the console, and waits until they are healthy.
 3. If no account exists, warns that whoever opens the site first can create it, and asks: create it now, expose anyway, or abort. Without a terminal it aborts unless given `--expose-without-account`. Once an account exists it never asks again.
 4. Starts the edge and the chosen exposures, and stops cloudflared when `cloudflare` is no longer chosen.
-5. Checks every `PUBLIC_URL` host through the edge: the console page, the server through the console's `/api` rewrite, and the socket route.
+5. Checks every `PUBLIC_URL` host through the edge: the console page, the server through the console's `/api` rewrite, the socket route, and each Service in `EDGE_SERVICES` (a signed-out browser is sent to sign in).
 
 Later accounts: `docker compose -f deploy/compose.yml exec server node user.ts add <name>`.
 

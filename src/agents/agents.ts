@@ -58,6 +58,7 @@ import type {
   AnswerInput,
   ApprovalChoice,
   ApprovalPolicy,
+  PendingApproval,
 } from "../approvals.ts";
 import {
   ApprovalDoc,
@@ -142,7 +143,8 @@ import { WebSearch, webSearchExtension } from "../web-search/web-search.ts";
 import { WorkspaceDoc, Workspaces } from "../workspaces/workspaces.ts";
 import type { StorageRef } from "../workspaces/workspaces.ts";
 import { queueIfBusy, redecideQueuedMode } from "./admission.ts";
-import { attentionOf } from "./attention.ts";
+import { attentionOf, settledOutcomeOf } from "./attention.ts";
+import type { SettledOutcome } from "./attention.ts";
 import {
   applyChange,
   changesBetween,
@@ -505,6 +507,14 @@ export interface Seat {
     AgentError
   >;
   /**
+   * The calls waiting for the person — approvals and `ask_user` forms, this conversation's and its subagents' —
+   * as of each commit to its ApprovalDoc, starting now. Single-use, and must be run, like `changes`.
+   */
+  readonly waiting: Effect.Effect<
+    Stream.Stream<readonly PendingApproval[], AgentError>,
+    AgentError
+  >;
+  /**
    * The shared interactive shell session of this Seat's Sandbox, living for the Sandbox's lifetime rather
    * than the caller's: each caller gets an attach whose `output` replays recent scrollback then follows
    * live, and `write`/`resize` reach the same PTY. `SandboxUnavailable` when there is no Sandbox: Level
@@ -647,6 +657,11 @@ export class Agents extends Context.Service<
     unarchive(
       id: ConversationId
     ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Pin a Conversation to the top of its owner's list (`at`), or unpin it (`undefined`). Works in any state. */
+    pin(
+      id: ConversationId,
+      at: number | undefined
+    ): Effect.Effect<StoredConversation, AgentError | ConversationNotFound>;
     /**
      * Watch a conversation, with or without a Seat: a `snapshot` first, then the events of every later commit.
      * The watch starts when this effect completes, so the stream is single-use and must be run: finishing or
@@ -696,6 +711,13 @@ export class Agents extends Context.Service<
     attention(
       id: ConversationId
     ): Effect.Effect<Attention | undefined, AgentError | ConversationNotFound>;
+    /** How the most recent settled input ended; `attention` is its `failed` case. */
+    outcome(
+      id: ConversationId
+    ): Effect.Effect<
+      SettledOutcome | undefined,
+      AgentError | ConversationNotFound
+    >;
     /**
      * Withdraw a queued input — a message still waiting behind a run — by submission id. `placed` or `settled`
      * report that it is already out of the queue; `SubmissionNotFound` when it is unknown to this conversation.
@@ -2123,6 +2145,13 @@ export class Agents extends Context.Service<
             }
           );
 
+          // A Seat is always a root conversation, so its own doc holds its subagents' waits too.
+          const waiting = watchStream(
+            () => harness.watchDoc(ApprovalDoc, id, context),
+            (doc): readonly PendingApproval[] =>
+              Object.values(doc?.pending ?? {})
+          );
+
           // The session lives on `machine.scope` — the Sandbox's lifetime — so a socket detaching does not
           // kill the PTY; `upgrading` serializes it with Upgrade and the Seat's finalizer like `upgrade` does.
           const shell = Effect.fn("Seat.shell")(function* (size: {
@@ -2179,6 +2208,7 @@ export class Agents extends Context.Service<
             pendingApprovals,
             running,
             changes,
+            waiting,
             shell,
             env,
             sandboxChanges,
@@ -2296,6 +2326,28 @@ export class Agents extends Context.Service<
               }
             }, context)
           );
+        });
+
+        const pin = Effect.fn("Agents.pin")(function* (
+          id: ConversationId,
+          at: number | undefined
+        ) {
+          yield* handleOf(id);
+          const found = yield* attempt(() =>
+            harness.commit(async (tx) => {
+              const doc = await tx.doc(MetaDoc, id);
+              if (doc.meta === undefined) {
+                return false;
+              }
+              const { pinnedAt: _pinnedAt, ...meta } = doc.meta;
+              doc.meta = at === undefined ? meta : { ...meta, pinnedAt: at };
+              return true;
+            }, context)
+          );
+          if (!found) {
+            return yield* new ConversationNotFound({ id: Number(id) });
+          }
+          return yield* get(id);
         });
 
         const upgradeStored = Effect.fn("Agents.upgrade")(function* (
@@ -2490,6 +2542,15 @@ export class Agents extends Context.Service<
         ) {
           yield* handleOf(id);
           return yield* attempt(() => attentionOf(durableStorage, id, context));
+        });
+
+        const settledOutcome = Effect.fn("Agents.outcome")(function* (
+          id: ConversationId
+        ) {
+          yield* handleOf(id);
+          return yield* attempt(() =>
+            settledOutcomeOf(durableStorage, id, context)
+          );
         });
 
         /**
@@ -3038,11 +3099,13 @@ export class Agents extends Context.Service<
           adopt,
           archive,
           unarchive,
+          pin,
           events,
           history,
           entryTrace,
           entries,
           attention,
+          outcome: settledOutcome,
           withdraw,
           renameTitle,
           autoTitle,

@@ -6,7 +6,7 @@ What every host shares:
 
 - The server gets the host's Docker socket: it starts the Sandboxes as the host's containers, beside it. That socket is root on the host.
 - Every service uses the host's network. The server opens each desktop's VNC port, which Docker publishes on the host's 127.0.0.1.
-- SearXNG (`pnpm searxng:up`) is light and gives the agent `web_search`; Langfuse (`pnpm langfuse:up`) needs a machine that runs ClickHouse.
+- SearXNG (`pnpm searxng:up`) is light and gives the agent `web_search`; Langfuse (`pnpm langfuse:up`) needs a machine that runs ClickHouse. The edge can serve their UIs, and SeaweedFS's admin, to the operator's account: [services.md](services.md).
 - Limit each Sandbox so an agent's build cannot starve the host: `SANDBOX_MEMORY_MB` (swap included) and `SANDBOX_CPUS` in `.env`, and `MAX_SHELLS` / `MAX_DESKTOPS` for how many run at once.
 
 ## Raspberry Pi 4 (8 GB)

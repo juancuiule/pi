@@ -43,6 +43,8 @@ import { Api, CurrentUser } from "./api.ts";
 import { AuthenticationLive, authHandlers, requireOwner } from "./auth.ts";
 import { Conversations } from "./conversations.ts";
 import { loopbackOnly } from "./loopback.ts";
+import type { ServicesOptions } from "./services.ts";
+import { servicesHandlers } from "./services.ts";
 
 // ConversationEvents are plain JSON (pi-durable's committed AgentEvents, and storage records); the cast only names that for the SSE schema.
 const asJson = (event: ConversationEvent) => event as unknown as Schema.Json;
@@ -221,6 +223,16 @@ const ConversationsHandlers = HttpApiBuilder.group(
           .unarchive(params.id)
           .pipe(Effect.catchTag("AgentError", Effect.die))
       )
+      .handle("pin", ({ params }) =>
+        conversations
+          .pin(params.id, true)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("unpin", ({ params }) =>
+        conversations
+          .pin(params.id, false)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
       .handle("rename", ({ params, payload }) =>
         conversations
           .rename(params.id, payload.title)
@@ -250,6 +262,20 @@ const ConversationsHandlers = HttpApiBuilder.group(
             AgentError: Effect.die,
             SandboxError: Effect.die,
           })
+        )
+      )
+      .handle("activity", () =>
+        withUser((user) => conversations.activity(user.id)).pipe(
+          Effect.map((activity) =>
+            Stream.merge(
+              activity.pipe(
+                Stream.map((each) => ({ type: "activity" as const, ...each }))
+              ),
+              Stream.tick("25 seconds").pipe(
+                Stream.as({ type: "ping" as const })
+              )
+            )
+          )
         )
       )
       .handle("events", ({ params }) =>
@@ -864,6 +890,8 @@ export const apiLayer = (options: {
   readonly pagePorts?: readonly number[] | undefined;
   /** Where a tunnel or proxy serves the console from outside this machine (`PUBLIC_URL`). */
   readonly publicUrls?: readonly URL[] | undefined;
+  /** The Services the edge serves and who may open them (EDGE_SERVICES, SERVICE_USERS). */
+  readonly services?: ServicesOptions | undefined;
 }) =>
   HttpApiBuilder.layer(Api).pipe(
     Layer.provide(
@@ -877,6 +905,7 @@ export const apiLayer = (options: {
         FilesHandlers,
         SearchHandlers,
         infoHandlers({ ...options, dictation: options.dictation ?? false }),
+        servicesHandlers(options.services),
         authHandlers({ publicUrls: options.publicUrls })
       )
     ),

@@ -18,6 +18,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Archive**: Hiding a Conversation and discarding its Workspace's files. The transcript stays readable, and an archived Conversation can be unarchived with an empty Workspace. _Avoid_: end, delete
 
+**Pin**: Keeping a Conversation at the top of its Owner's list, above the newest-first order, until it is unpinned. It outlasts Pause, Archive and restarts.
+
 **Approval**: A person's decision on a tool call that waits for one before it runs.
 
 **Attachment**: A file a person sends with a message: its original, kept privately on the server, and the text or image prepared from it once. Before a message takes it, it is an upload: staged (no Conversation yet) or a Conversation's, and it expires unsent. _Avoid_: document, file upload, asset
@@ -35,6 +37,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 **User**: A person with an account: a name and a password. Everyone signs in; the first account is created from the console's setup screen, later ones with `pnpm user add`. _Avoid_: member, login
 
 **Session**: A User signed in on one browser, kept by a cookie for 30 days or until Sign out. _Avoid_: token, login
+
+**Service**: A program beside the server whose UI the edge serves at `/_/<name>/` on the site's hostname: Langfuse, SeaweedFS's admin, SearXNG. It shows every User's data, so only the accounts in `SERVICE_USERS` (else the oldest) may open it. _Avoid_: app, tool (the agent's tools)
 
 **Owner**: The User a Conversation belongs to, and with it its Workspace, Artifacts, Attachments and Search results; a subagent's is its parent's. Other Users cannot see or reach any of it. Trusted domains are per User too; org skills are shared. _Avoid_: author, creator
 
