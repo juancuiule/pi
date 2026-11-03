@@ -21,6 +21,7 @@ import { Capacity } from "../capacity.ts";
 import type { Limits } from "../capacity.ts";
 import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
+import { Schedules } from "../schedules/schedules.ts";
 import { Skills } from "../skills/skills.ts";
 import type { WebSearch } from "../web-search/web-search.ts";
 import { localSandboxes } from "./sandboxes.ts";
@@ -59,6 +60,8 @@ export const fauxAgents = (
      * tests opt in and queue one.
      */
     readonly titleGeneration?: boolean;
+    /** The schedules the `schedule` tool writes; fresh empty tables by default. */
+    readonly schedules?: Layer.Layer<Schedules>;
   } = {}
 ) => {
   const models = createModels();
@@ -110,7 +113,9 @@ export const fauxAgents = (
       Layer.provideMerge(
         Capacity.layer({ seats: 10, shells: 3, desktops: 1, ...options.limits })
       ),
-      Layer.provideMerge(options.webSearch ?? Layer.empty)
+      Layer.provideMerge(options.webSearch ?? Layer.empty),
+      // provideMerge: the HTTP handlers and the Scheduler read the same Schedules the tool writes.
+      Layer.provideMerge(options.schedules ?? Schedules.temporary())
     ),
   };
 };

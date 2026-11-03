@@ -440,4 +440,62 @@ describe("isolation between Users", () => {
       ),
     }).toStrictEqual({ aliceReached: true, bobPassed: [] });
   }, 60_000);
+
+  it("keeps a User's schedules and time zone to themselves", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const alice = yield* HttpApiClient.make(Api);
+        const created = yield* alice.conversations.create({
+          payload: { sandbox: "none", prompt: "hello" },
+        });
+        yield* alice.schedules.setTimeZone({
+          payload: { timeZone: "Europe/Madrid" },
+        });
+        const followUp = yield* alice.schedules.followUp({
+          params: { id: created.id },
+          payload: {
+            title: `${SECRET} follow-up`,
+            prompt: SECRET,
+            when: { inMinutes: 60 },
+          },
+        });
+        const bob = yield* signIn("bob");
+        const asBob = yield* HttpApiClient.make(Api).pipe(
+          Effect.provideService(HttpClient.HttpClient, bob.client)
+        );
+        const statusOf = (method: "GET" | "POST", url: string) =>
+          send(bob.client, { name: url, method, path: url }, url).pipe(
+            Effect.map((response) => ({
+              status: response.status,
+              leaked: response.body.includes(SECRET),
+            }))
+          );
+        return {
+          aliceListed: (yield* alice.schedules.list()).length,
+          aliceZone: yield* alice.schedules.timeZone(),
+          bobListed: yield* asBob.schedules.list(),
+          bobZone: yield* asBob.schedules.timeZone(),
+          get: yield* statusOf("GET", `/api/schedules/${followUp.id}`),
+          pause: yield* statusOf("POST", `/api/schedules/${followUp.id}/pause`),
+          cancel: yield* statusOf(
+            "POST",
+            `/api/schedules/${followUp.id}/cancel`
+          ),
+          after: (yield* alice.schedules.get({
+            params: { schedule: followUp.id },
+          })).schedule.status,
+        };
+      }).pipe(Effect.provide(server()))
+    );
+    expect(result).toStrictEqual({
+      aliceListed: 1,
+      aliceZone: { timeZone: "Europe/Madrid", reported: true },
+      bobListed: [],
+      bobZone: { timeZone: "UTC", reported: false },
+      get: { status: 404, leaked: false },
+      pause: { status: 404, leaked: false },
+      cancel: { status: 404, leaked: false },
+      after: "active",
+    });
+  }, 30_000);
 });

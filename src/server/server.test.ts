@@ -20,6 +20,7 @@ import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import { Auth } from "../auth/auth.ts";
 import { Capacity } from "../capacity.ts";
+import { Schedules } from "../schedules/schedules.ts";
 import { Search } from "../search/search.ts";
 import { Skills, SkillSource } from "../skills/skills.ts";
 import { signedIn } from "../testing/auth.ts";
@@ -34,7 +35,13 @@ import { apiLayer } from "./handlers.ts";
 
 const serverWith = (
   agents: Layer.Layer<
-    Agents | Capacity | Attachments | Artifacts | TrustedDomains | Workspaces,
+    | Agents
+    | Capacity
+    | Attachments
+    | Artifacts
+    | TrustedDomains
+    | Workspaces
+    | Schedules,
     AgentError
   >,
   // One Skills serves both the API group and the agents — the provide overrides the agents' own, like
@@ -256,12 +263,13 @@ describe("HTTP API", () => {
         "artifact_update",
         "ask_user",
         "task",
+        "schedule",
         "skill",
         "skill_save",
         "skill_delete",
       ],
       ["coding-tools", "desktop"],
-      ["workspace", "attachments", "artifacts", "skills"],
+      ["workspace", "attachments", "artifacts", "schedules", "skills"],
     ]);
   });
 
@@ -903,7 +911,8 @@ describe("HTTP API", () => {
       Layer.provideMerge(Attachments.temporary()),
       Layer.provideMerge(Artifacts.temporary()),
       Layer.provideMerge(TrustedDomains.temporary()),
-      Layer.provideMerge(Capacity.layer({ seats: 1, shells: 1, desktops: 1 }))
+      Layer.provideMerge(Capacity.layer({ seats: 1, shells: 1, desktops: 1 })),
+      Layer.provideMerge(Schedules.temporary())
     );
 
     const text = await Effect.runPromise(

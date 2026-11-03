@@ -14,6 +14,10 @@ import type { SoftwareId } from "./sandbox/software.ts";
 
 export type TitleSource = "prompt" | "generated" | "manual";
 
+/** The schedule occurrence that opened a Conversation: the schedule's id and the occurrence's time (epoch ms). */
+// oxlint-disable-next-line typescript/consistent-type-definitions -- stored in a pi-durable document, a JSON type
+export type ScheduledBy = { readonly id: string; readonly due: number };
+
 // A type, not an interface: it is stored in a pi-durable document, which must be a JSON type, and
 // interfaces have no index signature.
 // oxlint-disable-next-line typescript/consistent-type-definitions
@@ -34,6 +38,8 @@ export type ConversationMeta = {
    * the first account adopts them; nobody else ever sees one without it.
    */
   readonly owner?: UserId;
+  /** Set in the creating commit of a Conversation a schedule opened; how a restart finds a fire that happened. */
+  readonly schedule?: ScheduledBy;
 };
 
 /** A stored Conversation: its metadata and its Workspace's Level and Software. */

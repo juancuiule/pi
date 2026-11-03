@@ -191,3 +191,15 @@ export class InvalidAccount extends Schema.TaggedError<InvalidAccount>()(
   "InvalidAccount",
   { reason: Schema.String }
 ) {}
+
+/** No schedule with this id among the User's own: unknown, or someone else's. */
+export class ScheduleNotFound extends Schema.TaggedError<ScheduleNotFound>()(
+  "ScheduleNotFound",
+  { id: Schema.String }
+) {}
+
+/** A schedule that cannot be kept: a bad time, cron or time zone, too frequent, or too many. `reason` is the sentence the caller reads. */
+export class InvalidSchedule extends Schema.TaggedError<InvalidSchedule>()(
+  "InvalidSchedule",
+  { field: Schema.String, reason: Schema.String }
+) {}

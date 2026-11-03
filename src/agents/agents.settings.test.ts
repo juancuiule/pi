@@ -174,6 +174,7 @@ describe("conversation settings", () => {
       "artifacts",
       "questions",
       "subagent",
+      "schedules",
       "skills",
       "repeat-guard",
       "tracing",

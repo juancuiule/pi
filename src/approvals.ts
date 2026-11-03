@@ -221,10 +221,19 @@ export const waitForPerson = async (
  * Wrap a gated tool: under `policy: "ask"` its execute waits for a decision committed to the root
  * conversation's ApprovalDoc before running — a subagent's calls are decided on its root's doc.
  */
-export const withApproval = (tool: ToolRegistration): ToolRegistration => {
+export const withApproval = (
+  tool: ToolRegistration,
+  options: {
+    /** Which calls wait: all of them by default; a tool with a read-only action can let those through. */
+    readonly when?: (args: unknown) => boolean;
+  } = {}
+): ToolRegistration => {
   const wrapped: ToolRegistration = {
     ...tool,
     execute: async (args, api, context) => {
+      if (options.when !== undefined && !options.when(args)) {
+        return tool.execute(args, api, context);
+      }
       const key = approvalKey(api.conversationId, api.callId);
       const rootId = await conversationRoot(api, api.conversationId, context);
       // Reading the policy and registering happen in one commit, so an "always" decision cannot land

@@ -29,6 +29,8 @@ import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromConfig } from "./src/models.ts";
+import { Scheduler } from "./src/schedules/scheduler.ts";
+import { Schedules } from "./src/schedules/schedules.ts";
 import {
   saveScreenshotsTo,
   saveScreenshotsToBlobs,
@@ -126,6 +128,10 @@ const ArtifactsLive = Layer.unwrap(
   })
 ).pipe(Layer.provideMerge(TrustedDomainsLive));
 
+// Schedules are tables of their own in the same SQLite file; the agent's `schedule` tool, the API and the Scheduler
+// share them.
+const SchedulesLive = Schedules.local({ database: config.paths.db });
+
 // One Capacity for both: Conversations claims Seats, Agents claims Sandboxes (and waits for one on an Upgrade).
 const CapacityLive = Capacity.layer(config.capacity);
 
@@ -160,7 +166,8 @@ const AgentsLive = Agents.layer({
   Layer.provide(CapacityLive),
   Layer.provideMerge(AttachmentsLive),
   Layer.provideMerge(ArtifactsLive),
-  Layer.provideMerge(WebSearchLive)
+  Layer.provideMerge(WebSearchLive),
+  Layer.provideMerge(SchedulesLive)
 );
 
 // The index is a rebuildable projection; pointing it at the durable store would quietly write
@@ -203,6 +210,12 @@ const UploadLimits = Layer.succeedContext(
   })
 );
 
+// Fires due schedules through the same Conversations the API serves: a fire is a send, or a create.
+const SchedulerLive = Scheduler.layer().pipe(
+  Layer.provide(ConversationsLive),
+  Layer.provide(AgentsLive)
+);
+
 const ServerLive = HttpRouter.serve(
   // Where the console reaches this server directly, skipping Next's rewrite (the shell's socket needs it).
   Layer.mergeAll(
@@ -213,7 +226,8 @@ const ServerLive = HttpRouter.serve(
       publicUrls: config.server.publicUrls,
     }),
     shellRoute,
-    desktopRoute
+    desktopRoute,
+    SchedulerLive
   )
 ).pipe(
   Layer.provide(ConversationsLive),
