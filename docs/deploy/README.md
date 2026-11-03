@@ -23,6 +23,8 @@ Two files, both git-ignored:
 
 `.env` at the repository root is the server's configuration (see `.env.schema`). A deployment needs `PUBLIC_URL`: every URL people type, comma-separated. The server answers 403 to any other host, and `deploy.sh` refuses to start an exposure that has no URL of its kind.
 
+Nextcloud (optional): set `NEXTCLOUD_URL` to the Nextcloud people connect to, by the URL both this host and their browsers reach (Login Flow v2 opens it in the browser), and `CONNECTOR_SECRET_KEY` to `openssl rand -base64 32`. Keep the key with the deployment's secrets: without it the stored connections cannot be read and everyone connects again. The deploy does not run a Nextcloud; `docker/nextcloud/` is a local development instance (`docs/adr/0010-personal-connectors.md`).
+
 `deploy/.env` is this host's deployment:
 
 ```sh

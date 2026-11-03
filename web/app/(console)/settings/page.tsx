@@ -4,6 +4,7 @@ import {
   ExtensionsSection,
   McpServersSection,
 } from "@/components/console/capabilities-sections";
+import { ConnectionsSection } from "@/components/console/connections-section";
 import { PageHeader } from "@/components/console/page-header";
 import { TrustedDomainsSection } from "@/components/console/trusted-domains-section";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -35,6 +36,7 @@ const SettingsPage = () => {
               {info?.model ?? ""}
             </p>
           </section>
+          <ConnectionsSection />
           <TrustedDomainsSection />
           <ExtensionsSection extensions={data?.extensions} />
           <McpServersSection mcp={data?.mcp} />

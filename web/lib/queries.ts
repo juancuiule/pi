@@ -232,6 +232,58 @@ export const useRemoveDomain = () => {
   });
 };
 
+const CONNECTORS = ["connectors"] as const;
+
+/** This server's personal connectors and the signed-in User's connection to each (Settings → Connections). */
+export const useConnectors = () =>
+  useQuery({
+    queryKey: CONNECTORS,
+    queryFn: () => runApi((c) => c.connectors.list()),
+  });
+
+export const useConnect = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      readonly id: string;
+      readonly login: string;
+      readonly password: string;
+    }) =>
+      runApi((c) =>
+        c.connectors.connect({
+          params: { id: input.id },
+          payload: { login: input.login, password: input.password },
+        })
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: CONNECTORS }),
+  });
+};
+
+export const useDisconnect = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      runApi((c) => c.connectors.disconnect({ params: { id } })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: CONNECTORS }),
+  });
+};
+
+/** Start a browser login; the caller opens `loginUrl` and polls with `pollConnectorLogin`. */
+export const startConnectorLogin = (id: string) =>
+  runApi((c) => c.connectors.startLogin({ params: { id } }));
+
+export const pollConnectorLogin = (id: string) =>
+  runApi((c) => c.connectors.pollLogin({ params: { id } }));
+
+/** Refetch the connections after a browser login connected one. */
+export const useRefreshConnectors = () => {
+  const queryClient = useQueryClient();
+  return useCallback(
+    () => queryClient.invalidateQueries({ queryKey: CONNECTORS }),
+    [queryClient]
+  );
+};
+
 /** One skill's folder — text contents plus the binary files' names — for the /skills editor. */
 export const useSkill = (name: string | undefined) =>
   useQuery({

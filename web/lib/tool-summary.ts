@@ -93,6 +93,12 @@ const SUMMARIES: Record<string, (args: Args) => string> = {
   web_search: (args) => text(args.query) ?? "",
   artifact_create: (args) => text(args.title) ?? "",
   artifact_update: (args) => text(args.title) ?? "",
+  nextcloud_files_move: (args) =>
+    `${text(args.from) ?? "?"} → ${text(args.to) ?? "?"}`,
+  nextcloud_events_list: (args) =>
+    `${text(args.from) ?? "?"} → ${text(args.to) ?? "?"}`,
+  nextcloud_share_create: (args) =>
+    `${text(args.path) ?? ""} (${text(args.type) ?? ""}${text(args.with) === undefined ? "" : ` ${text(args.with)}`})`,
 };
 
 /** A compact one-line description of a call's arguments; "" when there is nothing meaningful to show. */

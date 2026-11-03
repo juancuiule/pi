@@ -103,6 +103,7 @@ const plainError: Record<string, string> = {
   Unauthorized: "You're signed out. Sign in again.",
   InvalidCredentials: "Wrong name or password.",
   SetupClosed: "An account exists already. Sign in instead.",
+  ConnectorNotFound: "This server doesn't offer that connection.",
 };
 
 /** A message for a TooManyAttempts failure, with the wait rounded up to whole seconds. */
@@ -125,8 +126,11 @@ export const apiError = (error: unknown): string => {
       case "SkillNotFound": {
         return skillError(error);
       }
-      case "InvalidSkill": {
-        return "message" in error ? String(error.message) : "Invalid skill.";
+      case "InvalidSkill":
+      case "ConnectorRefused": {
+        return "message" in error
+          ? String(error.message)
+          : "That isn't allowed.";
       }
       case "TitleGenerationFailed": {
         return titleError(error);

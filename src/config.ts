@@ -135,3 +135,14 @@ export const webSearch =
         language: ENV.WEB_SEARCH_LANGUAGE,
         safeSearch: ENV.WEB_SEARCH_SAFESEARCH,
       };
+
+const nextcloudUrl = unset(ENV.NEXTCLOUD_URL);
+
+/** The Nextcloud connector's instance, or `undefined` when NEXTCLOUD_URL is unset (no `nextcloud` extension then). */
+export const nextcloud =
+  nextcloudUrl === undefined
+    ? undefined
+    : { url: nextcloudUrl, timeoutMs: ENV.NEXTCLOUD_TIMEOUT };
+
+/** Seals personal connectors' credentials; required once a connector is configured (checked by `Connectors.local`). */
+export const connectorSecretKey = unset(ENV.CONNECTOR_SECRET_KEY);

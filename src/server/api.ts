@@ -19,6 +19,8 @@ import {
   AttachmentNotFound,
   AttachmentRefused,
   CapacityExhausted,
+  ConnectorNotFound,
+  ConnectorRefused,
   ConversationArchived,
   ConversationNotFound,
   EmptyMessage,
@@ -72,6 +74,8 @@ export {
   AttachmentNotFound,
   AttachmentRefused,
   CapacityExhausted,
+  ConnectorNotFound,
+  ConnectorRefused,
   ConversationArchived,
   ConversationNotFound,
   EmptyMessage,
@@ -734,6 +738,77 @@ const TrustedDomainGroup = HttpApiGroup.make("trustedDomains").add(
   })
 );
 
+/** A personal connector as the signed-in User sees it: the service, and their connection to it if any. */
+export const ConnectorStatus = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  url: Schema.String,
+  /** The service has a browser login (else only the login and password form). */
+  loginFlow: Schema.Boolean,
+  connection: Schema.optionalKey(
+    Schema.Struct({
+      account: Schema.Struct({
+        id: Schema.String,
+        login: Schema.String,
+        displayName: Schema.String,
+      }),
+      connectedAt: Schema.Number,
+      /** Sealed under another CONNECTOR_SECRET_KEY: connect again. */
+      unreadable: Schema.Boolean,
+    })
+  ),
+});
+export type ConnectorStatus = typeof ConnectorStatus.Type;
+
+const NoConnector = ConnectorNotFound.pipe(HttpApiSchema.status(404));
+const ConnectorRefusal = ConnectorRefused.pipe(HttpApiSchema.status(400));
+const ConnectorId = { id: Schema.String.check(Schema.isMaxLength(64)) };
+
+// Each User's own accounts on third-party services (Settings → Connections); the agent's connector tools sign in
+// with them. Credentials go in, never out: no endpoint returns a secret.
+const ConnectorGroup = HttpApiGroup.make("connectors").add(
+  HttpApiEndpoint.get("list", "/connectors", {
+    success: Schema.Array(ConnectorStatus),
+  }),
+  // Connect with a login and password; the service checks it, and a regular password is exchanged for an app one.
+  HttpApiEndpoint.put("connect", "/connectors/:id", {
+    params: ConnectorId,
+    payload: Schema.Struct({
+      login: Schema.String.check(Schema.isMaxLength(256)),
+      password: Schema.String.check(Schema.isMaxLength(1024)),
+    }),
+    success: ConnectorStatus,
+    error: [NoConnector, ConnectorRefusal],
+  }),
+  // Forget the credential and revoke it at the service. Idempotent.
+  HttpApiEndpoint.delete("disconnect", "/connectors/:id", {
+    params: ConnectorId,
+    success: HttpApiSchema.NoContent,
+    error: NoConnector,
+  }),
+  // Start a browser login (Nextcloud's Login Flow v2): the console opens `loginUrl`, then polls.
+  HttpApiEndpoint.post("startLogin", "/connectors/:id/login", {
+    params: ConnectorId,
+    success: Schema.Struct({
+      loginUrl: Schema.String,
+      expiresAt: Schema.Number,
+    }),
+    error: [NoConnector, ConnectorRefusal],
+  }),
+  // Ask the service once whether the browser login finished; `connected` stores the credential it granted.
+  HttpApiEndpoint.post("pollLogin", "/connectors/:id/login/poll", {
+    params: ConnectorId,
+    success: Schema.Union([
+      Schema.Struct({ status: Schema.Literal("pending") }),
+      Schema.Struct({
+        status: Schema.Literal("connected"),
+        connector: ConnectorStatus,
+      }),
+    ]),
+    error: [NoConnector, ConnectorRefusal],
+  })
+);
+
 /** A file or directory in a Conversation's Workspace, as the console's Files tab lists it. */
 export const WorkspaceFileEntry = Schema.Struct({
   name: Schema.String,
@@ -905,6 +980,7 @@ export const Api = HttpApi.make("effect-pi")
   .add(AttachmentGroup)
   .add(ArtifactGroup)
   .add(TrustedDomainGroup)
+  .add(ConnectorGroup)
   .add(SkillGroup)
   .add(FileGroup)
   .add(SearchGroup)

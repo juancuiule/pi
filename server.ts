@@ -27,8 +27,10 @@ import { s3Blobs } from "./src/attachments/store.ts";
 import { Auth } from "./src/auth/auth.ts";
 import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
+import { Connectors } from "./src/connectors/connectors.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromConfig } from "./src/models.ts";
+import { nextcloudConnector } from "./src/nextcloud/nextcloud.ts";
 import {
   saveScreenshotsTo,
   saveScreenshotsToBlobs,
@@ -142,6 +144,17 @@ const WebSearchLive =
     ? Layer.empty
     : WebSearch.searxng(config.webSearch);
 
+// Personal connectors: Nextcloud only when NEXTCLOUD_URL is set. Each User's credentials are sealed in EFFECT_PI_DB
+// under CONNECTOR_SECRET_KEY; with no connector configured nothing is opened and there are no extensions.
+const ConnectorsLive = Connectors.local({
+  database: config.paths.db,
+  secretKey: config.connectorSecretKey,
+  connectors:
+    config.nextcloud === undefined
+      ? []
+      : [nextcloudConnector(config.nextcloud)],
+});
+
 const AgentsLive = Agents.layer({
   ...setup,
   // Generated titles need a real model; the echo model just keeps the prompt-derived one.
@@ -160,7 +173,8 @@ const AgentsLive = Agents.layer({
   Layer.provide(CapacityLive),
   Layer.provideMerge(AttachmentsLive),
   Layer.provideMerge(ArtifactsLive),
-  Layer.provideMerge(WebSearchLive)
+  Layer.provideMerge(WebSearchLive),
+  Layer.provideMerge(ConnectorsLive)
 );
 
 // The index is a rebuildable projection; pointing it at the durable store would quietly write
@@ -221,6 +235,8 @@ const ServerLive = HttpRouter.serve(
   Layer.provide(SearchLive),
   // The skills group reads and writes through the same Skills the Agents layer uses.
   Layer.provide(SkillsLive),
+  // The connectors group lists and connects through the same Connectors the agents' tools read.
+  Layer.provide(ConnectorsLive),
   Layer.provide(AuthLive),
   Layer.provide(NodeHttpServerLayer),
   Layer.provide(UploadLimits),

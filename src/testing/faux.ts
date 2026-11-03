@@ -1,4 +1,3 @@
-// Test helpers: an Agents layer backed by pi-ai's scripted faux model and local-directory sandboxes.
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import {
@@ -19,6 +18,8 @@ import { Attachments } from "../attachments/attachments.ts";
 import type { AttachmentLimits } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import type { Limits } from "../capacity.ts";
+// Test helpers: an Agents layer backed by pi-ai's scripted faux model and local-directory sandboxes.
+import { Connectors } from "../connectors/connectors.ts";
 import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { Skills } from "../skills/skills.ts";
@@ -54,6 +55,8 @@ export const fauxAgents = (
     readonly trustedDomains?: readonly string[];
     /** The web_search backend, usually `WebSearch.fake`; without one there is no `web` extension at all. */
     readonly webSearch?: Layer.Layer<WebSearch>;
+    /** Personal connectors, usually `Connectors.temporary([...])`; none by default (no extensions, an empty list). */
+    readonly connectors?: Layer.Layer<Connectors>;
     /**
      * Generated titles; off by default so a run-end title call never steals a queued response — title
      * tests opt in and queue one.
@@ -110,7 +113,8 @@ export const fauxAgents = (
       Layer.provideMerge(
         Capacity.layer({ seats: 10, shells: 3, desktops: 1, ...options.limits })
       ),
-      Layer.provideMerge(options.webSearch ?? Layer.empty)
+      Layer.provideMerge(options.webSearch ?? Layer.empty),
+      Layer.provideMerge(options.connectors ?? Connectors.none)
     ),
   };
 };

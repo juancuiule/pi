@@ -1,0 +1,47 @@
+# A local Nextcloud for the `nextcloud` connector (src/nextcloud/): files, calendars, contacts and shares that each
+# User connects to from Settings → Connections. Bound to localhost. The secrets and the port come from .env here,
+# written by init-env.ts (`pnpm nextcloud:up`), which also points the app at it (NEXTCLOUD_URL in the root .env);
+# bootstrap.ts then waits for the install and prints an app password for the admin. Images are pinned; update them
+# deliberately (Nextcloud upgrades one major version at a time).
+services:
+  db:
+    image: docker.io/library/postgres:18.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: nextcloud
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # Postgres 18 keeps its data under a versioned directory below this one.
+      - db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nextcloud -d nextcloud"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    image: docker.io/library/nextcloud:35.0.2-apache
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:${NEXTCLOUD_PORT:-8180}:80
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: nextcloud
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # The first start installs Nextcloud with this admin account.
+      NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER:-admin}
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
+      # The hosts the server (and the browser, for Login Flow v2) reach it by.
+      NEXTCLOUD_TRUSTED_DOMAINS: 127.0.0.1 localhost
+      OVERWRITECLIURL: http://127.0.0.1:${NEXTCLOUD_PORT:-8180}
+    volumes:
+      - html:/var/www/html
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db:
+  html:
