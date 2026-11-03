@@ -27,6 +27,7 @@ import {
 } from "@/components/console/file-panel";
 import { MessageInput } from "@/components/console/message-input";
 import { NewConversation } from "@/components/console/new-conversation";
+import { PageTitle } from "@/components/console/page-title";
 import {
   SandboxContent,
   SandboxDrawer,
@@ -71,7 +72,7 @@ import type { OpenTarget } from "@/lib/workspace-links";
 const pageTitle = (conversation: ConversationSummary | undefined): string =>
   conversation === undefined
     ? "New conversation · effect-pi"
-    : `${conversation.pendingApprovals > 0 ? "(Approval needed) " : ""}${conversation.title} · effect-pi`;
+    : `${conversation.title} · effect-pi`;
 
 /** Read-only when the SSE 404'd (unknown id) or the conversation is archived. */
 const readOnlyOf = (
@@ -428,7 +429,7 @@ const Console = () => {
   return (
     <OpenArtifactContext.Provider value={openArtifact}>
       <WorkspaceContext.Provider value={workspace}>
-        <title>{pageTitle(conversation)}</title>
+        <PageTitle>{pageTitle(conversation)}</PageTitle>
         {isDesktop === true ? (
           // Nested inside the console shell's page panel: main, then open pages and files, then the sandbox.
           <ResizablePanelGroup orientation="horizontal" className="h-full">

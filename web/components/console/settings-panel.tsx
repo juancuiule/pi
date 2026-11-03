@@ -119,7 +119,7 @@ export const SettingsPanel = ({
                   </Collapsible.Trigger>
                 )}
               </div>
-              <Collapsible.Panel>
+              <Collapsible.Panel className="collapsible-panel">
                 <ul className="flex flex-col gap-1.5 py-1.5 pl-9">
                   {extension.tools.map((tool) => (
                     <li key={tool.name}>

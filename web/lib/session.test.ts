@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isServicePath,
   leaveConsole,
   loginPath,
   onLeaveConsole,
@@ -60,5 +61,20 @@ describe(leaveConsole, () => {
     uninstall();
     signedIn();
     expect(visits).toStrictEqual(["/login", "/login?next=%2Fsettings"]);
+  });
+});
+
+describe(isServicePath, () => {
+  it("tells a Service under /_/ from a console page", () => {
+    expect(
+      [
+        "/_/langfuse/",
+        "/_/seaweedfs/admin",
+        "/_",
+        "/settings",
+        "/_next/x",
+        "/",
+      ].map(isServicePath)
+    ).toStrictEqual([true, true, true, false, false, false]);
   });
 });

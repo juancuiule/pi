@@ -6,12 +6,53 @@
 	auto_https off
 }
 
+# A Service is forwarded only once the server says the request's session may open it (GET /api/services/<name>, with
+# the browser's cookie, Host and Origin). Signed out, the browser goes to sign in and back; any other refusal is the
+# server's answer. The console's session cookie is then dropped: the Service never sees it.
+(signed_in) {
+	forward_auth 127.0.0.1:4000 {
+		uri /api/services/{args[0]}
+		@signed_out status 401
+		handle_response @signed_out {
+			redir * /login?next={args[1]} 302
+		}
+	}
+	request_header Cookie "(^|;\s*)effect_pi_session=[^;]*" ""
+}
+
 http://:{$EDGE_PORT} {
 	bind {$EDGE_BIND}
 
 	# First: the console's /api rewrite cannot carry WebSockets (the Shell tab and the desktop).
 	@sockets path_regexp ^/api/conversations/[^/]+/(shell|desktop)$
 	reverse_proxy @sockets 127.0.0.1:4000
+
+	# Services (docs/deploy/services.md, ADR-0011), each where `pnpm <name>:up` publishes it on loopback. None of these
+	# paths can be a console route: `_` folders are private in Next's App Router.
+	# Langfuse is built with the base path /_/langfuse (docker/langfuse/edge.yml), so it keeps the prefix.
+	@langfuse path /_/langfuse /_/langfuse/*
+	handle @langfuse {
+		import signed_in langfuse /_/langfuse/
+		reverse_proxy 127.0.0.1:3000
+	}
+	# SeaweedFS's admin UI (docker/seaweedfs), run with -urlPrefix=/_/seaweedfs, so it keeps the prefix too. Never the
+	# S3 gateway or the filer: those are the data plane, with no sign-in of their own.
+	@seaweedfs path /_/seaweedfs /_/seaweedfs/*
+	handle @seaweedfs {
+		import signed_in seaweedfs /_/seaweedfs/admin
+		reverse_proxy 127.0.0.1:23646
+	}
+	# SearXNG's UI: it mounts itself under X-Script-Name. The server's own searches go to it directly.
+	@searxng path /_/searxng /_/searxng/*
+	handle @searxng {
+		import signed_in searxng /_/searxng/
+		reverse_proxy 127.0.0.1:8081 {
+			header_up X-Script-Name /_/searxng
+		}
+	}
+	handle /_/* {
+		respond "Not found" 404
+	}
 
 	reverse_proxy 127.0.0.1:3001
 }

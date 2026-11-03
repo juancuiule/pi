@@ -4,7 +4,7 @@ import {
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Ref, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
@@ -14,10 +14,11 @@ import { Search } from "../search/search.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
 import type { LocalSandboxes } from "../testing/sandboxes.ts";
-import { alice } from "../testing/users.ts";
+import { alice, bob } from "../testing/users.ts";
 import { Workspaces, WorkspaceStorage } from "../workspaces/workspaces.ts";
 import type { SaveReason } from "../workspaces/workspaces.ts";
 import { Conversations, titleOf } from "./conversations.ts";
+import type { Activity } from "./conversations.ts";
 
 const defaults = {
   idleTimeoutMs: 60_000,
@@ -1635,4 +1636,154 @@ describe("attention", () => {
       detail: "boom",
     });
   });
+});
+
+/** Collect `owner`'s Activity in the background; read what has arrived so far with the returned effect. */
+const collect = (owner: typeof alice) =>
+  Effect.gen(function* () {
+    const conversations = yield* Conversations;
+    const seen = yield* Ref.make<readonly Activity[]>([]);
+    const stream = yield* conversations.activity(owner.id);
+    yield* Stream.runForEach(stream, (activity) =>
+      Ref.update(seen, (all) => [...all, activity])
+    ).pipe(Effect.forkScoped);
+    return seen;
+  });
+
+const kinds = (seen: Ref.Ref<readonly Activity[]>) =>
+  Ref.get(seen).pipe(Effect.map((all) => all.map((each) => each.kind)));
+
+describe("activity", () => {
+  it("reports a finished Run to its owner only", async () => {
+    const { layer } = setup([answer("hi")]);
+
+    const { mine, theirs, id } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const aliceSeen = yield* collect(alice);
+        const bobSeen = yield* collect(bob);
+        const created = yield* conversations.create({
+          owner: alice.id,
+          sandbox: "none",
+          prompt: "Say hi",
+        });
+        yield* waitUntil(
+          kinds(aliceSeen).pipe(Effect.map((all) => all.length === 1))
+        );
+        return {
+          mine: yield* Ref.get(aliceSeen),
+          theirs: yield* Ref.get(bobSeen),
+          id: created.id,
+        };
+      }).pipe(Effect.scoped, Effect.provide(layer))
+    );
+
+    expect(mine).toMatchObject([
+      { conversation: id, kind: "finished", title: "Say hi" },
+    ]);
+    expect(theirs).toStrictEqual([]);
+  });
+
+  it("reports a failed Run with its attention", async () => {
+    const { layer } = setup([
+      fauxAssistantMessage([fauxText("boom")], {
+        stopReason: "error",
+        errorMessage: "boom",
+      }),
+    ]);
+
+    const seen = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const aliceSeen = yield* collect(alice);
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "none",
+          prompt: "say hi",
+        });
+        yield* waitUntil(
+          kinds(aliceSeen).pipe(Effect.map((all) => all.length === 1))
+        );
+        return yield* Ref.get(aliceSeen);
+      }).pipe(Effect.scoped, Effect.provide(layer))
+    );
+
+    expect(seen).toMatchObject([
+      { kind: "failed", attention: { reason: "model_error", detail: "boom" } },
+    ]);
+  });
+
+  it("reports a question once while it waits, then the Run that finishes after the answer", async () => {
+    const { layer } = setup([
+      callTool("ask_user", {
+        questions: [
+          {
+            id: "db",
+            question: "Which database?",
+            options: [{ label: "SQLite" }, { label: "Postgres" }],
+          },
+        ],
+      }),
+      answer("SQLite it is"),
+    ]);
+
+    const seen = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const aliceSeen = yield* collect(alice);
+        const created = yield* conversations.create({
+          owner: alice.id,
+          sandbox: "none",
+          prompt: "plan the app",
+        });
+        yield* waitUntil(
+          kinds(aliceSeen).pipe(Effect.map((all) => all.includes("question")))
+        );
+        yield* conversations.answer(created.id, `${created.id}:call-ask_user`, [
+          { id: "db", selected: ["SQLite"] },
+        ]);
+        yield* waitUntil(
+          kinds(aliceSeen).pipe(Effect.map((all) => all.includes("finished")))
+        );
+        return yield* Ref.get(aliceSeen);
+      }).pipe(Effect.scoped, Effect.provide(layer))
+    );
+
+    expect(seen).toMatchObject([
+      { kind: "question", tool: "ask_user" },
+      { kind: "finished" },
+    ]);
+  });
+
+  it("does not report a Run the person stopped", async () => {
+    const { layer, faux } = setup([
+      callTool("bash", { command: "sleep 5" }),
+      echoToolResult,
+    ]);
+
+    const seen = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const aliceSeen = yield* collect(alice);
+        const created = yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "sleep",
+        });
+        yield* waitUntil(
+          Effect.sync(() => faux.getPendingResponseCount() === 1)
+        );
+        yield* conversations.stop(created.id);
+        yield* waitUntil(
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
+        );
+        yield* Effect.sleep("200 millis");
+        return yield* Ref.get(aliceSeen);
+      }).pipe(Effect.scoped, Effect.provide(layer))
+    );
+
+    expect(seen).toStrictEqual([]);
+  }, 30_000);
 });

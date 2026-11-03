@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { dotLabelOf, dotStatusOf } from "./conversation-status";
+import {
+  consoleSummaryOf,
+  dotLabelOf,
+  dotStatusOf,
+  titleWith,
+} from "./conversation-status";
 
 describe(dotStatusOf, () => {
-  it("reads ended, waiting, live and paused in priority order", () => {
+  it("reads ended, waiting, running, live and paused in priority order", () => {
     expect([
       dotStatusOf({ status: "running", pendingApprovals: 0 }),
       dotStatusOf({ status: "idle", pendingApprovals: 0 }),
       dotStatusOf({ status: "running", pendingApprovals: 1 }),
       dotStatusOf({ status: "paused", pendingApprovals: 0 }),
       dotStatusOf({ status: "archived", pendingApprovals: 0 }),
-    ]).toStrictEqual(["live", "live", "waiting", "paused", "paused"]);
+    ]).toStrictEqual(["running", "live", "waiting", "paused", "paused"]);
   });
 
   it("reads a lost conversation as error over every other state", () => {
@@ -104,5 +109,60 @@ describe(dotLabelOf, () => {
       "No model configured",
       "Unreachable",
     ]);
+  });
+});
+
+describe(consoleSummaryOf, () => {
+  const idle = { id: 1, status: "idle", pendingApprovals: 0 } as const;
+  const running = { id: 2, status: "running", pendingApprovals: 0 } as const;
+  const waiting = { id: 3, status: "running", pendingApprovals: 1 } as const;
+  const failed = {
+    id: 4,
+    status: "idle",
+    pendingApprovals: 0,
+    attention: { reason: "model_error" },
+  } as const;
+
+  it("reads idle with nothing going, and running over idle", () => {
+    expect(consoleSummaryOf([])).toStrictEqual({
+      status: "idle",
+      attention: 0,
+    });
+    expect(consoleSummaryOf([idle, running])).toStrictEqual({
+      status: "running",
+      attention: 0,
+    });
+  });
+
+  it("puts a wait over a failure, and counts both", () => {
+    expect(consoleSummaryOf([running, failed])).toStrictEqual({
+      status: "error",
+      attention: 1,
+    });
+    expect(consoleSummaryOf([failed, waiting, running])).toStrictEqual({
+      status: "waiting",
+      attention: 2,
+    });
+  });
+
+  it("follows the dots: an ended conversation is an error, an archived one is left out", () => {
+    expect(consoleSummaryOf([idle], { 1: true })).toStrictEqual({
+      status: "error",
+      attention: 1,
+    });
+    expect(consoleSummaryOf([{ ...failed, status: "archived" }])).toStrictEqual(
+      { status: "idle", attention: 0 }
+    );
+  });
+});
+
+describe(titleWith, () => {
+  it("prefixes the count only when something needs the person", () => {
+    expect(
+      titleWith("Skills · effect-pi", { status: "running", attention: 0 })
+    ).toBe("Skills · effect-pi");
+    expect(
+      titleWith("Skills · effect-pi", { status: "waiting", attention: 2 })
+    ).toBe("(2) Skills · effect-pi");
   });
 });

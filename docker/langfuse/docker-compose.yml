@@ -1,6 +1,7 @@
 # Langfuse's official docker-compose.yml (https://github.com/langfuse/langfuse/blob/main/docker-compose.yml),
 # with one change: langfuse-web (3000) and minio (9090) listen on 127.0.0.1 only, like the other services.
 # Secrets and the headless-initialized project come from .env, written by init-env.ts (`pnpm langfuse:up`).
+# edge.yml layers a source build under /_/langfuse for the edge (`pnpm langfuse:edge`, docs/deploy/services.md).
 # Make sure to update the credential placeholders with your own secrets.
 # We mark them with # CHANGEME in the file below.
 # In addition, we recommend to restrict inbound traffic on the host to langfuse-web (port 3000) and minio (port 9090) only.
