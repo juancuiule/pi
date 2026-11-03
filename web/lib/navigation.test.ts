@@ -24,6 +24,7 @@ describe(matchCommands, () => {
   it("returns the full catalog in issue order for an empty query", () => {
     expect(labels(matchCommands(NAV_COMMANDS, ""))).toStrictEqual([
       "Go to Skills",
+      "Go to Schedules",
       "Go to Artifacts",
       "Go to Capacity",
       "Go to Settings",

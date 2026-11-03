@@ -3,6 +3,8 @@ import type { Message } from "effect-pi/api";
 
 import type { AttachmentRef } from "./attachments";
 import { splitAttachments } from "./attachments";
+import type { ScheduleMarkInfo } from "./schedules";
+import { splitScheduleMark } from "./schedules";
 import type { SkillMessage } from "./skill-message";
 import { parseSkillMessage, splitSkillHints } from "./skill-message";
 
@@ -61,12 +63,15 @@ export interface DisplayedMessage {
   readonly hinted: readonly string[];
   /** The files the message carried, as chips. */
   readonly attachments: readonly AttachmentRef[];
+  /** The schedule that sent it; absent for what the person typed. */
+  readonly schedule?: ScheduleMarkInfo;
 }
 
 /** What a person's message text resolves to for display: skill chip, text as typed, file chips. */
 export const displayParts = (text: string): DisplayedMessage => {
-  // Attachment blocks come last, after any skill hints.
-  const files = splitAttachments(text);
+  // A schedule's block leads; attachment blocks come last, after any skill hints.
+  const { mark, text: unmarked } = splitScheduleMark(text);
+  const files = splitAttachments(unmarked);
   const { text: body, hinted } = splitSkillHints(files.text);
   const skill = parseSkillMessage(body);
   return {
@@ -74,5 +79,6 @@ export const displayParts = (text: string): DisplayedMessage => {
     skill,
     hinted,
     attachments: files.attachments,
+    ...(mark === undefined ? {} : { schedule: mark }),
   };
 };

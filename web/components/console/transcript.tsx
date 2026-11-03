@@ -25,6 +25,7 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -546,6 +547,16 @@ const Entry = ({
       const images = parts.attachments.length > 0 ? [] : parsed.images;
       return (
         <div className="group/msg ml-auto flex max-w-[85%] flex-col">
+          {parts.schedule === undefined ? null : (
+            <Link
+              href="/schedules"
+              className="text-muted-foreground hover:text-foreground mb-1 flex items-center gap-1 self-end text-xs"
+              title={`Sent by the schedule “${parts.schedule.title}” for ${parts.schedule.due}`}
+            >
+              <Clock className="size-3" aria-hidden="true" />
+              Scheduled · {parts.schedule.title}
+            </Link>
+          )}
           <div className="bg-muted text-foreground flex flex-col gap-2 rounded-2xl px-4 py-2.5">
             {parts.skill === undefined ? null : (
               <SkillChip

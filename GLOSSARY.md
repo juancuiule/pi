@@ -26,6 +26,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Trusted domain**: A host the person lists under Settings so an Artifact's images may load from it (`cdn.example.com`, or `*.example.com` for its subdomains). Everything else an Artifact could fetch stays blocked. _Avoid_: allowlist, whitelist
 
+**Schedule**: Work a User asks for later or on a repeat: a saved message sent at its time (once, or at every match of a cron in the User's time zone) as a follow-up into a Conversation, or as the first message of a new Conversation per run. A fire is a send like the person's own, needing a Seat. _Avoid_: job, timer, reminder (one use of it), routine
+
 **Search**: Full-text search over Conversation transcripts — titles, prompts and answers, never tool calls — kept in a rebuildable index beside the durable store, updated when a Run ends. Person-facing only (`/api/search` and the console's palette); the agent has no search tool.
 
 ## Accounts

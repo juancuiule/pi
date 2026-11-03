@@ -53,6 +53,7 @@ import { ConversationActions } from "./conversation-actions";
 import { ConversationSettings } from "./conversation-settings";
 import { ResumingNotice } from "./resuming-notice";
 import { SandboxBadge } from "./sandbox-badge";
+import { ConversationSchedules } from "./schedules";
 import { WaitingNotice } from "./waiting-notice";
 
 const ConversationTitle = ({
@@ -442,6 +443,9 @@ export const ConversationHeader = ({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {status === "archived" ? null : (
+            <ConversationSchedules conversation={conversation.id} />
+          )}
           <ConversationSettings conversationId={conversation.id} />
           <ConversationActions conversation={conversation} />
         </div>

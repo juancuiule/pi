@@ -10,10 +10,27 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { apiError } from "@/lib/api";
-import { AUTH, useAuthState } from "@/lib/queries";
+import { AUTH, useAuthState, useSetTimeZone, useTimeZone } from "@/lib/queries";
 import type { AuthState } from "@/lib/queries";
+import { browserTimeZone } from "@/lib/schedules";
 import { onLeaveConsole, sessionLost, signedIn } from "@/lib/session";
 import { useConversationStore } from "@/lib/store";
+
+/**
+ * Reports the browser's time zone when the server has another (or none): schedules resolve wall-clock times in the
+ * User's zone while no browser is open.
+ */
+const ReportTimeZone = () => {
+  const { data } = useTimeZone();
+  const { mutate } = useSetTimeZone();
+  useEffect(() => {
+    const zone = browserTimeZone();
+    if (data !== undefined && zone !== undefined && data.timeZone !== zone) {
+      mutate(zone);
+    }
+  }, [data, mutate]);
+  return null;
+};
 
 export const AuthGate = ({ children }: { children: ReactNode }) => {
   const router = useRouter();
@@ -69,5 +86,10 @@ export const AuthGate = ({ children }: { children: ReactNode }) => {
       </div>
     );
   }
-  return user === undefined ? null : children;
+  return user === undefined ? null : (
+    <>
+      <ReportTimeZone />
+      {children}
+    </>
+  );
 };
