@@ -325,6 +325,29 @@ describe("HTTP API", () => {
     expect(agents.faux.state.callCount).toBe(1);
   });
 
+  it("streams the signed-in User's Activity over GET /api/activity", async () => {
+    const activity = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const stream = yield* client.conversations.activity();
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "Say hi" },
+        });
+        const [first] = yield* stream.pipe(
+          Stream.filter((message) => message.type === "activity"),
+          Stream.take(1),
+          Stream.runCollect
+        );
+        return { first, id: created.id };
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("hi")])])))
+    );
+    expect(activity.first).toMatchObject({
+      conversation: activity.id,
+      kind: "finished",
+      title: "Say hi",
+    });
+  });
+
   it("creates and updates org skills through PUT /api/skills/:name", async () => {
     const files: Record<string, string> = {
       "builtin/convert/SKILL.md":
@@ -1466,6 +1489,53 @@ describe("HTTP API", () => {
       title: "padded",
     });
     expect(result.empty.status).toBe(400);
+    expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
+  });
+
+  it("pins and unpins a conversation, refusing unknown ids", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const older = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "older" },
+        });
+        yield* Effect.sleep("2 millis");
+        const newer = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "newer" },
+        });
+        const pinned = yield* client.conversations.pin({
+          params: { id: older.id },
+        });
+        const whilePinned = yield* client.conversations.list();
+        const unpinned = yield* client.conversations.unpin({
+          params: { id: older.id },
+        });
+        const afterwards = yield* client.conversations.list();
+        const missing = yield* Effect.flip(
+          client.conversations.pin({ params: { id: 424_242 } })
+        );
+        return {
+          ids: [older.id, newer.id],
+          pinned,
+          whilePinned,
+          unpinned,
+          afterwards,
+          missing,
+        };
+      }).pipe(
+        Effect.provide(
+          server([
+            fauxAssistantMessage([fauxText("one")]),
+            fauxAssistantMessage([fauxText("two")]),
+          ])
+        )
+      )
+    );
+    const [older, newer] = result.ids;
+    expect(result.pinned.pinnedAt).toBeTypeOf("number");
+    expect(result.whilePinned.map((c) => c.id)).toStrictEqual([older, newer]);
+    expect(result.unpinned).not.toHaveProperty("pinnedAt");
+    expect(result.afterwards.map((c) => c.id)).toStrictEqual([newer, older]);
     expect(result.missing).toMatchObject({ _tag: "ConversationNotFound" });
   });
 

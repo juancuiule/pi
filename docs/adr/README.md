@@ -16,4 +16,5 @@ One file per decision that is hard to reverse, surprising without context, and t
 | [0006](0006-object-storage-beside-local-sqlite.md) | Files move to object storage; the database stays local SQLite under Litestream |
 | [0007](0007-subagents-share-the-parents-machine.md) | Subagents are one level deep and share their parent's Sandbox and approvals |
 | [0008](0008-deploys-are-a-host-and-exposures.md) | A deployment is a host plus exposures, sharing one base and one edge |
+| [0010](0010-activity-stream-for-notifications.md) | One owner-scoped activity stream, published from the Seat's edges, feeds notifications and the favicon |
 | [0011](0011-services-behind-the-edge.md) | Services sit under /_/ on the console's hostname, behind effect-pi's sign-in at the edge |

@@ -212,6 +212,44 @@ describe("persistent conversations", () => {
     expect(JSON.stringify(result.sendExit)).toContain("ConversationArchived");
   });
 
+  it("keeps a pin across a restart and lists pinned conversations first", async () => {
+    const file = db();
+    const ids: number[] = [];
+    await Effect.runPromise(
+      withStack(
+        file,
+        [answer("one"), answer("two"), answer("three")],
+        (conversations) =>
+          Effect.gen(function* () {
+            for (const prompt of ["first", "second", "third"]) {
+              const created = yield* conversations.create({
+                owner: alice.id,
+                sandbox: "none",
+                prompt,
+              });
+              ids.push(created.id);
+              // Distinct creation times, so recency is an order.
+              yield* Effect.sleep("2 millis");
+            }
+            const pinned = yield* conversations.pin(ids[0] ?? -1, true);
+            expect(pinned.pinnedAt).toBeTypeOf("number");
+            yield* conversations.pin(ids[1] ?? -1, true);
+            yield* conversations.pin(ids[1] ?? -1, false);
+            // A pin survives Archive, as the console shows archived ones in place.
+            yield* conversations.archive(ids[0] ?? -1);
+          })
+      )
+    );
+
+    const listed = await Effect.runPromise(
+      withStack(file, [], (conversations) => conversations.list(alice.id))
+    );
+    expect(listed.map((c) => c.id)).toStrictEqual([ids[0], ids[2], ids[1]]);
+    expect(listed[0]).toMatchObject({ status: "archived" });
+    expect(listed[0]?.pinnedAt).toBeTypeOf("number");
+    expect(listed[2]).not.toHaveProperty("pinnedAt");
+  });
+
   it("sweeps idle chat and shell conversations to paused", async () => {
     const file = db();
     const listed = await Effect.runPromise(

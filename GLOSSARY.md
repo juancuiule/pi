@@ -18,6 +18,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Archive**: Hiding a Conversation and discarding its Workspace's files. The transcript stays readable, and an archived Conversation can be unarchived with an empty Workspace. _Avoid_: end, delete
 
+**Pin**: Keeping a Conversation at the top of its Owner's list, above the newest-first order, until it is unpinned. It outlasts Pause, Archive and restarts.
+
 **Approval**: A person's decision on a tool call that waits for one before it runs.
 
 **Attachment**: A file a person sends with a message: its original, kept privately on the server, and the text or image prepared from it once. Before a message takes it, it is an upload: staged (no Conversation yet) or a Conversation's, and it expires unsent. _Avoid_: document, file upload, asset

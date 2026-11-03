@@ -350,6 +350,43 @@ export const useRenameConversation = (id: number) => {
   });
 };
 
+/**
+ * Pin a Conversation above the recency order, or unpin it. The list moves at once, before the server answers, so
+ * a row swiped to pin lands on top as it springs back; a failure puts it back.
+ */
+export const usePinConversation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, pinned }: { id: number; pinned: boolean }) =>
+      runApi((c) =>
+        pinned
+          ? c.conversations.pin({ params: { id } })
+          : c.conversations.unpin({ params: { id } })
+      ),
+    onMutate: async ({ id, pinned }) => {
+      await queryClient.cancelQueries({ queryKey: LIST });
+      const before =
+        queryClient.getQueryData<readonly ConversationSummary[]>(LIST);
+      queryClient.setQueryData<readonly ConversationSummary[]>(LIST, (all) =>
+        all?.map((each) => {
+          if (each.id !== id) {
+            return each;
+          }
+          const { pinnedAt: _pinnedAt, ...rest } = each;
+          return pinned ? { ...rest, pinnedAt: Date.now() } : rest;
+        })
+      );
+      return { before };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.before !== undefined) {
+        queryClient.setQueryData(LIST, context.before);
+      }
+    },
+    onSuccess: updateSummary(queryClient),
+  });
+};
+
 /** Ask the model for a fresh title; fails when no real model is configured. */
 export const useGenerateTitle = (id: number) => {
   const queryClient = useQueryClient();

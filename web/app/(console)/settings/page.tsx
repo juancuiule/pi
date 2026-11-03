@@ -4,7 +4,9 @@ import {
   ExtensionsSection,
   McpServersSection,
 } from "@/components/console/capabilities-sections";
+import { NotificationsSection } from "@/components/console/notifications-section";
 import { PageHeader } from "@/components/console/page-header";
+import { PageTitle } from "@/components/console/page-title";
 import { ServicesSection } from "@/components/console/services-section";
 import { TrustedDomainsSection } from "@/components/console/trusted-domains-section";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -15,7 +17,7 @@ const SettingsPage = () => {
   const { data } = useCapabilities();
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <title>Settings · effect-pi</title>
+      <PageTitle>Settings · effect-pi</PageTitle>
       <PageHeader title="Settings" />
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
@@ -36,6 +38,7 @@ const SettingsPage = () => {
               {info?.model ?? ""}
             </p>
           </section>
+          <NotificationsSection />
           <TrustedDomainsSection />
           <ServicesSection />
           <ExtensionsSection extensions={data?.extensions} />

@@ -116,6 +116,30 @@ export const Attention = Schema.Struct({
 });
 export type Attention = typeof Attention.Type;
 
+/**
+ * One `GET /api/activity` message: a Run of one of the caller's Conversations ended (`finished`, `failed`), or a
+ * call started waiting for them (`approval`, `question`). See `Activity` in src/server/conversations.ts.
+ */
+export const Activity = Schema.Struct({
+  conversation: Schema.Number,
+  title: Schema.String,
+  kind: Schema.Literals(["finished", "failed", "approval", "question"]),
+  at: Schema.Number,
+  attention: Schema.optionalKey(Attention),
+  tool: Schema.optionalKey(Schema.String),
+});
+export type Activity = typeof Activity.Type;
+
+/**
+ * What `GET /api/activity` sends: a `ping` first — so the response starts at once — and every 25 seconds, so
+ * proxies that cut silent streams (Cloudflare's 100s) keep it open; then each Activity as it happens.
+ */
+export const ActivityMessage = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("ping") }),
+  Schema.Struct({ type: Schema.Literal("activity"), ...Activity.fields }),
+]);
+export type ActivityMessage = typeof ActivityMessage.Type;
+
 export const ApprovalChoice = Schema.Literals(["approve", "deny", "always"]);
 export type ApprovalChoice = typeof ApprovalChoice.Type;
 
@@ -136,6 +160,8 @@ export const ConversationSummary = Schema.Struct({
   /** The Sandbox has a desktop to watch, over the `/api/conversations/:id/desktop` WebSocket. */
   desktop: Schema.optionalKey(Schema.Boolean),
   title: Schema.String,
+  /** When the person pinned it; pinned Conversations list first, the most recently pinned on top. */
+  pinnedAt: Schema.optionalKey(Schema.Number),
   /** `running` and `idle` have a Seat; `paused` and `archived` do not. */
   status: Schema.Literals(["running", "idle", "paused", "archived"]),
   /** True while a Pause waits for the current Run to end. */
@@ -339,6 +365,10 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
   HttpApiEndpoint.get("list", "/conversations", {
     success: Schema.Array(ConversationSummary),
   }),
+  // Every Conversation of the caller's at once, so the console hears about the ones it has no events stream for.
+  HttpApiEndpoint.get("activity", "/activity", {
+    success: HttpApiSchema.StreamSse({ data: ActivityMessage }),
+  }),
   HttpApiEndpoint.post("create", "/conversations", {
     payload: Schema.Struct({
       sandbox: SandboxChoice,
@@ -471,6 +501,17 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
   HttpApiEndpoint.post("unarchive", "/conversations/:id/unarchive", {
     params: ById,
     success: HttpApiSchema.NoContent,
+    error: NotFound,
+  }),
+  // Pin above the recency order of the owner's list, or unpin; kept across Pause, Archive and restarts.
+  HttpApiEndpoint.post("pin", "/conversations/:id/pin", {
+    params: ById,
+    success: ConversationSummary,
+    error: NotFound,
+  }),
+  HttpApiEndpoint.post("unpin", "/conversations/:id/unpin", {
+    params: ById,
+    success: ConversationSummary,
     error: NotFound,
   }),
   // The person's rename: marks the title manual; automation never touches it again.

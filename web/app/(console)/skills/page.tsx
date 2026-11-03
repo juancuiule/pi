@@ -8,6 +8,7 @@ import type { Components } from "react-markdown";
 
 import { Markdown, markdownComponents } from "@/components/console/markdown";
 import { PageHeader } from "@/components/console/page-header";
+import { PageTitle } from "@/components/console/page-title";
 import { SkillEditor } from "@/components/console/skill-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,7 +44,7 @@ const SkillsPage = () => {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <title>Skills · effect-pi</title>
+      <PageTitle>Skills · effect-pi</PageTitle>
       <PageHeader title="Skills" />
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
@@ -101,7 +102,7 @@ const SkillsPage = () => {
                       </Badge>
                     </Collapsible.Trigger>
                   </h2>
-                  <Collapsible.Panel>
+                  <Collapsible.Panel className="collapsible-panel">
                     <div className="flex flex-col gap-3 py-2 pl-9">
                       {editing === skill.name ? (
                         <SkillEditor
