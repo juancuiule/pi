@@ -15,3 +15,4 @@ One file per decision that is hard to reverse, surprising without context, and t
 | [0005](0005-shell-pty-owned-by-the-sandbox.md) | The Shell is a PTY over the Engine API, owned by the Sandbox, not the socket |
 | [0006](0006-object-storage-beside-local-sqlite.md) | Files move to object storage; the database stays local SQLite under Litestream |
 | [0007](0007-subagents-share-the-parents-machine.md) | Subagents are one level deep and share their parent's Sandbox and approvals |
+| [0008](0008-deploys-are-a-host-and-exposures.md) | A deployment is a host plus exposures, sharing one base and one edge |

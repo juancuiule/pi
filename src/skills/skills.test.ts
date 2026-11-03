@@ -137,6 +137,8 @@ describe("Skills.directory", () => {
       problems,
     }).toStrictEqual({
       names: [
+        "agent-browser",
+        "agent-desktop",
         "artifact-design",
         "catch-up",
         "diagrams",

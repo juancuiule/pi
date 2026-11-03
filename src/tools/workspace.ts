@@ -19,6 +19,10 @@ import { WorkspaceDoc } from "../workspaces/workspaces.ts";
 /** The `upgrade_workspace` tool's name; a subagent's agent has it removed so it cannot swap the shared sandbox. */
 export const UPGRADE_WORKSPACE = "upgrade_workspace";
 
+// Both sandbox images have agent-browser and Google Chrome (docker/sandbox/shell.Dockerfile).
+const BROWSER =
+  "To use a website — open pages, click, fill forms, read what search snippets do not show — use `agent-browser`, which drives Google Chrome; load the `agent-browser` skill first.";
+
 const levelSection = (level: SandboxChoice): string => {
   switch (level) {
     case "none": {
@@ -30,10 +34,17 @@ const levelSection = (level: SandboxChoice): string => {
       ].join("\n");
     }
     case "shell": {
-      return 'You have a Linux shell with file tools; your files are in /workspace. When a task needs a graphical desktop, call upgrade_workspace with level "desktop".';
+      return [
+        'You have a Linux shell with file tools; your files are in /workspace. When a task needs a graphical desktop, call upgrade_workspace with level "desktop".',
+        BROWSER,
+      ].join("\n");
     }
     case "desktop": {
-      return "You have a Linux desktop with a shell and file tools; your files are in /workspace.";
+      return [
+        "You have a Linux desktop with a shell and file tools; your files are in /workspace.",
+        BROWSER,
+        "To operate the desktop's apps, use `agent-desktop`, which reads them as text through the accessibility tree; load the `agent-desktop` skill first, and prefer it over screenshots and pixel coordinates.",
+      ].join("\n");
     }
     default: {
       throw new TypeError(`Unknown Level: ${level satisfies never}`);

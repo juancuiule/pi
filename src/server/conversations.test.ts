@@ -27,6 +27,7 @@ const defaults = {
 const setup = (
   responses: FauxResponseStep[],
   options: Partial<typeof defaults> & {
+    readonly seats?: number;
     readonly shells?: number;
     readonly sandboxes?: LocalSandboxes;
     readonly titleGeneration?: boolean;
@@ -34,6 +35,7 @@ const setup = (
   } = {}
 ) => {
   const {
+    seats = 10,
     shells = 3,
     sandboxes,
     search = Search.none,
@@ -41,7 +43,7 @@ const setup = (
     ...rest
   } = options;
   const agents = fauxAgents(responses, {
-    limits: { shells },
+    limits: { seats, shells },
     ...(titleGeneration === undefined ? {} : { titleGeneration }),
     ...(sandboxes === undefined ? {} : { sandboxes }),
   });
@@ -1067,7 +1069,7 @@ describe("a failed build", () => {
   });
 
   it("rejects Software the Level forbids before claiming a Seat or Level", async () => {
-    const { layer, sandboxes } = setup([answer("hi")], { shells: 1 });
+    const { layer, sandboxes } = setup([answer("hi")], { seats: 1 });
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -1077,12 +1079,12 @@ describe("a failed build", () => {
           sandbox: "shell",
           prompt: "hi",
         });
-        // The one shell is taken, but the invalid Software must read as a 400, not a 409.
+        // The one Seat is taken, but the invalid Software must read as a 400, not a 409.
         const rejected = yield* conversations
           .create({
             owner: alice.id,
-            sandbox: "shell",
-            software: ["chrome"],
+            sandbox: "none",
+            software: ["node"],
             prompt: "hi",
           })
           .pipe(Effect.flip);

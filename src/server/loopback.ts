@@ -1,8 +1,9 @@
 // The server listens on 127.0.0.1 only, but binding there does not stop a browser: any page can POST to
 // http://127.0.0.1:4000, and a DNS-rebound name reaches it too. So every request must name a loopback host, and a
 // browser's Origin (and the Next proxy's X-Forwarded-Host) must be loopback as well. Non-browser clients send no
-// Origin and pass on Host alone. A `publicUrl` (PUBLIC_URL: a tunnel such as cloudflared that forwards to this
-// machine) is accepted beside loopback: its exact host in Host and X-Forwarded-Host, its exact origin in Origin.
+// Origin and pass on Host alone. Each of `publicUrls` (PUBLIC_URL: a tunnel such as cloudflared, or a proxy on the
+// LAN or a VPN, that forwards to this machine) is accepted beside loopback: its exact host in Host and
+// X-Forwarded-Host, its exact origin in Origin.
 import { Effect } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
@@ -45,15 +46,22 @@ const isAllowedPage = (url: URL | undefined, ports?: ReadonlySet<number>) =>
   LOOPBACK.has(url.hostname) &&
   (ports === undefined || ports.has(portOf(url) ?? 0));
 
-/** Whether `host` (a Host-style header) is the public URL's host, port included. */
-const isPublicHost = (host: string, publicUrl: URL | undefined) =>
-  publicUrl !== undefined && hostUrl(host)?.host === publicUrl.host;
+/** The public URL whose host, port included, `host` (a Host-style header) is. */
+const publicUrlOf = (host: string, publicUrls: readonly URL[]) => {
+  const url = hostUrl(host);
+  return url === undefined
+    ? undefined
+    : publicUrls.find((publicUrl) => publicUrl.host === url.host);
+};
+
+const isPublicHost = (host: string, publicUrls: readonly URL[]) =>
+  publicUrlOf(host, publicUrls) !== undefined;
 
 export interface AllowedOrigins {
   /** The ports a browser page may call from: the console's and this server's. Unset, any loopback port. */
   readonly pagePorts?: readonly number[] | undefined;
-  /** Where a tunnel serves the console from the outside (`PUBLIC_URL`); accepted beside loopback. */
-  readonly publicUrl?: URL | undefined;
+  /** Where a tunnel or proxy serves the console from outside this machine (`PUBLIC_URL`); accepted beside loopback. */
+  readonly publicUrls?: readonly URL[] | undefined;
 }
 
 /**
@@ -66,18 +74,18 @@ export const isLoopbackRequest = (
 ): boolean => {
   const { host, origin } = headers;
   const forwardedHost = headers["x-forwarded-host"];
-  const { publicUrl } = options;
+  const publicUrls = options.publicUrls ?? [];
   const ports =
     options.pagePorts === undefined ? undefined : new Set(options.pagePorts);
   return (
     host !== undefined &&
-    (isAllowedPage(hostUrl(host)) || isPublicHost(host, publicUrl)) &&
+    (isAllowedPage(hostUrl(host)) || isPublicHost(host, publicUrls)) &&
     (origin === undefined ||
       isAllowedPage(originUrl(origin), ports) ||
-      (publicUrl !== undefined && origin === publicUrl.origin)) &&
+      publicUrls.some((publicUrl) => origin === publicUrl.origin)) &&
     (forwardedHost === undefined ||
       isAllowedPage(hostUrl(forwardedHost), ports) ||
-      isPublicHost(forwardedHost, publicUrl))
+      isPublicHost(forwardedHost, publicUrls))
   );
 };
 
@@ -87,16 +95,10 @@ export const isLoopbackRequest = (
  */
 export const viaHttpsPublicUrl = (
   headers: Headers,
-  publicUrl?: URL
-): boolean => {
-  if (publicUrl?.protocol !== "https:") {
-    return false;
-  }
-  const forwardedHost = headers["x-forwarded-host"];
-  return forwardedHost === undefined
-    ? isPublicHost(headers.host ?? "", publicUrl)
-    : isPublicHost(forwardedHost, publicUrl);
-};
+  publicUrls: readonly URL[] = []
+): boolean =>
+  publicUrlOf(headers["x-forwarded-host"] ?? headers.host ?? "", publicUrls)
+    ?.protocol === "https:";
 
 /** Global middleware that answers 403 to any request `isLoopbackRequest` rejects. */
 export const loopbackOnly = (options: AllowedOrigins) =>
