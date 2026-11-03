@@ -109,6 +109,30 @@ export const Attention = Schema.Struct({
 });
 export type Attention = typeof Attention.Type;
 
+/**
+ * One `GET /api/activity` message: a Run of one of the caller's Conversations ended (`finished`, `failed`), or a
+ * call started waiting for them (`approval`, `question`). See `Activity` in src/server/conversations.ts.
+ */
+export const Activity = Schema.Struct({
+  conversation: Schema.Number,
+  title: Schema.String,
+  kind: Schema.Literals(["finished", "failed", "approval", "question"]),
+  at: Schema.Number,
+  attention: Schema.optionalKey(Attention),
+  tool: Schema.optionalKey(Schema.String),
+});
+export type Activity = typeof Activity.Type;
+
+/**
+ * What `GET /api/activity` sends: a `ping` first — so the response starts at once — and every 25 seconds, so
+ * proxies that cut silent streams (Cloudflare's 100s) keep it open; then each Activity as it happens.
+ */
+export const ActivityMessage = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("ping") }),
+  Schema.Struct({ type: Schema.Literal("activity"), ...Activity.fields }),
+]);
+export type ActivityMessage = typeof ActivityMessage.Type;
+
 export const ApprovalChoice = Schema.Literals(["approve", "deny", "always"]);
 export type ApprovalChoice = typeof ApprovalChoice.Type;
 
@@ -331,6 +355,10 @@ export type SubmissionAck = typeof SubmissionAck.Type;
 const ConversationGroup = HttpApiGroup.make("conversations").add(
   HttpApiEndpoint.get("list", "/conversations", {
     success: Schema.Array(ConversationSummary),
+  }),
+  // Every Conversation of the caller's at once, so the console hears about the ones it has no events stream for.
+  HttpApiEndpoint.get("activity", "/activity", {
+    success: HttpApiSchema.StreamSse({ data: ActivityMessage }),
   }),
   HttpApiEndpoint.post("create", "/conversations", {
     payload: Schema.Struct({
