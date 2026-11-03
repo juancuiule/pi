@@ -16,3 +16,4 @@ One file per decision that is hard to reverse, surprising without context, and t
 | [0006](0006-object-storage-beside-local-sqlite.md) | Files move to object storage; the database stays local SQLite under Litestream |
 | [0007](0007-subagents-share-the-parents-machine.md) | Subagents are one level deep and share their parent's Sandbox and approvals |
 | [0008](0008-deploys-are-a-host-and-exposures.md) | A deployment is a host plus exposures, sharing one base and one edge |
+| [0010](0010-goal-mode-continues-the-run.md) | `/goal` continues the Run from an `onYield` hook over a goal document until its todos, a budget or the person end it |
