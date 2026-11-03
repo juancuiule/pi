@@ -122,6 +122,30 @@ export const traceAttachmentText = ENV.TRACE_ATTACHMENT_TEXT;
 /** How long to wait for each MCP server when the agents start. */
 export const mcpConnectTimeoutMs = ENV.MCP_CONNECT_TIMEOUT;
 
+const transcribeUrl = unset(ENV.TRANSCRIBE_URL);
+const transcribeModel = unset(ENV.TRANSCRIBE_MODEL);
+if (transcribeUrl !== undefined && transcribeModel === undefined) {
+  throw new Error(
+    "TRANSCRIBE_URL needs TRANSCRIBE_MODEL (see .env.schema; `pnpm speaches:up` writes both)"
+  );
+}
+
+/** Dictation through an OpenAI-compatible transcription endpoint, or `undefined` when TRANSCRIBE_URL is unset. */
+export const dictation =
+  transcribeUrl === undefined || transcribeModel === undefined
+    ? undefined
+    : {
+        url: transcribeUrl,
+        apiKey: unset(ENV.TRANSCRIBE_API_KEY),
+        model: transcribeModel,
+        prompt: unset(ENV.TRANSCRIBE_PROMPT),
+        interimMs: ENV.TRANSCRIBE_INTERIM,
+        pauseMs: ENV.TRANSCRIBE_PAUSE,
+        maxSeconds: ENV.TRANSCRIBE_MAX_SECONDS,
+        concurrency: ENV.TRANSCRIBE_CONCURRENCY,
+        timeoutMs: ENV.TRANSCRIBE_TIMEOUT,
+      };
+
 const searxngUrl = unset(ENV.SEARXNG_URL);
 
 /** Web search through a SearXNG instance, or `undefined` when SEARXNG_URL is unset (no `web` extension then). */

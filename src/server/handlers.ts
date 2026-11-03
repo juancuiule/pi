@@ -792,6 +792,7 @@ const TrustedDomainsHandlers = HttpApiBuilder.group(
 const infoHandlers = (options: {
   readonly apiUrl: string;
   readonly tracing: boolean;
+  readonly dictation: boolean;
 }) =>
   HttpApiBuilder.group(
     Api,
@@ -812,6 +813,7 @@ const infoHandlers = (options: {
               apiUrl: options.apiUrl,
               tracing: options.tracing,
               titleGeneration,
+              dictation: options.dictation,
             })
           )
           .handle("capabilities", () => capabilities)
@@ -856,6 +858,8 @@ const SearchHandlers = HttpApiBuilder.group(Api, "search", (handlers) =>
 export const apiLayer = (options: {
   readonly apiUrl: string;
   readonly tracing: boolean;
+  /** Dictation is configured (TRANSCRIBE_URL); off when unset. */
+  readonly dictation?: boolean | undefined;
   /** The ports a browser page may call from: the console's and this server's. Unset, any loopback port. */
   readonly pagePorts?: readonly number[] | undefined;
   /** Where a tunnel or proxy serves the console from outside this machine (`PUBLIC_URL`). */
@@ -872,7 +876,7 @@ export const apiLayer = (options: {
         SkillsHandlers,
         FilesHandlers,
         SearchHandlers,
-        infoHandlers(options),
+        infoHandlers({ ...options, dictation: options.dictation ?? false }),
         authHandlers({ publicUrls: options.publicUrls })
       )
     ),
