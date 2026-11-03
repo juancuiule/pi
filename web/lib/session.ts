@@ -61,3 +61,10 @@ export const safeNext = (next: string | null | undefined): string => {
   }
   return url.origin === BASE ? `${url.pathname}${url.search}${url.hash}` : "/";
 };
+
+/**
+ * Whether `next` (a path `safeNext` kept) is a Service the edge serves under /_/ (Langfuse, ...), not a console page:
+ * the router cannot render it, so signing in goes there with a full navigation.
+ */
+export const isServicePath = (next: string): boolean =>
+  next === "/_" || next.startsWith("/_/");

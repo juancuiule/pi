@@ -2,6 +2,8 @@
 # S3 gateway in one `weed server` process (upstream marks `weed mini` dev-only). init-env.ts (`pnpm seaweed:up`)
 # writes s3.json, the identity file -s3.config reads, and the matching keys in the root .env; without them the
 # gateway allows every request. The S3 gateway (8333) and the filer's web UI (8888, /buckets/ to browse) are published, on loopback.
+# `admin` is SeaweedFS's admin UI (cluster, volumes, buckets, files, S3 keys) on 23646, under the edge's /_/seaweedfs/
+# (deploy/Caddyfile, docs/deploy/services.md); it signs in as `admin` with SEAWEEDFS_ADMIN_PASSWORD from .env here.
 services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.48
@@ -21,6 +23,24 @@ services:
       retries: 10
       start_period: 3s
 
+  admin:
+    image: chrislusf/seaweedfs:4.48
+    restart: always
+    # -urlPrefix: its routes, links, assets and cookie path all carry the edge's prefix.
+    # With a password it listens on every interface of its container, which is published on loopback only.
+    command: admin -master=seaweedfs:9333 -dataDir=/data -urlPrefix=/_/seaweedfs
+    environment:
+      WEED_ADMIN_PASSWORD: ${SEAWEEDFS_ADMIN_PASSWORD:?run pnpm seaweed:up, which writes it to docker/seaweedfs/.env}
+    ports:
+      - 127.0.0.1:23646:23646
+    volumes:
+      - seaweedfs_admin:/data
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+
 volumes:
   seaweedfs_data:
+    driver: local
+  seaweedfs_admin:
     driver: local

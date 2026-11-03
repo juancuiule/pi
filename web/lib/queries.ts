@@ -138,6 +138,14 @@ export const useInfo = () =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
+/** The Services the edge serves that this account may open (Settings links to them); none without the edge. */
+export const useServices = () =>
+  useQuery({
+    queryKey: ["services"],
+    queryFn: () => runApi((c) => c.services.list()),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
 export const useCapabilities = () =>
   useQuery({
     queryKey: ["capabilities"],

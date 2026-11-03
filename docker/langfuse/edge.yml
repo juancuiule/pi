@@ -1,0 +1,20 @@
+# Langfuse under the edge's /_/langfuse/ (deploy/Caddyfile, docs/deploy/services.md), layered over
+# docker-compose.yml. Next.js inlines its base path into the built assets, so the web image is built from Langfuse's
+# source with NEXT_PUBLIC_BASE_PATH (https://langfuse.com/self-hosting/configuration/custom-base-path); the worker
+# keeps the prebuilt image, pinned to the same release so web's migrations and the worker agree. Every route,
+# the public API and OTLP included, moves under the base path, on port 3000 too: the server's LANGFUSE_BASE_URL becomes
+# http://localhost:3000/_/langfuse and still reaches Langfuse directly, never through the edge.
+#
+# `pnpm langfuse:edge <public url>` turns this on (COMPOSE_FILE and NEXTAUTH_URL in docker/langfuse/.env,
+# LANGFUSE_BASE_URL in the root .env); `pnpm langfuse:up` then builds the image once and starts it.
+services:
+  langfuse-web:
+    image: effect-pi/langfuse-web:${LANGFUSE_VERSION:-4.72.0}-edge
+    build:
+      context: https://github.com/langfuse/langfuse.git#v${LANGFUSE_VERSION:-4.72.0}
+      dockerfile: web/Dockerfile
+      args:
+        NEXT_PUBLIC_BASE_PATH: /_/langfuse
+
+  langfuse-worker:
+    image: docker.langfuse.com/langfuse/langfuse-worker:${LANGFUSE_VERSION:-4.72.0}

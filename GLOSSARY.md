@@ -36,6 +36,8 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Session**: A User signed in on one browser, kept by a cookie for 30 days or until Sign out. _Avoid_: token, login
 
+**Service**: A program beside the server whose UI the edge serves at `/_/<name>/` on the site's hostname: Langfuse, SeaweedFS's admin, SearXNG. It shows every User's data, so only the accounts in `SERVICE_USERS` (else the oldest) may open it. _Avoid_: app, tool (the agent's tools)
+
 **Owner**: The User a Conversation belongs to, and with it its Workspace, Artifacts, Attachments and Search results; a subagent's is its parent's. Other Users cannot see or reach any of it. Trusted domains are per User too; org skills are shared. _Avoid_: author, creator
 
 ## Workspaces

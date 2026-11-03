@@ -49,6 +49,9 @@ else
 fi
 
 public_urls=$(sed -n 's/^PUBLIC_URL=//p' ../.env | tail -n 1 | tr -d "\"'")
+# The Services the edge serves at /_/<name>/ (docs/deploy/services.md); each is checked below.
+edge_services=$(sed -n 's/^EDGE_SERVICES=//p' ../.env | tail -n 1 | tr -d "\"' ")
+IFS=',' read -r -a services <<<"$edge_services"
 IFS=',' read -r -a urls <<<"$public_urls"
 any_url() {
   local url
@@ -131,6 +134,12 @@ for url in "${urls[@]}"; do
   check "$host" /api/auth/state 200
   # The socket route reaches the server, which refuses it without a session.
   check "$host" /api/conversations/0/shell 401
+  # A Service sends a browser without a session to sign in, so the edge reached the server's check.
+  for service in "${services[@]}"; do
+    if [[ -n $service ]]; then
+      check "$host" "/_/$service/" 302
+    fi
+  done
 done
 ((failed == 0)) || die "the deploy is up but some checks failed"
 echo "deploy: done"

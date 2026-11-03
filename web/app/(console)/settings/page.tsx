@@ -7,6 +7,7 @@ import {
 import { NotificationsSection } from "@/components/console/notifications-section";
 import { PageHeader } from "@/components/console/page-header";
 import { PageTitle } from "@/components/console/page-title";
+import { ServicesSection } from "@/components/console/services-section";
 import { TrustedDomainsSection } from "@/components/console/trusted-domains-section";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useCapabilities, useInfo } from "@/lib/queries";
@@ -39,6 +40,7 @@ const SettingsPage = () => {
           </section>
           <NotificationsSection />
           <TrustedDomainsSection />
+          <ServicesSection />
           <ExtensionsSection extensions={data?.extensions} />
           <McpServersSection mcp={data?.mcp} />
         </div>
