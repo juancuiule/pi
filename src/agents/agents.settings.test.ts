@@ -173,6 +173,8 @@ describe("conversation settings", () => {
       "attachments",
       "artifacts",
       "questions",
+      "todos",
+      "goal",
       "subagent",
       "skills",
       "repeat-guard",

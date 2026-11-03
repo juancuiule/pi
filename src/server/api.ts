@@ -139,6 +139,39 @@ export const ConversationSummary = Schema.Struct({
 });
 export type ConversationSummary = typeof ConversationSummary.Type;
 
+/** One item of the agent's todo list (src/tools/todos.ts). */
+export const Todo = Schema.Struct({
+  content: Schema.String,
+  status: Schema.Literals(["pending", "in_progress", "completed"]),
+});
+export type Todo = typeof Todo.Type;
+
+/** A goal (`/goal`) as the console shows it: state, budget and spend, and its todo list's progress. */
+export const GoalInfo = Schema.Struct({
+  objective: Schema.String,
+  status: Schema.Literals([
+    "active",
+    "completed",
+    "blocked",
+    "stopped",
+    "exhausted",
+  ]),
+  startedAt: Schema.Number,
+  endedAt: Schema.optionalKey(Schema.Number),
+  /** `agent`: end_goal; `todos`: every item completed; `turns`/`cost`: a budget ran out; `person`: Stop or cancel. */
+  endedBy: Schema.optionalKey(
+    Schema.Literals(["agent", "todos", "turns", "cost", "person"])
+  ),
+  summary: Schema.optionalKey(Schema.String),
+  turns: Schema.Number,
+  maxTurns: Schema.Number,
+  costUsd: Schema.Number,
+  /** 0: no cost limit. */
+  maxCostUsd: Schema.Number,
+  todos: Schema.Struct({ completed: Schema.Number, total: Schema.Number }),
+});
+export type GoalInfo = typeof GoalInfo.Type;
+
 /** A file uploaded for a message, checked and prepared (see docs/adr/0002-attachments-prepared-at-upload.md). */
 export const AttachmentInfo = Schema.Struct({
   id: Schema.String,
@@ -362,6 +395,7 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
       Full,
       Archived,
       UnknownSkill,
+      Invalid,
       Empty,
       Refused,
       NoAttachment,
@@ -499,6 +533,30 @@ const ConversationGroup = HttpApiGroup.make("conversations").add(
     }),
     success: HttpApiSchema.NoContent,
     error: [NotFound, ApprovalNotFound.pipe(HttpApiSchema.status(404))],
+  }),
+  // The agent's todo list (`update_todos`); empty when it never wrote one.
+  HttpApiEndpoint.get("todos", "/conversations/:id/todos", {
+    params: ById,
+    success: Schema.Struct({ todos: Schema.Array(Todo) }),
+    error: NotFound,
+  }),
+  // The latest goal (`/goal`), with its progress and spend; absent when the conversation never had one.
+  HttpApiEndpoint.get("goal", "/conversations/:id/goal", {
+    params: ById,
+    success: Schema.Struct({ goal: Schema.optionalKey(GoalInfo) }),
+    error: NotFound,
+  }),
+  // End the active goal: the current turn finishes and no other follows.
+  HttpApiEndpoint.post("cancelGoal", "/conversations/:id/goal/cancel", {
+    params: ById,
+    success: HttpApiSchema.NoContent,
+    error: NotFound,
+  }),
+  // Start another turn of the active goal when no Run is going, resuming a paused conversation first.
+  HttpApiEndpoint.post("continueGoal", "/conversations/:id/goal/continue", {
+    params: ById,
+    success: Schema.Struct({ continued: Schema.Boolean }),
+    error: [NotFound, Full, Archived],
   }),
   // Thumbs up (`value: 1`) or down (`value: 0`) on an assistant entry, scored on its run's Langfuse trace.
   HttpApiEndpoint.post("feedback", "/conversations/:id/feedback", {

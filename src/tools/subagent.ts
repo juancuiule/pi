@@ -23,6 +23,7 @@ import type {
   Tx,
 } from "@earendil-works/pi-durable";
 
+import { END_GOAL } from "../goal/goal.ts";
 import { UPGRADE_WORKSPACE } from "./workspace.ts";
 
 /** More than this many subagents of one conversation at once fails fast: fan-out is bounded. */
@@ -110,12 +111,14 @@ export const Subagent: Extension = defineExtension({
           await configure(tx, record.id, {
             extensions: { remove: [Subagent] },
           });
-          // …and `upgrade_workspace`, which would replace the sandbox the whole tree shares.
+          // …and `upgrade_workspace`, which would replace the sandbox the whole tree shares, and `end_goal`: a
+          // goal belongs to the conversation the person set it in.
           const agent = await tx.doc(AgentDoc, record.id);
           const { tools } = agent;
+          const withheld = [UPGRADE_WORKSPACE, END_GOAL];
           agent.tools = Array.isArray(tools)
-            ? tools.filter((name) => name !== UPGRADE_WORKSPACE)
-            : { remove: [...(tools?.remove ?? []), UPGRADE_WORKSPACE] };
+            ? tools.filter((name) => !withheld.includes(name))
+            : { remove: [...(tools?.remove ?? []), ...withheld] };
           return record.id;
         }, callContext);
         if (child === undefined) {

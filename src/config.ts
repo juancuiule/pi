@@ -48,6 +48,12 @@ export const server = {
   shutdownTimeoutMs: ENV.SHUTDOWN_TIMEOUT,
 };
 
+/** What a goal (`/goal`) may use before it ends on its own. */
+export const goalBudget = {
+  turns: ENV.GOAL_MAX_TURNS,
+  costUsd: ENV.GOAL_MAX_COST_USD,
+};
+
 /** How many Seats, shell Sandboxes and desktop Sandboxes run at once. */
 export const capacity = {
   seats: ENV.MAX_SEATS,

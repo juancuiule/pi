@@ -52,12 +52,15 @@ import type {
   SubmissionNotFound,
   TitleGenerationFailed,
 } from "../errors.ts";
+import { parseGoalCommand } from "../goal/format.ts";
+import type { GoalView } from "../goal/format.ts";
 import type { LangfuseOptions } from "../langfuse.ts";
 import { postScore } from "../langfuse.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
 import { Search } from "../search/search.ts";
+import type { Todo } from "../tools/todos.ts";
 import { Workspaces } from "../workspaces/workspaces.ts";
 
 export type ConversationStatus = "running" | "idle" | "paused" | "archived";
@@ -90,7 +93,10 @@ export const titleOf = (
   if (prompt.trim() === "" && files.length > 0) {
     return titleOf(files.join(", "));
   }
-  const line = prompt.trim().replaceAll(/\s+/gu, " ");
+  // A goal is titled by its objective, not by the command.
+  const line = (parseGoalCommand(prompt)?.objective ?? prompt)
+    .trim()
+    .replaceAll(/\s+/gu, " ");
   return line.length <= TITLE_LENGTH
     ? line
     : `${line.slice(0, TITLE_LENGTH - 1)}…`;
@@ -187,7 +193,7 @@ export class Conversations extends Context.Service<
       requestId?: string
     ): Effect.Effect<
       SubmissionRecord,
-      SeatError | SkillNotFound | AttachmentError
+      SeatError | SkillNotFound | AttachmentError | InvalidSetting
     >;
     /** The Conversation's Seat when it has one; a paused or archived Conversation has none. Never resumes. */
     seat(id: number): Effect.Effect<Seat | undefined>;
@@ -312,6 +318,20 @@ export class Conversations extends Context.Service<
     >;
     /** Each resource's limit and holders, for choosing a Seat to free. */
     readonly capacity: Effect.Effect<readonly Usage[]>;
+    /** The agent's todo list. Seatless. */
+    todos(
+      id: number
+    ): Effect.Effect<readonly Todo[], AgentError | ConversationNotFound>;
+    /** The latest goal, with its progress and spend. Seatless. */
+    goal(
+      id: number
+    ): Effect.Effect<GoalView | undefined, AgentError | ConversationNotFound>;
+    /** End an active goal: the current turn finishes and no other follows. */
+    cancelGoal(
+      id: number
+    ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Resume the Conversation if it is paused and start another turn of its active goal when no Run is going. */
+    continueGoal(id: number): Effect.Effect<boolean, SeatError>;
   }
 >()("effect-pi/Conversations") {
   static readonly layer = (options: {
@@ -460,12 +480,14 @@ export class Conversations extends Context.Service<
               | SkillNotFound
               | AttachmentNotFound
               | AttachmentRefused
+              | InvalidSetting
             > => {
               if (live.get(id) !== entry) {
                 return Effect.succeed(false);
               }
               entry.pausing = false;
-              return entry.seat.send(prompt, files, requestId).pipe(
+              return entry.seat.holdGoal(false).pipe(
+                Effect.andThen(entry.seat.send(prompt, files, requestId)),
                 // A submit starts a Run in the commit that admits it, or queues behind the one going.
                 Effect.andThen((submission) =>
                   refresh(entry).pipe(
@@ -736,8 +758,18 @@ export class Conversations extends Context.Service<
           id: number
         ) {
           const entry = yield* seatOf(id);
-          // Resuming a Seat whose Pause waits for the Run cancels that Pause.
+          // Resuming a Seat whose Pause waits for the Run cancels that Pause, and an active goal carries on.
           entry.pausing = false;
+          yield* entry.seat.holdGoal(false);
+          yield* entry.seat.continueGoal.pipe(
+            Effect.andThen(refresh(entry)),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Could not continue the goal of conversation ${id}`,
+                cause
+              )
+            )
+          );
           const stored = yield* agents.get(asId(id));
           return summaryOf(stored, entry, 0, yield* attentionOf(id));
         });
@@ -749,6 +781,8 @@ export class Conversations extends Context.Service<
             return;
           }
           entry.pausing = true;
+          // A goal yields at the end of this turn instead of continuing, so the Run ends and the Seat can close.
+          yield* entry.seat.holdGoal(true);
           // Read after setting `pausing`, so a Run ending in between is seen here or by the tracking fiber.
           if (!entry.running) {
             yield* close(id);
@@ -923,7 +957,23 @@ export class Conversations extends Context.Service<
           Effect.forkScoped
         );
 
+        const continueGoal = Effect.fn("Conversations.continueGoal")(function* (
+          id: number
+        ) {
+          const entry = yield* seatOf(id);
+          entry.pausing = false;
+          yield* entry.seat.holdGoal(false);
+          const continued = yield* entry.seat.continueGoal;
+          yield* refresh(entry);
+          entry.lastActivity = yield* Clock.currentTimeMillis;
+          return continued;
+        });
+
         return Conversations.of({
+          todos: (id) => agents.todos(asId(id)),
+          goal: (id) => agents.goal(asId(id)),
+          cancelGoal: (id) => agents.cancelGoal(asId(id)),
+          continueGoal,
           create,
           list,
           send,

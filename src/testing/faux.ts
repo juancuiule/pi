@@ -19,6 +19,7 @@ import { Attachments } from "../attachments/attachments.ts";
 import type { AttachmentLimits } from "../attachments/attachments.ts";
 import { Capacity } from "../capacity.ts";
 import type { Limits } from "../capacity.ts";
+import type { GoalBudget } from "../goal/format.ts";
 import type { McpServerConfig } from "../mcp.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { Skills } from "../skills/skills.ts";
@@ -59,6 +60,8 @@ export const fauxAgents = (
      * tests opt in and queue one.
      */
     readonly titleGeneration?: boolean;
+    /** What a goal may use; `DEFAULT_GOAL_BUDGET` otherwise. */
+    readonly goalBudget?: GoalBudget;
   } = {}
 ) => {
   const models = createModels();
@@ -96,6 +99,9 @@ export const fauxAgents = (
       models,
       model: options.model ?? { provider: "faux", modelId: "faux-1" },
       titleGeneration: options.titleGeneration ?? false,
+      ...(options.goalBudget === undefined
+        ? {}
+        : { goalBudget: options.goalBudget }),
       ...(options.storage === undefined ? {} : { storage: options.storage }),
       ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
       ...(options.mcpConnectTimeoutMs === undefined

@@ -186,6 +186,33 @@ const ConversationsHandlers = HttpApiBuilder.group(
           })
         )
       )
+      .handle("todos", ({ params }) =>
+        conversations.todos(params.id).pipe(
+          Effect.map((todos) => ({ todos })),
+          Effect.catchTag("AgentError", Effect.die)
+        )
+      )
+      .handle("goal", ({ params }) =>
+        conversations.goal(params.id).pipe(
+          Effect.map((goal) => (goal === undefined ? {} : { goal })),
+          Effect.catchTag("AgentError", Effect.die)
+        )
+      )
+      .handle("cancelGoal", ({ params }) =>
+        conversations
+          .cancelGoal(params.id)
+          .pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("continueGoal", ({ params }) =>
+        conversations.continueGoal(params.id).pipe(
+          Effect.map((continued) => ({ continued })),
+          ownHolders,
+          Effect.catchTags({
+            AgentError: Effect.die,
+            SandboxError: Effect.die,
+          })
+        )
+      )
       .handle("pause", ({ params }) =>
         conversations
           .pause(params.id)
