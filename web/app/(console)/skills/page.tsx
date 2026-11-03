@@ -101,7 +101,7 @@ const SkillsPage = () => {
                       </Badge>
                     </Collapsible.Trigger>
                   </h2>
-                  <Collapsible.Panel>
+                  <Collapsible.Panel className="collapsible-panel">
                     <div className="flex flex-col gap-3 py-2 pl-9">
                       {editing === skill.name ? (
                         <SkillEditor

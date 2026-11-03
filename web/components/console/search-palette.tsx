@@ -215,7 +215,8 @@ export const SearchPalette = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent initialFocus={input}>
+      {/* Opened from the keyboard many times a day, so it appears and goes at once: no fade, no slide. */}
+      <DialogContent initialFocus={input} motion="none">
         <DialogTitle className="sr-only">Search or jump to</DialogTitle>
         <div className="border-border focus-within:ring-ring flex items-center gap-2 border-b px-3 focus-within:ring-3">
           <Search

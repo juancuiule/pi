@@ -24,7 +24,7 @@ export const WaitingNotice = ({
     return null;
   }
   return (
-    <div className="bg-muted/50 flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm md:px-4">
+    <div className="bg-muted/50 animate-in fade-in-0 flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm md:px-4">
       <Hourglass aria-hidden className="text-muted-foreground size-4" />
       <span className="flex-1">
         The agent is waiting for {WAITING_FOR[shortage.resource]}. Pause another

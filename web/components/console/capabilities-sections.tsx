@@ -72,7 +72,7 @@ export const ExtensionsSection = ({
                 </span>
               </Collapsible.Trigger>
             </h3>
-            <Collapsible.Panel>
+            <Collapsible.Panel className="collapsible-panel">
               <div className="pl-9">
                 {extension.tools.length === 0 ? (
                   <p className="text-muted-foreground py-1 text-xs">
@@ -142,7 +142,7 @@ export const McpServersSection = ({
                 </span>
               </Collapsible.Trigger>
             </h3>
-            <Collapsible.Panel>
+            <Collapsible.Panel className="collapsible-panel">
               <div className="pl-9">
                 {server.error === undefined ? null : (
                   <p className="text-destructive py-1 text-xs">
