@@ -1,6 +1,6 @@
 # Speaches: local speech-to-text for dictation
 
-[Speaches](https://github.com/speaches-ai/speaches) serves faster-whisper behind an OpenAI-compatible `/v1/audio/transcriptions`. The server posts each spoken segment of a dictation to it (`src/dictation/`, decisions in `docs/adr/0010-dictation-segments-over-one-openai-compatible-url.md`). It listens on `127.0.0.1:8000` only (`SPEACHES_PORT` changes it).
+[Speaches](https://github.com/speaches-ai/speaches) serves faster-whisper behind an OpenAI-compatible `/v1/audio/transcriptions`. The server posts each spoken segment of a dictation to it (`src/dictation/`, decisions in `docs/adr/0013-dictation-segments-over-one-openai-compatible-url.md`). It listens on `127.0.0.1:8000` only (`SPEACHES_PORT` changes it).
 
 ```sh
 pnpm speaches:up      # start; GPU when Docker can use it, CPU otherwise (--cpu forces it)

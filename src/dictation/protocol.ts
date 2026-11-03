@@ -3,7 +3,7 @@
 // imports. The client opens with a `start` text frame, then sends binary frames of 16 kHz mono PCM16 (little endian)
 // and ends with `stop` (flush what was said, then `done`) or `cancel` (drop everything; closing the socket does the
 // same). The server cuts the audio into segments at pauses: while a segment is open it sends `interim` text for it,
-// replaced by one `final` when the segment closes. Finals arrive in segment order. Decisions: docs/adr/0010.
+// replaced by one `final` when the segment closes. Finals arrive in segment order. Decisions: docs/adr/0013.
 import { Schema } from "effect";
 
 /** The rate of the PCM the client sends. */

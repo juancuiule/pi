@@ -24,11 +24,13 @@ import type { Suggestion } from "@/lib/autocomplete";
 import { useCapabilities } from "@/lib/queries";
 import { skillSuggestions } from "@/lib/skill-autocomplete";
 import { shouldSubmit } from "@/lib/transcript";
+import { useComposerDictation } from "@/lib/use-composer-dictation";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
 import { mentionQuery, pathSuggestions } from "@/lib/workspace-mentions";
 
 import { DraftChip } from "./attachment-chip";
+import { DictationButton, DictationStrip } from "./dictation";
 
 /** Files for the next message: added by the picker, a drop or a paste; each uploads at once. */
 export interface ComposerAttachments {
@@ -197,6 +199,17 @@ export const Composer = ({
   const options: readonly Suggestion[] = suggestions?.options ?? [];
   const active = options[Math.min(selected, options.length - 1)];
 
+  const { dictation, toggleDictation, editedDuringDictation } =
+    useComposerDictation({
+      prompt,
+      onPrompt,
+      textarea,
+      onCaret: (position) => {
+        setCursor(position);
+        caretAfterRender.current = position;
+      },
+    });
+
   const mentioning = mentionQuery(prompt, at) !== undefined;
   useEffect(() => {
     if (mentioning) {
@@ -239,6 +252,11 @@ export const Composer = ({
         setDismissed(prompt);
         return;
       }
+    }
+    if (event.key === "Escape" && dictation.status !== "idle") {
+      event.preventDefault();
+      dictation.cancel();
+      return;
     }
     if (
       shouldSubmit({ ...event, isComposing: event.nativeEvent.isComposing })
@@ -305,6 +323,7 @@ export const Composer = ({
         )}
       >
         <DraftList attachments={attachments} />
+        <DictationStrip dictation={dictation} />
         <div className="flex items-end gap-2">
           <AttachButton attachments={attachments} />
           <textarea
@@ -315,6 +334,7 @@ export const Composer = ({
             rows={tall ? 3 : 1}
             value={prompt}
             onChange={(event) => {
+              editedDuringDictation(event.target.value);
               onPrompt(event.target.value);
               setCursor(event.target.selectionStart);
               setSelected(0);
@@ -327,6 +347,7 @@ export const Composer = ({
               tall ? "min-h-24" : "min-h-9"
             )}
           />
+          <DictationButton dictation={dictation} onToggle={toggleDictation} />
           <Button
             size="icon-sm"
             aria-label={running ? "Queue message" : "Send"}
