@@ -890,7 +890,7 @@ describe("a Seat mid-open", () => {
         yield* Deferred.await(started);
         const listed = yield* conversations.list(alice.id);
         const upgrading = yield* conversations
-          .upgrade(listed[0]?.id ?? -1, { software: ["uv"] })
+          .upgrade(listed[0]?.id ?? -1, { software: ["ffmpeg"] })
           .pipe(Effect.forkChild);
         yield* Effect.sleep("50 millis");
         yield* Deferred.succeed(hold, true);
@@ -904,9 +904,9 @@ describe("a Seat mid-open", () => {
     // The stored-Upgrade path never ran: the Seat's open committed first, then the Upgrade replaced its Sandbox.
     expect(sandboxes.created).toStrictEqual([
       { kind: "shell", software: ["node"] },
-      { kind: "shell", software: ["node", "uv"] },
+      { kind: "shell", software: ["node", "ffmpeg"] },
     ]);
-    expect(result.upgraded.software).toStrictEqual(["node", "uv"]);
+    expect(result.upgraded.software).toStrictEqual(["node", "ffmpeg"]);
     expect(result.created.id).toBe(result.upgraded.id);
   });
 
@@ -925,7 +925,7 @@ describe("a Seat mid-open", () => {
           prompt: "hi",
         });
         const upgrading = yield* conversations
-          .upgrade(created.id, { software: ["uv"] })
+          .upgrade(created.id, { software: ["ffmpeg"] })
           .pipe(Effect.forkChild);
         yield* Deferred.await(started);
         const pausing = yield* conversations
@@ -951,14 +951,14 @@ describe("a Seat mid-open", () => {
     expect(result.during).toStrictEqual([result.upgraded.id]);
     expect(sandboxes.created).toStrictEqual([
       { kind: "shell", software: [] },
-      { kind: "shell", software: ["uv"] },
+      { kind: "shell", software: ["ffmpeg"] },
     ]);
     // Nothing orphaned: both Sandboxes removed, every claim released, the Conversation paused.
     expect(result.sandboxesLive).toBe(0);
     expect(result.after).toStrictEqual([]);
     expect(result.listed[0]).toMatchObject({
       status: "paused",
-      software: ["uv"],
+      software: ["ffmpeg"],
     });
   }, 30_000);
 
@@ -1049,7 +1049,7 @@ describe("a failed build", () => {
           prompt: "hi",
         });
         const upgraded = yield* conversations
-          .upgrade(created.id, { software: ["uv"] })
+          .upgrade(created.id, { software: ["ffmpeg"] })
           .pipe(Effect.flip);
         // The Seat is unharmed: its old Sandbox still serves sends.
         yield* conversations.send(created.id, "more");

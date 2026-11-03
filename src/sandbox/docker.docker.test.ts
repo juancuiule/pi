@@ -180,6 +180,42 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
       expect(volumeExists(storage.id)).toBeFalsy();
     });
 
+    it("has Python packaging in the base image, and says how to get a missing command", async () => {
+      const outputs = await Effect.runPromise(
+        Effect.gen(function* () {
+          const workspaces = yield* Workspaces;
+          const { storage, results } = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const created = yield* workspaces.sandbox({ level: "shell" });
+              const env = workspaces.env(created.sandbox);
+              return {
+                storage: created.storage,
+                results: [
+                  // pip installs system-wide as root, and what it installs runs.
+                  yield* run(
+                    env,
+                    "pip install --quiet --no-cache six && python -c 'import six; print(\"six\")' && uv --version >/dev/null && echo uv"
+                  ),
+                  // The exit status, after the handler's hint.
+                  yield* run(env, "ffmpeg -version; echo $?"),
+                  yield* run(env, "yt-dlp --version; echo $?"),
+                ],
+              };
+            })
+          );
+          yield* workspaces.discard(storage);
+          return results;
+        }).pipe(Effect.provide(testWorkspaces()))
+      );
+
+      const [pip, catalog, other] = outputs;
+      expect(pip).toStrictEqual({ ok: true, text: "six\nuv\n" });
+      expect(catalog?.text).toContain('FFmpeg is Software (id "ffmpeg")');
+      expect(catalog?.text).toMatch(/\n127\n$/u);
+      expect(other?.text).toContain("`uvx yt-dlp` runs it from PyPI");
+      expect(other?.text).toMatch(/\n127\n$/u);
+    });
+
     it("installs Software in an image built once, and reused by the next Sandbox", async () => {
       const runs = await Effect.runPromise(
         Effect.gen(function* () {
@@ -188,11 +224,11 @@ describe.skipIf(!(await DockerSandboxes.dockerAvailable()))(
             Effect.gen(function* () {
               const created = yield* workspaces.sandbox({
                 level: "shell",
-                software: ["uv"],
+                software: ["node"],
               });
               const output = yield* run(
                 workspaces.env(created.sandbox),
-                "uv --version && test -x /usr/local/bin/open"
+                "node --version && test -x /usr/local/bin/open"
               );
               const image = imageOf(created.sandbox.id);
               return {

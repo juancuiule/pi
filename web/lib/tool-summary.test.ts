@@ -63,6 +63,19 @@ describe(toolSummary, () => {
     ).toStrictEqual(["Do the thing", "research", "research / guide.md"]);
   });
 
+  it("summarizes upgrade_workspace by its Level and software", () => {
+    expect(
+      cases([
+        ["upgrade_workspace", { level: "shell", reason: "to run code" }],
+        [
+          "upgrade_workspace",
+          { level: "shell", software: ["ffmpeg", "node"], reason: "video" },
+        ],
+        ["upgrade_workspace", { software: ["ffmpeg"], reason: "video" }],
+      ]).got
+    ).toStrictEqual(["shell", "shell + ffmpeg, node", "+ ffmpeg"]);
+  });
+
   it("summarizes desktop tools", () => {
     expect(
       cases([

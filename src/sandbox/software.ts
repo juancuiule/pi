@@ -24,6 +24,8 @@ interface SoftwareSpec {
   readonly install: string;
   /** What the agent is told is installed. */
   readonly prompt: string;
+  /** The commands it provides, which docker/sandbox/sandbox-env.sh names when one is missing. */
+  readonly commands: readonly string[];
   /** The host architectures it installs on; every one when absent. */
   readonly arch?: readonly ("x64" | "arm64")[];
   /**
@@ -32,9 +34,6 @@ interface SoftwareSpec {
    */
   readonly retired?: string;
 }
-
-const UV =
-  "ARCH=$(uname -m) && curl -fsSL https://github.com/astral-sh/uv/releases/download/0.9.5/uv-$ARCH-unknown-linux-gnu.tar.gz | tar -xz -C /usr/local/bin --strip-components=1";
 
 const apt = (packages: string) =>
   `apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${packages} && rm -rf /var/lib/apt/lists/*`;
@@ -47,23 +46,28 @@ export const SOFTWARE: Record<SoftwareId, SoftwareSpec> = {
     install:
       'ARCH=$(dpkg --print-architecture | sed "s/amd64/x64/") && curl -fsSL https://nodejs.org/dist/v24.14.1/node-v24.14.1-linux-$ARCH.tar.gz | tar -xz -C /usr/local --strip-components=1 --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md && corepack enable pnpm yarn',
     prompt: "Node.js 24 (`node`, `npm`, `npx`, `pnpm`, `yarn`)",
+    commands: ["node", "npm", "npx", "pnpm", "yarn", "corepack"],
   },
   uv: {
     label: "uv (Python packages)",
     description: "Astral's uv, for Python virtual environments and packages.",
     level: "shell",
-    install: UV,
-    prompt:
-      "uv, which manages Python environments and packages (`uv venv`, `uv pip install`, `uv run`). Use it instead of pip.",
+    install: "true",
+    prompt: "uv",
+    commands: [],
+    retired:
+      "Every shell and desktop image has uv and a pip that installs system-wide",
   },
   "python-data": {
     label: "Python data science",
-    description:
-      "numpy, pandas, matplotlib, scipy and openpyxl, with pip and uv.",
+    description: "numpy, pandas, matplotlib, scipy and openpyxl.",
     level: "shell",
-    install: `${UV} && uv pip install --system --break-system-packages --no-cache pip numpy pandas matplotlib scipy openpyxl && rm -f /usr/lib/python3*/EXTERNALLY-MANAGED && printf "[global]\\nroot-user-action = ignore\\n" > /etc/pip.conf`,
+    // The base image has uv and pip (docker/sandbox/shell.Dockerfile).
+    install:
+      "uv pip install --system --break-system-packages --no-cache numpy pandas matplotlib scipy openpyxl",
     prompt:
-      "numpy, pandas, matplotlib, scipy and openpyxl for the system python3, plus `pip` and `uv`. `pip install` works system-wide. Use matplotlib's Agg backend to save charts as files.",
+      "numpy, pandas, matplotlib, scipy and openpyxl for the system python3. Use matplotlib's Agg backend to save charts as files.",
+    commands: [],
   },
   imagemagick: {
     label: "ImageMagick",
@@ -71,6 +75,7 @@ export const SOFTWARE: Record<SoftwareId, SoftwareSpec> = {
     level: "shell",
     install: apt("imagemagick"),
     prompt: "ImageMagick (`convert`, `identify`, `mogrify`)",
+    commands: ["convert", "identify", "mogrify", "magick"],
   },
   ffmpeg: {
     label: "FFmpeg",
@@ -78,6 +83,7 @@ export const SOFTWARE: Record<SoftwareId, SoftwareSpec> = {
     level: "shell",
     install: apt("ffmpeg"),
     prompt: "FFmpeg (`ffmpeg`, `ffprobe`)",
+    commands: ["ffmpeg", "ffprobe"],
   },
   chrome: {
     label: "Google Chrome",
@@ -85,6 +91,7 @@ export const SOFTWARE: Record<SoftwareId, SoftwareSpec> = {
     level: "desktop",
     install: "true",
     prompt: "Google Chrome (`google-chrome`)",
+    commands: [],
     arch: ["x64", "arm64"],
     retired:
       "Every shell and desktop image has Google Chrome, for agent-browser",
