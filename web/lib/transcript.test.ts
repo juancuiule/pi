@@ -1,7 +1,12 @@
 import type { Message } from "effect-pi/api";
 import { describe, expect, it } from "vitest";
 
-import { isNearBottom, shouldSubmit, userParts } from "./transcript";
+import {
+  displayParts,
+  isNearBottom,
+  shouldSubmit,
+  userParts,
+} from "./transcript";
 
 describe(isNearBottom, () => {
   it("is true within the threshold and false beyond it", () => {
@@ -43,6 +48,24 @@ describe(userParts, () => {
     expect(userParts(message as never)).toStrictEqual({
       text: "a\nb",
       images: [{ src: "data:image/png;base64,AAA" }],
+    });
+  });
+});
+
+describe(displayParts, () => {
+  it("shows a scheduled message as typed, with the schedule that sent it", () => {
+    const parts = displayParts(
+      [
+        '<scheduled_run schedule="sch_1" title="Stretch" due="2026-11-04T09:00:00.000-05:00">',
+        "A schedule sent this message at its due time; the person did not type it just now. Do what it asks, then answer as usual.",
+        "</scheduled_run>",
+        "",
+        "Remind me to stretch.",
+      ].join("\n")
+    );
+    expect({ shown: parts.shown, title: parts.schedule?.title }).toStrictEqual({
+      shown: "Remind me to stretch.",
+      title: "Stretch",
     });
   });
 });

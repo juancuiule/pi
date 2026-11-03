@@ -26,10 +26,12 @@ import {
   InvalidAccount,
   InvalidCredentials,
   InvalidDomain,
+  InvalidSchedule,
   InvalidSetting,
   InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
+  ScheduleNotFound,
   SetupClosed,
   SkillNotFound,
   SubmissionNotFound,
@@ -79,10 +81,12 @@ export {
   InvalidAccount,
   InvalidCredentials,
   InvalidDomain,
+  InvalidSchedule,
   InvalidSetting,
   InvalidSkill,
   InvalidUpgrade,
   SandboxUnavailable,
+  ScheduleNotFound,
   SetupClosed,
   SkillNotFound,
   SubmissionNotFound,
@@ -92,6 +96,12 @@ export {
   Unauthorized,
   WorkspaceFileNotFound,
 } from "../errors.ts";
+export {
+  isScheduledRequest,
+  MARK_CLOSE,
+  MARK_OPEN,
+  scheduleRequestId,
+} from "../schedules/marks.ts";
 
 export const SandboxChoice = Schema.Literals(["none", "shell", "desktop"]);
 export type SandboxChoice = typeof SandboxChoice.Type;
@@ -136,6 +146,10 @@ export const ConversationSummary = Schema.Struct({
   createdAt: Schema.Number,
   pendingApprovals: Schema.Number,
   attention: Schema.optionalKey(Attention),
+  /** The schedule occurrence that opened it: the schedule's id and the occurrence's time. */
+  schedule: Schema.optionalKey(
+    Schema.Struct({ id: Schema.String, due: Schema.Number })
+  ),
 });
 export type ConversationSummary = typeof ConversationSummary.Type;
 
@@ -734,6 +748,148 @@ const TrustedDomainGroup = HttpApiGroup.make("trustedDomains").add(
   })
 );
 
+const NoSchedule = ScheduleNotFound.pipe(HttpApiSchema.status(404));
+const BadSchedule = InvalidSchedule.pipe(HttpApiSchema.status(400));
+
+/** When a schedule fires: a one-time `at` or `inMinutes`, or a repeating five-field `cron`, in its time zone. */
+export const WhenInput = Schema.Union([
+  /** A local date-time in the zone (`2026-11-04T09:00`), or an ISO time with an offset. */
+  Schema.Struct({ at: Schema.String.check(Schema.isMaxLength(64)) }),
+  Schema.Struct({ inMinutes: Schema.Number }),
+  Schema.Struct({ cron: Schema.String.check(Schema.isMaxLength(128)) }),
+]);
+export type WhenInput = typeof WhenInput.Type;
+
+const ScheduleWhen = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("once"), at: Schema.Number }),
+  Schema.Struct({ kind: Schema.Literal("cron"), cron: Schema.String }),
+]);
+
+const ScheduleToggles = Schema.Struct({
+  extensions: Toggles,
+  tools: Toggles,
+  skills: Toggles,
+});
+
+export const ScheduleRun = Schema.Struct({
+  due: Schema.Number,
+  firedAt: Schema.Number,
+  status: Schema.Literals(["sent", "missed", "failed"]),
+  late: Schema.Boolean,
+  conversation: Schema.optionalKey(Schema.Number),
+  detail: Schema.optionalKey(Schema.String),
+});
+export type ScheduleRun = typeof ScheduleRun.Type;
+
+/** A schedule as its owner sees it (see src/schedules/format.ts). */
+export const Schedule = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  prompt: Schema.String,
+  when: ScheduleWhen,
+  timeZone: Schema.String,
+  target: Schema.Union([
+    Schema.Struct({
+      kind: Schema.Literal("conversation"),
+      conversation: Schema.Number,
+    }),
+    Schema.Struct({
+      kind: Schema.Literal("new"),
+      level: SandboxChoice,
+      software: Schema.Array(SoftwareId),
+      approvals: Schema.Literals(["ask", "auto"]),
+      settings: Schema.optionalKey(ScheduleToggles),
+    }),
+  ]),
+  status: Schema.Literals(["active", "paused", "done", "cancelled"]),
+  nextAt: Schema.optionalKey(Schema.Number),
+  retryAt: Schema.optionalKey(Schema.Number),
+  attempts: Schema.Number,
+  createdAt: Schema.Number,
+  createdBy: Schema.Literals(["person", "agent"]),
+  origin: Schema.optionalKey(Schema.Number),
+  lastRun: Schema.optionalKey(ScheduleRun),
+  detail: Schema.optionalKey(Schema.String),
+});
+export type Schedule = typeof Schedule.Type;
+
+const ScheduleFields = {
+  title: Schema.String.check(Schema.isMaxLength(200)),
+  prompt: Schema.String.check(Schema.isMaxLength(20_000)),
+  when: WhenInput,
+  /** The zone its wall-clock times are in; the User's by default. */
+  timeZone: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
+};
+
+const ScheduleId = { schedule: Schema.String };
+
+// Work later or on a repeat: follow-ups into a Conversation (under `conversations/:id`, so the owner check covers
+// them) and new Conversations per run. Firing is the Scheduler's (src/schedules/scheduler.ts).
+const ScheduleGroup = HttpApiGroup.make("schedules").add(
+  HttpApiEndpoint.get("list", "/schedules", {
+    success: Schema.Array(Schedule),
+  }),
+  HttpApiEndpoint.post("create", "/schedules", {
+    payload: Schema.Struct({
+      ...ScheduleFields,
+      sandbox: SandboxChoice,
+      software: Schema.optionalKey(Schema.Array(SoftwareId)),
+      approvals: Schema.optionalKey(Schema.Literals(["ask", "auto"])),
+      settings: Schema.optionalKey(ScheduleToggles),
+    }),
+    success: Schedule.pipe(HttpApiSchema.status(201)),
+    error: BadSchedule,
+  }),
+  HttpApiEndpoint.get("forConversation", "/conversations/:id/schedules", {
+    params: ById,
+    success: Schema.Array(Schedule),
+    error: NotFound,
+  }),
+  HttpApiEndpoint.post("followUp", "/conversations/:id/schedules", {
+    params: ById,
+    payload: Schema.Struct(ScheduleFields),
+    success: Schedule.pipe(HttpApiSchema.status(201)),
+    error: [NotFound, BadSchedule, Archived],
+  }),
+  HttpApiEndpoint.get("get", "/schedules/:schedule", {
+    params: ScheduleId,
+    success: Schema.Struct({
+      schedule: Schedule,
+      runs: Schema.Array(ScheduleRun),
+    }),
+    error: NoSchedule,
+  }),
+  HttpApiEndpoint.post("pause", "/schedules/:schedule/pause", {
+    params: ScheduleId,
+    success: Schedule,
+    error: NoSchedule,
+  }),
+  HttpApiEndpoint.post("resume", "/schedules/:schedule/resume", {
+    params: ScheduleId,
+    success: Schedule,
+    error: NoSchedule,
+  }),
+  HttpApiEndpoint.post("cancel", "/schedules/:schedule/cancel", {
+    params: ScheduleId,
+    success: Schedule,
+    error: NoSchedule,
+  }),
+  // The zone new schedules use: the browser reports it, `reported` false until it has.
+  HttpApiEndpoint.get("timeZone", "/time-zone", {
+    success: Schema.Struct({
+      timeZone: Schema.String,
+      reported: Schema.Boolean,
+    }),
+  }),
+  HttpApiEndpoint.put("setTimeZone", "/time-zone", {
+    payload: Schema.Struct({
+      timeZone: Schema.String.check(Schema.isMaxLength(64)),
+    }),
+    success: Schema.Struct({ timeZone: Schema.String }),
+    error: BadSchedule,
+  })
+);
+
 /** A file or directory in a Conversation's Workspace, as the console's Files tab lists it. */
 export const WorkspaceFileEntry = Schema.Struct({
   name: Schema.String,
@@ -905,6 +1061,7 @@ export const Api = HttpApi.make("effect-pi")
   .add(AttachmentGroup)
   .add(ArtifactGroup)
   .add(TrustedDomainGroup)
+  .add(ScheduleGroup)
   .add(SkillGroup)
   .add(FileGroup)
   .add(SearchGroup)

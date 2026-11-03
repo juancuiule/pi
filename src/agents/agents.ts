@@ -85,7 +85,7 @@ import type {
   QueuedInput,
   UnansweredInput,
 } from "../conversation-events.ts";
-import type { StoredConversation } from "../conversation-meta.ts";
+import type { ScheduledBy, StoredConversation } from "../conversation-meta.ts";
 import { conversationOwner, MetaDoc } from "../conversation-meta.ts";
 import type {
   AttachmentNotFound,
@@ -123,6 +123,9 @@ import {
   SOFTWARE,
 } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
+import { escapeScheduleTags, scheduleBlock } from "../schedules/format.ts";
+import type { ScheduleMark } from "../schedules/format.ts";
+import { Schedules, schedulesExtension } from "../schedules/schedules.ts";
 import type { SaveScreenshot } from "../screenshots.ts";
 import type { Skill } from "../skills/format.ts";
 import { Skills, SkillsDoc, skillsExtension } from "../skills/skills.ts";
@@ -419,6 +422,12 @@ const watchStream = <V, A>(
     })
   );
 
+/** How a message was sent, beyond its text. */
+export interface SendOptions {
+  /** A schedule fired it: the message leads with the schedule's block (src/schedules/format.ts). */
+  readonly schedule?: ScheduleMark | undefined;
+}
+
 /** A Conversation live in this process; it ends, and its Sandbox is removed, when the scope `open` ran in closes. */
 export interface Seat {
   readonly id: ConversationId;
@@ -458,7 +467,8 @@ export interface Seat {
   send(
     prompt: string,
     attachments?: readonly string[],
-    requestId?: string
+    requestId?: string,
+    options?: SendOptions
   ): Effect.Effect<
     SubmissionRecord,
     AgentError | SkillNotFound | AttachmentNotFound | AttachmentRefused
@@ -569,6 +579,8 @@ export class Agents extends Context.Service<
       readonly approvals?: ApprovalPolicy | undefined;
       /** Changes to what a conversation at this Level gets by default. */
       readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
+      /** The schedule occurrence that opened it, kept in its metadata. */
+      readonly schedule?: ScheduledBy | undefined;
     }): Effect.Effect<
       ConversationId,
       AgentError | SkillNotFound | InvalidSetting
@@ -875,6 +887,19 @@ export class Agents extends Context.Service<
         if (webExt !== undefined) {
           registry.install(webExt);
         }
+        // `schedule`, only when the layer was given Schedules: follow-ups and recurring runs, at every Level, on
+        // the host. Not locked; children have the tool removed.
+        const schedulesService = yield* Effect.serviceOption(Schedules);
+        const schedulesExt =
+          schedulesService._tag === "Some"
+            ? schedulesExtension(
+                schedulesService.value,
+                yield* Effect.context<never>()
+              )
+            : undefined;
+        if (schedulesExt !== undefined) {
+          registry.install(schedulesExt);
+        }
         // `task`: delegation to a subagent conversation; children have it removed.
         registry.install(Subagent);
         // Every installed extension, for the console; and those every conversation selects, whatever its Level.
@@ -886,6 +911,7 @@ export class Agents extends Context.Service<
           questionsExt,
           Subagent,
           ...(webExt === undefined ? [] : [webExt]),
+          ...(schedulesExt === undefined ? [] : [schedulesExt]),
           skillsExt,
           ...mcp.extensions,
           repeatGuard,
@@ -898,6 +924,7 @@ export class Agents extends Context.Service<
           questionsExt,
           Subagent,
           ...(webExt === undefined ? [] : [webExt]),
+          ...(schedulesExt === undefined ? [] : [schedulesExt]),
           skillsExt,
           ...mcp.extensions,
           repeatGuard,
@@ -941,6 +968,7 @@ export class Agents extends Context.Service<
             questionsExt,
             Subagent,
             ...(webExt === undefined ? [] : [webExt]),
+            ...(schedulesExt === undefined ? [] : [schedulesExt]),
             skillsExt,
             ...mcp.extensions,
             repeatGuard,
@@ -1517,6 +1545,7 @@ export class Agents extends Context.Service<
           readonly owner: UserId;
           readonly approvals?: ApprovalPolicy | undefined;
           readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
+          readonly schedule?: ScheduledBy | undefined;
         }) {
           const software = normalize(createOptions.software ?? []);
           const softwareProblem = checkSoftware(createOptions.level, software);
@@ -1574,6 +1603,9 @@ export class Agents extends Context.Service<
                     title: createOptions.title,
                     createdAt: createOptions.createdAt,
                     owner: createOptions.owner,
+                    ...(createOptions.schedule === undefined
+                      ? {}
+                      : { schedule: { ...createOptions.schedule } }),
                   };
                   const workspace = await tx.doc(WorkspaceDoc, id);
                   workspace.level = createOptions.level;
@@ -1990,10 +2022,16 @@ export class Agents extends Context.Service<
           const send = Effect.fn("Seat.send")(function* (
             prompt: string,
             attachmentIds: readonly string[] = [],
-            requestId?: string
+            requestId?: string,
+            sendOptions: SendOptions = {}
           ) {
-            // Skills read only what the person typed, never a file's text.
-            const expanded = yield* expand(prompt, id);
+            // Skills read only what the person typed, never a file's text. A schedule's block leads the message,
+            // after the expansion so a saved `/skill:` prompt still forces its skill; typed text cannot forge one.
+            const typed = escapeScheduleTags(yield* expand(prompt, id));
+            const expanded =
+              sendOptions.schedule === undefined
+                ? typed
+                : `${scheduleBlock(sendOptions.schedule)}\n\n${typed}`;
             yield* annotate(expanded);
             // Admitted without waiting: a busy conversation queues it, steering the run when it waits on a person
             // and as a follow-up while it works, and the answer arrives as events. No `tracing.traced`: the send

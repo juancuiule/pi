@@ -24,6 +24,7 @@ import type {
   AgentError,
   ConversationAgent,
   Seat,
+  SendOptions,
   UpgradeRequest,
 } from "../agents/agents.ts";
 import type { SettingsChange } from "../agents/settings.ts";
@@ -34,7 +35,7 @@ import type { UserId } from "../auth/user.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, Usage } from "../capacity.ts";
 import type { ConversationEvent, HistoryPage } from "../conversation-events.ts";
-import type { StoredConversation } from "../conversation-meta.ts";
+import type { ScheduledBy, StoredConversation } from "../conversation-meta.ts";
 import {
   ApprovalNotFound,
   ConversationArchived,
@@ -57,6 +58,7 @@ import { postScore } from "../langfuse.ts";
 import type { SandboxChoice, SandboxError } from "../sandbox/sandbox.ts";
 import { checkSoftware, normalize } from "../sandbox/software.ts";
 import type { SoftwareId } from "../sandbox/software.ts";
+import type { ScheduleMark } from "../schedules/format.ts";
 import { Search } from "../search/search.ts";
 import { Workspaces } from "../workspaces/workspaces.ts";
 
@@ -77,6 +79,8 @@ export interface ConversationSummary {
   readonly pendingApprovals: number;
   /** The last settled input ended badly — a failed run or the repeat guard's stop. */
   readonly attention?: Attention;
+  /** The schedule occurrence that opened it. */
+  readonly schedule?: ScheduledBy;
   readonly createdAt: number;
 }
 
@@ -137,6 +141,9 @@ const summaryOf = (
     pausing: live?.pausing ?? false,
     pendingApprovals,
     ...(attention === undefined ? {} : { attention }),
+    ...(stored.meta.schedule === undefined
+      ? {}
+      : { schedule: stored.meta.schedule }),
     createdAt: stored.meta.createdAt,
   };
 };
@@ -168,6 +175,10 @@ export class Conversations extends Context.Service<
       readonly requestId?: string | undefined;
       readonly approvals?: "ask" | "auto" | undefined;
       readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
+      /** The title; the prompt's first line by default. */
+      readonly title?: string | undefined;
+      /** A schedule fired it: kept in its metadata, and the first message leads with the schedule's block. */
+      readonly schedule?: ScheduleMark | undefined;
     }): Effect.Effect<
       ConversationSummary & { readonly submission: SubmissionRecord },
       SeatError | SkillNotFound | InvalidSetting | AttachmentError
@@ -184,7 +195,8 @@ export class Conversations extends Context.Service<
       id: number,
       prompt: string,
       attachments?: readonly string[],
-      requestId?: string
+      requestId?: string,
+      options?: SendOptions
     ): Effect.Effect<
       SubmissionRecord,
       SeatError | SkillNotFound | AttachmentError
@@ -451,7 +463,8 @@ export class Conversations extends Context.Service<
           entry: Live,
           prompt: string,
           files: readonly string[],
-          requestId?: string
+          requestId?: string,
+          sendOptions?: SendOptions
         ) =>
           Effect.suspend(
             (): Effect.Effect<
@@ -465,18 +478,20 @@ export class Conversations extends Context.Service<
                 return Effect.succeed(false);
               }
               entry.pausing = false;
-              return entry.seat.send(prompt, files, requestId).pipe(
-                // A submit starts a Run in the commit that admits it, or queues behind the one going.
-                Effect.andThen((submission) =>
-                  refresh(entry).pipe(
-                    Effect.andThen(Clock.currentTimeMillis),
-                    Effect.map((now) => {
-                      entry.lastActivity = now;
-                      return submission;
-                    })
+              return entry.seat
+                .send(prompt, files, requestId, sendOptions)
+                .pipe(
+                  // A submit starts a Run in the commit that admits it, or queues behind the one going.
+                  Effect.andThen((submission) =>
+                    refresh(entry).pipe(
+                      Effect.andThen(Clock.currentTimeMillis),
+                      Effect.map((now) => {
+                        entry.lastActivity = now;
+                        return submission;
+                      })
+                    )
                   )
-                )
-              );
+                );
             }
           ).pipe(entry.lock.withPermit);
 
@@ -631,7 +646,8 @@ export class Conversations extends Context.Service<
           id: number,
           prompt: string,
           files: readonly string[] = [],
-          requestId?: string
+          requestId?: string,
+          sendOptions?: SendOptions
         ) {
           // A Seat that closes while this send waits for it is resumed again: the send is the newer intent.
           for (let tries = 0; tries < 3; tries += 1) {
@@ -641,7 +657,8 @@ export class Conversations extends Context.Service<
               entry,
               prompt,
               files,
-              requestId
+              requestId,
+              sendOptions
             );
             if (submission !== false) {
               return submission;
@@ -661,6 +678,8 @@ export class Conversations extends Context.Service<
           readonly requestId?: string | undefined;
           readonly approvals?: "ask" | "auto" | undefined;
           readonly settings?: Omit<SettingsChange, "approvals"> | undefined;
+          readonly title?: string | undefined;
+          readonly schedule?: ScheduleMark | undefined;
         }) {
           const files = input.attachments ?? [];
           // Before the claims in `seatIn`, so bad Software reads as a 400 even with no Seat or Level room left.
@@ -682,16 +701,23 @@ export class Conversations extends Context.Service<
               // Claimed first, so a create at a limit records nothing. The title is the prompt as typed.
               const created = yield* agents.create({
                 prompt: input.prompt,
-                title: titleOf(
-                  input.prompt,
-                  reservation?.records.map((record) => record.name)
-                ),
+                title:
+                  input.title === undefined
+                    ? titleOf(
+                        input.prompt,
+                        reservation?.records.map((record) => record.name)
+                      )
+                    : titleOf(input.title),
                 level: input.sandbox,
                 software: input.software,
                 createdAt: yield* Clock.currentTimeMillis,
                 owner: input.owner,
                 approvals: input.approvals,
                 settings: input.settings,
+                schedule:
+                  input.schedule === undefined
+                    ? undefined
+                    : { id: input.schedule.id, due: input.schedule.due },
               });
               const createdId = Number(created);
               const gate = yield* Deferred.make<boolean>();
@@ -723,7 +749,8 @@ export class Conversations extends Context.Service<
             id,
             input.prompt,
             files,
-            input.requestId
+            input.requestId,
+            { schedule: input.schedule }
           ).pipe(Effect.onError(() => close(id)));
           const stored = yield* agents.get(asId(id));
           return {

@@ -3,6 +3,7 @@
 import type { SearchResult } from "effect-pi/api";
 import {
   BookOpen,
+  CalendarClock,
   Gauge,
   LayoutTemplate,
   MessageSquare,
@@ -32,6 +33,12 @@ export const PAGES: readonly Page[] = [
     label: "Skills",
     icon: BookOpen,
     keywords: ["skill", "prompts", "agents"],
+  },
+  {
+    href: "/schedules",
+    label: "Schedules",
+    icon: CalendarClock,
+    keywords: ["schedule", "cron", "reminders", "recurring", "later"],
   },
   {
     href: "/artifacts",

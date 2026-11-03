@@ -99,6 +99,7 @@ const plainError: Record<string, string> = {
   SandboxUnavailable: "The conversation's sandbox isn't running.",
   EntryNotFound: "That message can't be rated.",
   SubmissionNotFound: "That message is no longer queued.",
+  ScheduleNotFound: "That schedule no longer exists.",
   TraceUnavailable: "Scoring isn't available for that message.",
   Unauthorized: "You're signed out. Sign in again.",
   InvalidCredentials: "Wrong name or password.",
@@ -137,6 +138,7 @@ export const apiError = (error: unknown): string => {
       case "InvalidAccount":
       case "InvalidUpgrade":
       case "InvalidSetting":
+      case "InvalidSchedule":
       case "InvalidDomain": {
         return "reason" in error && error.reason !== undefined
           ? String(error.reason)

@@ -299,6 +299,8 @@ describe("task", () => {
     };
     expect(tools).not.toContain("task");
     expect(tools).not.toContain(UPGRADE_WORKSPACE);
+    // A schedule would outlive the child's task.
+    expect(tools).not.toContain("schedule");
     expect(tools).toContain("ask_user");
     // The parent's skills were copied into the child's SkillsDoc at creation.
     const sections: Record<string, string> = {};

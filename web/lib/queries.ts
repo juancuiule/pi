@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 
 import { runApi } from "./api";
+import type { ApiClient } from "./api";
 import type { CapacityGuard } from "./capacity-context";
 import { useCapacityGuard } from "./capacity-context";
 import { seatlessOf } from "./conversation-status";
@@ -229,6 +230,96 @@ export const useRemoveDomain = () => {
       runApi((c) => c.trustedDomains.remove({ params: { domain } })),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: TRUSTED_DOMAINS }),
+  });
+};
+
+const SCHEDULES = ["schedules"] as const;
+
+/** The User's schedules, newest first; with `conversation`, the follow-ups into it. Polled: fires change them. */
+export const useSchedules = (conversation?: number) =>
+  useQuery({
+    queryKey:
+      conversation === undefined ? SCHEDULES : [...SCHEDULES, conversation],
+    queryFn: () =>
+      runApi((c) =>
+        conversation === undefined
+          ? c.schedules.list()
+          : c.schedules.forConversation({ params: { id: conversation } })
+      ),
+    refetchInterval: 30_000,
+  });
+
+/** One schedule and its recent runs. */
+export const useScheduleRuns = (id: string | undefined) =>
+  useQuery({
+    queryKey: [...SCHEDULES, "runs", id],
+    queryFn: () =>
+      runApi((c) => c.schedules.get({ params: { schedule: id ?? "" } })),
+    enabled: id !== undefined,
+  });
+
+export type NewSchedule = Parameters<
+  ApiClient["schedules"]["create"]
+>[0]["payload"];
+export type NewFollowUp = Parameters<
+  ApiClient["schedules"]["followUp"]
+>[0]["payload"];
+
+/** Make a schedule: a new conversation per run, or (with `conversation`) a follow-up into that one. */
+export const useCreateSchedule = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (
+      input:
+        | { readonly kind: "new"; readonly payload: NewSchedule }
+        | {
+            readonly kind: "followUp";
+            readonly conversation: number;
+            readonly payload: NewFollowUp;
+          }
+    ) =>
+      runApi((c) =>
+        input.kind === "new"
+          ? c.schedules.create({ payload: input.payload })
+          : c.schedules.followUp({
+              params: { id: input.conversation },
+              payload: input.payload,
+            })
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: SCHEDULES }),
+  });
+};
+
+/** Pause, resume or cancel a schedule. */
+export const useScheduleAction = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      readonly id: string;
+      readonly action: "pause" | "resume" | "cancel";
+    }) =>
+      runApi((c) =>
+        c.schedules[input.action]({ params: { schedule: input.id } })
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: SCHEDULES }),
+  });
+};
+
+const TIME_ZONE = ["time-zone"] as const;
+
+/** The zone the User's new schedules use. */
+export const useTimeZone = () =>
+  useQuery({
+    queryKey: TIME_ZONE,
+    queryFn: () => runApi((c) => c.schedules.timeZone()),
+  });
+
+export const useSetTimeZone = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (timeZone: string) =>
+      runApi((c) => c.schedules.setTimeZone({ payload: { timeZone } })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TIME_ZONE }),
   });
 };
 

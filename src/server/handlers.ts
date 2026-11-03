@@ -37,6 +37,7 @@ import {
   SkillNotFound,
   WorkspaceFileNotFound,
 } from "../errors.ts";
+import { Schedules } from "../schedules/schedules.ts";
 import { Search } from "../search/search.ts";
 import { Skills } from "../skills/skills.ts";
 import { Api, CurrentUser } from "./api.ts";
@@ -789,6 +790,84 @@ const TrustedDomainsHandlers = HttpApiBuilder.group(
   })
 );
 
+const SchedulesHandlers = HttpApiBuilder.group(
+  Api,
+  "schedules",
+  Effect.fnUntraced(function* (handlers) {
+    const schedules = yield* Schedules;
+    const agents = yield* Agents;
+    return handlers
+      .handle("list", () => withUser((user) => schedules.list(user.id)))
+      .handle("create", ({ payload }) =>
+        withUser((user) =>
+          schedules.create(user.id, {
+            title: payload.title,
+            prompt: payload.prompt,
+            when: payload.when,
+            timeZone: payload.timeZone,
+            target: {
+              kind: "new",
+              level: payload.sandbox,
+              software: payload.software ?? [],
+              // Nobody watches a scheduled run start, so it runs without asking unless told otherwise.
+              approvals: payload.approvals ?? "auto",
+              ...(payload.settings === undefined
+                ? {}
+                : { settings: payload.settings }),
+            },
+            createdBy: "person",
+          })
+        )
+      )
+      .handle("forConversation", ({ params }) =>
+        withUser((user) => schedules.list(user.id, params.id))
+      )
+      .handle("followUp", ({ params, payload }) =>
+        withUser((user) =>
+          Effect.gen(function* () {
+            const stored = yield* agents.get(params.id as ConversationId);
+            if (stored.meta.archivedAt !== undefined) {
+              return yield* new ConversationArchived({ id: params.id });
+            }
+            return yield* schedules.create(user.id, {
+              title: payload.title,
+              prompt: payload.prompt,
+              when: payload.when,
+              timeZone: payload.timeZone,
+              target: { kind: "conversation", conversation: params.id },
+              createdBy: "person",
+            });
+          })
+        ).pipe(Effect.catchTag("AgentError", Effect.die))
+      )
+      .handle("get", ({ params }) =>
+        withUser((user) =>
+          Effect.all({
+            schedule: schedules.get(user.id, params.schedule),
+            runs: schedules.runs(user.id, params.schedule),
+          })
+        )
+      )
+      .handle("pause", ({ params }) =>
+        withUser((user) => schedules.pause(user.id, params.schedule))
+      )
+      .handle("resume", ({ params }) =>
+        withUser((user) => schedules.resume(user.id, params.schedule))
+      )
+      .handle("cancel", ({ params }) =>
+        withUser((user) => schedules.cancel(user.id, params.schedule))
+      )
+      .handle("timeZone", () => withUser((user) => schedules.timeZone(user.id)))
+      .handle("setTimeZone", ({ payload }) =>
+        withUser((user) =>
+          schedules
+            .setTimeZone(user.id, payload.timeZone)
+            .pipe(Effect.map((timeZone) => ({ timeZone })))
+        )
+      );
+  })
+);
+
 const infoHandlers = (options: {
   readonly apiUrl: string;
   readonly tracing: boolean;
@@ -869,6 +948,7 @@ export const apiLayer = (options: {
         AttachmentImagesHandlers,
         ArtifactsHandlers,
         TrustedDomainsHandlers,
+        SchedulesHandlers,
         SkillsHandlers,
         FilesHandlers,
         SearchHandlers,
