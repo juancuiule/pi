@@ -13,6 +13,7 @@ import {
   Effect,
   Exit,
   Layer,
+  PubSub,
   Schedule,
   Scope,
   Semaphore,
@@ -27,7 +28,11 @@ import type {
   UpgradeRequest,
 } from "../agents/agents.ts";
 import type { SettingsChange } from "../agents/settings.ts";
-import type { AnswerInput, ApprovalChoice } from "../approvals.ts";
+import type {
+  AnswerInput,
+  ApprovalChoice,
+  PendingApproval,
+} from "../approvals.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import type { Attention } from "../attention.ts";
 import type { UserId } from "../auth/user.ts";
@@ -78,6 +83,23 @@ export interface ConversationSummary {
   /** The last settled input ended badly — a failed run or the repeat guard's stop. */
   readonly attention?: Attention;
   readonly createdAt: number;
+}
+
+/**
+ * Something in a Conversation that may want the person: a Run ended — answered (`finished`) or badly (`failed`) —
+ * or a call started waiting for them (`approval`, `question`). Every Run of a Seat ends through the same edge,
+ * whoever sent its input, so a scheduled run is just another `finished`. A Run the person stopped, or an input
+ * withdrawn, is not reported.
+ */
+export interface Activity {
+  readonly conversation: number;
+  readonly title: string;
+  readonly kind: "finished" | "failed" | "approval" | "question";
+  readonly at: number;
+  /** `failed`: why. */
+  readonly attention?: Attention;
+  /** `approval` and `question`: the waiting call's tool. */
+  readonly tool?: string;
 }
 
 const TITLE_LENGTH = 60;
@@ -312,6 +334,11 @@ export class Conversations extends Context.Service<
     >;
     /** Each resource's limit and holders, for choosing a Seat to free. */
     readonly capacity: Effect.Effect<readonly Usage[]>;
+    /**
+     * `owner`'s Activity from now on, every Conversation of theirs at once. Attached when the effect runs, not
+     * when the stream is run, so nothing published after the call is missed; the stream never ends by itself.
+     */
+    activity(owner: UserId): Effect.Effect<Stream.Stream<Activity>>;
   }
 >()("effect-pi/Conversations") {
   static readonly layer = (options: {
@@ -328,6 +355,10 @@ export class Conversations extends Context.Service<
         const capacity = yield* Capacity;
         const workspaces = yield* Workspaces;
         const search = yield* Search;
+        // Sliding: a subscriber that stops reading loses its oldest Activity instead of holding memory.
+        const activities = yield* PubSub.sliding<
+          Activity & { readonly owner: UserId }
+        >(256);
         const live = new Map<number, Live>();
         // A Seat mid-open, before `register` lands it in `live`: its Conversation is recorded already, so it
         // reads as paused. Look-ups wait on the gate instead of opening a second Seat or writing its Workspace;
@@ -365,6 +396,52 @@ export class Conversations extends Context.Service<
             Effect.catchTag("ConversationNotFound", () =>
               // oxlint-disable-next-line unicorn/no-useless-undefined -- a conversation gone between list and read reports nothing
               Effect.succeed(undefined)
+            )
+          );
+
+        // Activity carries the title and owner as stored now; a Conversation gone meanwhile reports nothing.
+        const publish = (
+          id: number,
+          activity: Omit<Activity, "conversation" | "title" | "at">
+        ) =>
+          Effect.gen(function* () {
+            const stored = yield* agents.get(asId(id));
+            const { owner } = stored.meta;
+            if (owner === undefined) {
+              return;
+            }
+            yield* PubSub.publish(activities, {
+              ...activity,
+              conversation: id,
+              title: stored.meta.title,
+              at: yield* Clock.currentTimeMillis,
+              owner,
+            });
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Activity of conversation ${id} was not published`,
+                cause
+              )
+            )
+          );
+
+        // A Run ended: report how its last settled input did.
+        const runEnded = (id: number) =>
+          agents.outcome(asId(id)).pipe(
+            Effect.flatMap((outcome) => {
+              if (outcome?.kind === "answered") {
+                return publish(id, { kind: "finished" });
+              }
+              return outcome?.kind === "failed"
+                ? publish(id, { kind: "failed", attention: outcome.attention })
+                : Effect.void;
+            }),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Outcome of conversation ${id}'s Run could not be read`,
+                cause
+              )
             )
           );
 
@@ -427,6 +504,9 @@ export class Conversations extends Context.Service<
                   }
                 }
                 if (was && !value) {
+                  yield* runEnded(entry.seat.id).pipe(
+                    Effect.forkIn(layerScope)
+                  );
                   // One answered Run earns one automatic title; the meta latch inside decides.
                   // Unlike the checkpoint it needs no Sandbox, and a Pause is no reason to skip it.
                   yield* agents.autoTitle(entry.seat.id).pipe(
@@ -499,6 +579,44 @@ export class Conversations extends Context.Service<
                 }
               })
             ),
+            Effect.ignore,
+            Effect.forkIn(entry.scope)
+          );
+          // Each call that starts waiting is reported once; the watch's first value is the baseline.
+          const waiting = yield* entry.seat.waiting.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Waiting calls of conversation ${id} cannot be watched`,
+                cause
+              ).pipe(
+                Effect.as(
+                  Stream.empty as Stream.Stream<readonly PendingApproval[]>
+                )
+              )
+            )
+          );
+          let known: ReadonlySet<string> | undefined;
+          yield* waiting.pipe(
+            Stream.runForEach((pending) => {
+              const seen = known;
+              known = new Set(
+                pending.map((call) => `${call.conversationId}:${call.callId}`)
+              );
+              if (seen === undefined) {
+                return Effect.void;
+              }
+              return Effect.forEach(
+                pending.filter(
+                  (call) => !seen.has(`${call.conversationId}:${call.callId}`)
+                ),
+                (call) =>
+                  publish(id, {
+                    kind: call.question === true ? "question" : "approval",
+                    tool: call.tool,
+                  }),
+                { discard: true }
+              );
+            }),
             Effect.ignore,
             Effect.forkIn(entry.scope)
           );
@@ -968,6 +1086,22 @@ export class Conversations extends Context.Service<
           decide,
           answer,
           capacity: capacity.usage,
+          activity: (owner) =>
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                const scope = yield* Scope.make();
+                const subscription = yield* PubSub.subscribe(activities).pipe(
+                  Scope.provide(scope)
+                );
+                return Stream.fromSubscription(subscription).pipe(
+                  Stream.filter((each) => each.owner === owner),
+                  Stream.map(
+                    ({ owner: _owner, ...activity }): Activity => activity
+                  ),
+                  Stream.ensuring(Scope.close(scope, Exit.void))
+                );
+              })
+            ),
         });
       })
     );

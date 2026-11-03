@@ -252,6 +252,20 @@ const ConversationsHandlers = HttpApiBuilder.group(
           })
         )
       )
+      .handle("activity", () =>
+        withUser((user) => conversations.activity(user.id)).pipe(
+          Effect.map((activity) =>
+            Stream.merge(
+              activity.pipe(
+                Stream.map((each) => ({ type: "activity" as const, ...each }))
+              ),
+              Stream.tick("25 seconds").pipe(
+                Stream.as({ type: "ping" as const })
+              )
+            )
+          )
+        )
+      )
       .handle("events", ({ params }) =>
         conversations.events(params.id).pipe(
           Effect.map((events) => events.pipe(Stream.map(asJson), Stream.orDie)),

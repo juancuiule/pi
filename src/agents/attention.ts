@@ -90,17 +90,43 @@ const guardKillAfter = async (
     : guardKillAfter(storage, id, answer, context, page.next);
 };
 
+/**
+ * How a conversation's most recent settled input ended: answered, failed (with the Attention it carries), or
+ * ended some other way — stopped, withdrawn, lost in a restart — which needs nobody.
+ */
+export type SettledOutcome =
+  | { readonly kind: "answered" }
+  | { readonly kind: "failed"; readonly attention: Attention }
+  | { readonly kind: "ended"; readonly reason: string };
+
+/** `id`'s most recent settled input's outcome, or `undefined` before any settled. Two reads at most. */
+export const settledOutcomeOf = async (
+  storage: Storage,
+  id: ConversationId,
+  context: ChordContext
+): Promise<SettledOutcome | undefined> => {
+  const last = await lastSettledInput(storage, id, context);
+  if (last === undefined) {
+    return undefined;
+  }
+  if (last.status === "done") {
+    const killed = await guardKillAfter(storage, id, last.answer, context);
+    return killed === undefined
+      ? { kind: "answered" }
+      : { kind: "failed", attention: killed };
+  }
+  const attention = recordAttention(last);
+  return attention === undefined
+    ? { kind: "ended", reason: last.reason }
+    : { kind: "failed", attention };
+};
+
 /** Why `id`'s most recent settled input needs the person, if it ended badly. Two reads at most. */
 export const attentionOf = async (
   storage: Storage,
   id: ConversationId,
   context: ChordContext
 ): Promise<Attention | undefined> => {
-  const last = await lastSettledInput(storage, id, context);
-  if (last === undefined) {
-    return undefined;
-  }
-  return last.status === "done"
-    ? guardKillAfter(storage, id, last.answer, context)
-    : recordAttention(last);
+  const outcome = await settledOutcomeOf(storage, id, context);
+  return outcome?.kind === "failed" ? outcome.attention : undefined;
 };

@@ -325,6 +325,29 @@ describe("HTTP API", () => {
     expect(agents.faux.state.callCount).toBe(1);
   });
 
+  it("streams the signed-in User's Activity over GET /api/activity", async () => {
+    const activity = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const stream = yield* client.conversations.activity();
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "Say hi" },
+        });
+        const [first] = yield* stream.pipe(
+          Stream.filter((message) => message.type === "activity"),
+          Stream.take(1),
+          Stream.runCollect
+        );
+        return { first, id: created.id };
+      }).pipe(Effect.provide(server([fauxAssistantMessage([fauxText("hi")])])))
+    );
+    expect(activity.first).toMatchObject({
+      conversation: activity.id,
+      kind: "finished",
+      title: "Say hi",
+    });
+  });
+
   it("creates and updates org skills through PUT /api/skills/:name", async () => {
     const files: Record<string, string> = {
       "builtin/convert/SKILL.md":
