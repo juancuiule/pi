@@ -1,6 +1,6 @@
 // Schedules, their recent runs and each User's time zone: three tables of their own in the EFFECT_PI_DB file, like
 // `trusted_domains`. A schedule row keeps the columns the scheduler and the owner's lists query by (owner, target
-// Conversation, status, the next wake) and the rest as JSON. Why SQLite and not pi-durable documents: ADR-0010.
+// Conversation, status, the next wake) and the rest as JSON. Why SQLite and not pi-durable documents: ADR-0012.
 import { DatabaseSync } from "node:sqlite";
 
 import type { UserId } from "../auth/user.ts";

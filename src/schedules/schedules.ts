@@ -1,7 +1,7 @@
 // Schedules (#77): work a User asks for later or repeatedly, kept in EFFECT_PI_DB (store.ts) and fired by the
 // Scheduler (scheduler.ts). This module is the validated side — create, list, pause, resume, cancel, each User's time
 // zone — and the `schedules` extension: a prompt section with the person's zone and date, and the `schedule` tool,
-// whose create and cancel wait for approval under `ask`. Decisions: docs/adr/0010-schedules-fire-through-seats.md.
+// whose create and cancel wait for approval under `ask`. Decisions: docs/adr/0012-schedules-fire-through-seats.md.
 import { randomBytes } from "node:crypto";
 
 import { Type } from "@earendil-works/pi-ai";

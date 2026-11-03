@@ -3,7 +3,7 @@
 // TestClock. Restart-safe: a follow-up's submission carries `schedule:<id>:<due>`, so firing it again is the same
 // submission; a new-conversation fire records the occurrence it is creating, and the Conversation's metadata names
 // it, so a restart finds a fire that happened before re-creating it. An overdue schedule fires once on boot, then a
-// recurring one skips to its next occurrence after now. Decisions: docs/adr/0010-schedules-fire-through-seats.md.
+// recurring one skips to its next occurrence after now. Decisions: docs/adr/0012-schedules-fire-through-seats.md.
 import { Cause, Clock, Effect, Exit, Layer, Option, Scope } from "effect";
 
 import { Conversations } from "../server/conversations.ts";
