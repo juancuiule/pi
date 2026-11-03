@@ -5,4 +5,4 @@
 repos
 data
 screenshots
-deploy/pi/.cloudflared
+deploy/.cloudflared

@@ -26,6 +26,11 @@ interface SoftwareSpec {
   readonly prompt: string;
   /** The host architectures it installs on; every one when absent. */
   readonly arch?: readonly ("x64" | "arm64")[];
+  /**
+   * Why it is no longer offered: a base image has it now. The id stays so Workspaces that recorded it still load;
+   * `normalize` drops it, so it builds no layer and is never checked or listed again.
+   */
+  readonly retired?: string;
 }
 
 const UV =
@@ -78,11 +83,11 @@ export const SOFTWARE: Record<SoftwareId, SoftwareSpec> = {
     label: "Google Chrome",
     description: "The Chrome browser, on the desktop.",
     level: "desktop",
-    install:
-      // Google ships Chrome for amd64 and, since July 2026, arm64 Linux; dpkg names them as Google's packages do.
-      'curl -fsSL -o /tmp/chrome.deb "https://dl.google.com/linux/direct/google-chrome-stable_current_$(dpkg --print-architecture).deb" && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* /tmp/chrome.deb',
+    install: "true",
     prompt: "Google Chrome (`google-chrome`)",
     arch: ["x64", "arm64"],
+    retired:
+      "Every shell and desktop image has Google Chrome, for agent-browser",
   },
 };
 
@@ -103,12 +108,16 @@ export const offered = (
 ): SoftwareId[] =>
   SOFTWARE_IDS.filter(
     (id) =>
-      LEVEL_RANK[SOFTWARE[id].level] <= LEVEL_RANK[level] && runsOn(id, arch)
+      SOFTWARE[id].retired === undefined &&
+      LEVEL_RANK[SOFTWARE[id].level] <= LEVEL_RANK[level] &&
+      runsOn(id, arch)
   );
 
-/** In catalog order, each once. */
+/** In catalog order, each once, without retired entries. */
 export const normalize = (ids: readonly SoftwareId[]): SoftwareId[] =>
-  SOFTWARE_IDS.filter((id) => ids.includes(id));
+  SOFTWARE_IDS.filter(
+    (id) => SOFTWARE[id].retired === undefined && ids.includes(id)
+  );
 
 /** Why a Workspace at `level` cannot have `ids` on this host, or `undefined` when it can. */
 export const checkSoftware = (

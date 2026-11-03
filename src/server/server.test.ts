@@ -718,7 +718,6 @@ describe("HTTP API", () => {
           ["python-data", "shell"],
           ["imagemagick", "shell"],
           ["ffmpeg", "shell"],
-          ["chrome", "desktop"],
         ]);
         const created = yield* client.conversations.create({
           payload: { sandbox: "shell", software: ["node"], prompt: "hello" },

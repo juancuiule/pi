@@ -7,6 +7,8 @@
 // each until the provider errored; counting identical results rather than consecutive calls is
 // what catches an alternation, and requiring identical results is what leaves re-runs whose
 // output changed (a fixing test loop) alone.
+import { createHash } from "node:crypto";
+
 import type { ToolCall } from "@earendil-works/pi-ai";
 import {
   defineExtension,
@@ -60,10 +62,18 @@ const canonical = (value: unknown): unknown => {
 const signature = (call: ToolCall): string =>
   `${call.name} ${JSON.stringify(canonical(call.arguments))}`;
 
-/** What the model saw: the error flag plus the result's content text (non-text blocks by type name). */
-const resultKey = (result: ToolExecutionResult): string =>
+/**
+ * What the model saw: the error flag, the result's text, and a digest of each image's bytes. Images
+ * count by content, not by type: every desktop screenshot is one image block and nothing else, so
+ * keying them by type name made three different screens "the same result" and blocked the fourth.
+ */
+export const resultKey = (result: ToolExecutionResult): string =>
   `${result.isError === true} ${(result.content ?? [])
-    .map((block) => (block.type === "text" ? block.text : block.type))
+    .map((block) =>
+      block.type === "text"
+        ? block.text
+        : `[${block.type} ${block.mimeType} ${createHash("sha256").update(block.data).digest("hex")}]`
+    )
     .join("")}`;
 
 export const repeatGuardExtension = (): Extension => {
