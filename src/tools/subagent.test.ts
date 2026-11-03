@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import { Agents } from "../agents/agents.ts";
 import type { ApprovalPolicy } from "../approvals.ts";
 import { approvalKey } from "../approvals.ts";
+import { END_GOAL } from "../goal/goal.ts";
 import type { SandboxChoice } from "../sandbox/sandbox.ts";
 import { Skills } from "../skills/skills.ts";
 import { SkillSource } from "../skills/source.ts";
@@ -299,6 +300,7 @@ describe("task", () => {
     };
     expect(tools).not.toContain("task");
     expect(tools).not.toContain(UPGRADE_WORKSPACE);
+    expect(tools).not.toContain(END_GOAL);
     expect(tools).toContain("ask_user");
     // The parent's skills were copied into the child's SkillsDoc at creation.
     const sections: Record<string, string> = {};

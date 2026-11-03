@@ -154,6 +154,7 @@ const AgentsLive = Agents.layer({
   mcp: mcpServers,
   mcpConnectTimeoutMs: config.mcpConnectTimeoutMs,
   traceAttachmentText: config.traceAttachmentText,
+  goalBudget: config.goalBudget,
 }).pipe(
   Layer.provideMerge(WorkspacesLive),
   Layer.provide(SkillsLive),

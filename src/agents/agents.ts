@@ -32,6 +32,7 @@ import {
   AgentDoc,
   AssistantEntry,
   configure,
+  ConversationBusy,
   createRegistry,
   Harness,
   InboxDoc,
@@ -105,6 +106,24 @@ import {
   TitleGenerationFailed,
   TraceUnavailable,
 } from "../errors.ts";
+import {
+  decideYield,
+  escapeGoalTags,
+  goalMessage,
+  goalView,
+  MAX_OBJECTIVE_CHARS,
+  parseGoalCommand,
+} from "../goal/format.ts";
+import type { GoalBudget, GoalView } from "../goal/format.ts";
+import {
+  applyDecision,
+  DEFAULT_GOAL_BUDGET,
+  goalExtension,
+  GoalDoc,
+  readGoal,
+  stopGoal,
+  treeCost,
+} from "../goal/goal.ts";
 import type { McpServerConfig, McpServerState } from "../mcp.ts";
 import { connectMcpServers } from "../mcp.ts";
 import { repeatGuardExtension } from "../repeat-guard.ts";
@@ -131,6 +150,8 @@ import { CodingTools } from "../tools/bash.ts";
 import { desktopExtension } from "../tools/desktop.ts";
 import { questionsExtension } from "../tools/questions.ts";
 import { Subagent } from "../tools/subagent.ts";
+import { readTodos, TodosDoc, todosExtension } from "../tools/todos.ts";
+import type { Todo } from "../tools/todos.ts";
 import { workspaceExtension } from "../tools/workspace.ts";
 import {
   generationAttributes,
@@ -454,6 +475,8 @@ export interface Seat {
    * while the Run works. `/skill:` is expanded against the conversation's skills first, in the prompt only; then
    * come the blocks of `attachments`, the conversation's unsent uploads, which are kept with it from then on.
    * `requestId` deduplicates the submission, which carries it; resolved with the admitted submission's record.
+   * `/goal <objective>` starts a goal first (see src/goal/goal.ts): the message carries the objective in a `<goal>`
+   * block; `InvalidSetting` when the objective is empty or the conversation has the goal extension off.
    */
   send(
     prompt: string,
@@ -461,8 +484,22 @@ export interface Seat {
     requestId?: string
   ): Effect.Effect<
     SubmissionRecord,
-    AgentError | SkillNotFound | AttachmentNotFound | AttachmentRefused
+    | AgentError
+    | SkillNotFound
+    | AttachmentNotFound
+    | AttachmentRefused
+    | InvalidSetting
   >;
+  /**
+   * While `held`, an active goal yields at the end of the current turn instead of continuing, and stays active: a
+   * Pause waiting for the Run sets it, so the Run ends and the Seat can close. In-process only, like the Pause.
+   */
+  holdGoal(held: boolean): Effect.Effect<void>;
+  /**
+   * Start another automatic turn of an active goal when no Run is going (after a Resume, a restart, or a Run that
+   * failed). False when there is nothing to continue; a budget that ran out ends the goal instead.
+   */
+  readonly continueGoal: Effect.Effect<boolean, AgentError>;
   /**
    * Send a prompt, with the conversation's unsent uploads in `attachments`, and wait for the answer's text; the model
    * requests and tool calls are traced under it.
@@ -707,6 +744,18 @@ export class Agents extends Context.Service<
       "withdrawn" | "placed" | "settled",
       AgentError | ConversationNotFound | SubmissionNotFound
     >;
+    /** The agent's todo list, empty when it never wrote one. Seatless. */
+    todos(
+      id: ConversationId
+    ): Effect.Effect<readonly Todo[], AgentError | ConversationNotFound>;
+    /** The conversation's latest goal with its progress and spend, if it ever had one. Seatless. */
+    goal(
+      id: ConversationId
+    ): Effect.Effect<GoalView | undefined, AgentError | ConversationNotFound>;
+    /** End an active goal as the person's choice: the current turn finishes, and no other follows. */
+    cancelGoal(
+      id: ConversationId
+    ): Effect.Effect<void, AgentError | ConversationNotFound>;
   }
 >()("effect-pi/Agents") {
   static readonly layer = (options: {
@@ -724,6 +773,8 @@ export class Agents extends Context.Service<
     readonly traceAttachmentText?: boolean | undefined;
     /** Generated titles, off unless passed `true` — production sets it when a real model is configured. */
     readonly titleGeneration?: boolean | undefined;
+    /** What a goal may use before it ends on its own; `DEFAULT_GOAL_BUDGET` by default. */
+    readonly goalBudget?: GoalBudget | undefined;
   }) =>
     Layer.effect(
       Agents,
@@ -865,6 +916,24 @@ export class Agents extends Context.Service<
         // `ask_user`: questions as a form in the console.
         const questionsExt = questionsExtension();
         registry.install(questionsExt);
+        // `update_todos`: the agent's own todo list, shown to it in a section and to the person in the console.
+        const todosExt = todosExtension();
+        registry.install(todosExt);
+        // `/goal`: keeps a Run going until the goal ends. Its hook reaches the harness once it is open, below;
+        // `heldGoals` are the conversations whose Pause waits for the Run.
+        const goalBudget = options.goalBudget ?? DEFAULT_GOAL_BUDGET;
+        const heldGoals = new Set<ConversationId>();
+        const goalHarness: { current?: HarnessType } = {};
+        const goalExt = goalExtension({
+          harness: () => {
+            if (goalHarness.current === undefined) {
+              throw new Error("The harness is not open yet.");
+            }
+            return goalHarness.current;
+          },
+          held: (id) => heldGoals.has(id),
+        });
+        registry.install(goalExt);
         // Web search, only when the layer was given a WebSearch: `web_search` on the host at every Level. Not
         // locked — a conversation can switch it off.
         const webSearch = yield* Effect.serviceOption(WebSearch);
@@ -884,6 +953,8 @@ export class Agents extends Context.Service<
           attachmentsExt,
           artifactsExt,
           questionsExt,
+          todosExt,
+          goalExt,
           Subagent,
           ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
@@ -896,6 +967,8 @@ export class Agents extends Context.Service<
           attachmentsExt,
           artifactsExt,
           questionsExt,
+          todosExt,
+          goalExt,
           Subagent,
           ...(webExt === undefined ? [] : [webExt]),
           skillsExt,
@@ -939,6 +1012,8 @@ export class Agents extends Context.Service<
             attachmentsExt,
             artifactsExt,
             questionsExt,
+            todosExt,
+            goalExt,
             Subagent,
             ...(webExt === undefined ? [] : [webExt]),
             skillsExt,
@@ -1034,6 +1109,8 @@ export class Agents extends Context.Service<
           ),
           (opened) => Effect.promise(() => opened.close(context))
         );
+
+        goalHarness.current = harness;
 
         // Idempotent: the generation task's every request attempts the same key.
         traceWrites.record = (conversationId, taskId, traceId, commitContext) =>
@@ -1259,6 +1336,16 @@ export class Agents extends Context.Service<
               (agent) =>
                 !Array.isArray(agent?.extensions) ||
                 agent.extensions.includes(skillsExt.name)
+            )
+          );
+
+        // Whether a conversation selects an extension; one on the default selection selects them all.
+        const extensionOn = (id: ConversationId, name: string) =>
+          attempt(() => harness.snapshot(AgentDoc, id, context)).pipe(
+            Effect.map(
+              (agent) =>
+                !Array.isArray(agent?.extensions) ||
+                agent.extensions.includes(name)
             )
           );
 
@@ -1654,6 +1741,7 @@ export class Agents extends Context.Service<
               return Effect.gen(function* () {
                 upgrades.delete(id);
                 seatSandboxes.delete(id);
+                heldGoals.delete(id);
                 yield* Effect.ignore(attempt(() => handle.abort(context)));
                 yield* Effect.ignore(
                   attempt(() =>
@@ -1987,13 +2075,68 @@ export class Agents extends Context.Service<
             return submission;
           });
 
+          // The conversation's goal, started from `objective`: it replaces any earlier one, and the todo list starts
+          // empty so the goal's plan is the agent's next one, not a finished list from before.
+          const startGoal = (objective: string) =>
+            attempt(async () => {
+              const costAtStart = await treeCost(harness, id, context);
+              await harness.commit(async (tx) => {
+                const doc = await tx.doc(GoalDoc, id);
+                doc.started += 1;
+                doc.goal = {
+                  id: String(doc.started),
+                  objective,
+                  status: "active",
+                  startedAt: Date.now(),
+                  turns: 0,
+                  budget: { ...goalBudget },
+                  costAtStart,
+                };
+                const todos = await tx.doc(TodosDoc, id);
+                todos.todos = [];
+              }, context);
+            });
+
           const send = Effect.fn("Seat.send")(function* (
             prompt: string,
             attachmentIds: readonly string[] = [],
             requestId?: string
           ) {
+            const command = parseGoalCommand(prompt);
             // Skills read only what the person typed, never a file's text.
-            const expanded = yield* expand(prompt, id);
+            let expanded: string;
+            if (command === undefined) {
+              expanded = yield* expand(escapeGoalTags(prompt), id);
+            } else {
+              const { objective } = command;
+              if (objective === "" || objective.length > MAX_OBJECTIVE_CHARS) {
+                return yield* new InvalidSetting({
+                  name: "goal",
+                  reason:
+                    objective === ""
+                      ? "/goal needs an objective"
+                      : `a goal's objective is at most ${MAX_OBJECTIVE_CHARS} characters`,
+                });
+              }
+              if (!(yield* extensionOn(id, goalExt.name))) {
+                return yield* new InvalidSetting({
+                  name: "goal",
+                  reason: "the goal extension is off in this conversation",
+                });
+              }
+              expanded = goalMessage(
+                yield* expand(escapeGoalTags(objective), id)
+              );
+              // A retried send already started its goal; starting another would reset its turns.
+              const retried =
+                requestId !== undefined &&
+                (yield* attempt(() =>
+                  durableStorage.submissionByRequest(id, requestId, context)
+                )) !== undefined;
+              if (!retried) {
+                yield* startGoal(objective);
+              }
+            }
             yield* annotate(expanded);
             // Admitted without waiting: a busy conversation queues it, steering the run when it waits on a person
             // and as a follow-up while it works, and the answer arrives as events. No `tracing.traced`: the send
@@ -2034,11 +2177,63 @@ export class Agents extends Context.Service<
           });
 
           const stop = attempt(async () => {
+            // Before the abort, so a yield landing in between cannot start another turn.
+            await stopGoal(harness, id, context, Date.now());
             await stopWaitingCalls(harness, id, context);
             await handle.abort(context);
             // The aborted calls' own cleanup commits may have been refused; none of them waits any more.
             await clearApprovals(harness, id, context);
           }).pipe(Effect.withSpan("Seat.stop"));
+
+          const holdGoal = (held: boolean) =>
+            Effect.sync(() => {
+              if (held) {
+                heldGoals.add(id);
+              } else {
+                heldGoals.delete(id);
+              }
+            });
+
+          // The same decision a yield takes, for a goal whose Run is gone. The submission is refused while a Run
+          // is going (that Run's yield continues the goal), and its request id names the turn, so two callers
+          // racing here submit one input.
+          const continueGoal = attempt(async () => {
+            const goal = await readGoal(harness, id, context);
+            const live = await harness.snapshot(LiveDoc, id, context);
+            if (goal?.status !== "active" || live?.run !== undefined) {
+              return false;
+            }
+            const todos = await readTodos(harness, id, context);
+            const cost = await treeCost(harness, id, context);
+            const decision = decideYield(goal, todos, cost - goal.costAtStart);
+            if (decision.kind === "continue") {
+              try {
+                await handle.submit(
+                  {
+                    type: "input",
+                    content: decision.text,
+                    requestId: `goal:${goal.id}:${decision.turn}`,
+                    whenBusy: "reject",
+                  },
+                  context
+                );
+              } catch (error) {
+                if (error instanceof ConversationBusy) {
+                  return false;
+                }
+                throw error;
+              }
+            }
+            await applyDecision(
+              harness,
+              id,
+              goal.id,
+              decision,
+              context,
+              Date.now()
+            );
+            return decision.kind === "continue";
+          }).pipe(Effect.withSpan("Seat.continueGoal"));
 
           const decide = Effect.fn("Seat.decide")(function* (
             key: string,
@@ -2172,6 +2367,8 @@ export class Agents extends Context.Service<
             },
             upgrade,
             send,
+            holdGoal,
+            continueGoal,
             ask,
             stop,
             decide,
@@ -3022,7 +3219,40 @@ export class Agents extends Context.Service<
           return yield* get(id);
         });
 
+        const todosOf = Effect.fn("Agents.todos")(function* (
+          id: ConversationId
+        ) {
+          yield* handleOf(id);
+          const doc = yield* attempt(() =>
+            harness.snapshot(TodosDoc, id, context)
+          );
+          return doc?.todos ?? [];
+        });
+
+        const goalOf = Effect.fn("Agents.goal")(function* (id: ConversationId) {
+          yield* handleOf(id);
+          return yield* attempt(async () => {
+            const goal = await readGoal(harness, id, context);
+            if (goal === undefined) {
+              return;
+            }
+            const todos = await readTodos(harness, id, context);
+            const cost = await treeCost(harness, id, context);
+            return goalView(goal, todos, cost);
+          });
+        });
+
+        const cancelGoal = Effect.fn("Agents.cancelGoal")(function* (
+          id: ConversationId
+        ) {
+          yield* handleOf(id);
+          yield* attempt(() => stopGoal(harness, id, context, Date.now()));
+        });
+
         return Agents.of({
+          todos: todosOf,
+          goal: goalOf,
+          cancelGoal,
           model: options.model,
           titleGeneration: options.titleGeneration === true,
           capabilities,

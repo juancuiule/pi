@@ -90,6 +90,42 @@ const form = (name: string, body: string, conversation?: number) => {
 };
 
 describe("HTTP API", () => {
+  it("serves a conversation's todo list and goal", async () => {
+    const todos = [{ content: "Plan it", status: "completed" as const }];
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Api);
+        const created = yield* client.conversations.create({
+          payload: { sandbox: "none", prompt: "/goal plan it" },
+        });
+        const params = { id: created.id };
+        yield* waitUntil(
+          client.conversations
+            .goal({ params })
+            .pipe(Effect.map(({ goal }) => goal?.status === "completed"))
+        );
+        const continued = yield* client.conversations.continueGoal({ params });
+        yield* client.conversations.cancelGoal({ params });
+        return {
+          todos: yield* client.conversations.todos({ params }),
+          goal: yield* client.conversations.goal({ params }),
+          continued,
+        };
+      }).pipe(
+        Effect.provide(
+          server([callTool("update_todos", { todos }), echoToolResult])
+        )
+      )
+    );
+    expect(result.todos).toStrictEqual({ todos });
+    expect(result.goal.goal).toMatchObject({
+      objective: "plan it",
+      status: "completed",
+      todos: { completed: 1, total: 1 },
+    });
+    expect(result.continued).toStrictEqual({ continued: false });
+  });
+
   it("serves search hits grouped by conversation, an unmatchable query the recent list", async () => {
     const agents = fauxAgents([
       fauxAssistantMessage([fauxText("Quokkas smile.")]),
@@ -255,13 +291,15 @@ describe("HTTP API", () => {
         "artifact_create",
         "artifact_update",
         "ask_user",
+        "update_todos",
+        "end_goal",
         "task",
         "skill",
         "skill_save",
         "skill_delete",
       ],
       ["coding-tools", "desktop"],
-      ["workspace", "attachments", "artifacts", "skills"],
+      ["workspace", "attachments", "artifacts", "todos", "goal", "skills"],
     ]);
   });
 

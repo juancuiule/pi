@@ -20,6 +20,10 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Approval**: A person's decision on a tool call that waits for one before it runs.
 
+**Todo list**: The agent's own plan for a Conversation: an ordered list of steps, each pending, in progress or completed, that it replaces whole and the person watches in the console. A subagent keeps its own. _Avoid_: tasks (the `task` tool), plan mode
+
+**Goal**: An objective the person sets with `/goal`: the agent keeps working on it, turn after turn within one Run, until its Todo list is completed, it ends the goal itself, a budget of turns or cost runs out, or the person stops it. Automatic turns are marked as such. _Avoid_: task, autopilot, loop
+
 **Attachment**: A file a person sends with a message: its original, kept privately on the server, and the text or image prepared from it once. Before a message takes it, it is an upload: staged (no Conversation yet) or a Conversation's, and it expires unsent. _Avoid_: document, file upload, asset
 
 **Artifact**: A sandboxed HTML page the agent writes for the person, kept privately on the server with every version of it. _Avoid_: file, document, page

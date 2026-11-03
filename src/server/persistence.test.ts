@@ -91,6 +91,136 @@ const db = () =>
   );
 
 describe("persistent conversations", () => {
+  it("keeps a goal and its todo list across a restart, and continues it on Resume", async () => {
+    const file = db();
+    let id = -1;
+    const plan = [
+      { content: "Write it", status: "completed" },
+      { content: "Check it", status: "in_progress" },
+    ] as const;
+    const finished = plan.map((todo) => ({ ...todo, status: "completed" }));
+    await Effect.runPromise(
+      withStack(
+        file,
+        [
+          callTool("update_todos", { todos: plan }),
+          // The Run waits on the person when the server stops.
+          callTool("ask_user", {
+            questions: [
+              {
+                id: "q",
+                question: "Which?",
+                options: [{ label: "A" }, { label: "B" }],
+              },
+            ],
+          }),
+        ],
+        (conversations) =>
+          Effect.gen(function* () {
+            const created = yield* conversations.create({
+              owner: alice.id,
+              sandbox: "none",
+              prompt: "/goal write and check it",
+            });
+            ({ id } = created);
+            yield* waitUntil(
+              conversations
+                .list(alice.id)
+                .pipe(Effect.map((all) => all[0]?.pendingApprovals === 1))
+            );
+          })
+      )
+    );
+
+    const result = await Effect.runPromise(
+      withStack(
+        file,
+        [
+          fauxAssistantMessage(
+            [
+              {
+                type: "toolCall",
+                id: "call-done",
+                name: "update_todos",
+                arguments: { todos: finished },
+              },
+            ],
+            { stopReason: "toolUse" }
+          ),
+          answer("Checked."),
+        ],
+        (conversations) =>
+          Effect.gen(function* () {
+            const before = yield* conversations.goal(id);
+            const todos = yield* conversations.todos(id);
+            yield* conversations.resume(id);
+            yield* waitUntil(
+              conversations
+                .goal(id)
+                .pipe(Effect.map((goal) => goal?.status !== "active"))
+            );
+            return { before, todos, after: yield* conversations.goal(id) };
+          })
+      )
+    );
+    expect(result.before).toMatchObject({ status: "active", turns: 0 });
+    expect(result.todos).toStrictEqual(plan);
+    expect(result.after).toMatchObject({
+      status: "completed",
+      endedBy: "todos",
+      turns: 1,
+    });
+  });
+
+  it("lets a goal's Run end at a Pause, and keeps the goal active", async () => {
+    const file = db();
+    const result = await Effect.runPromise(
+      withStack(
+        file,
+        [
+          callTool("ask_user", {
+            questions: [
+              {
+                id: "q",
+                question: "Which?",
+                options: [{ label: "A" }, { label: "B" }],
+              },
+            ],
+          }),
+          answer("Picked A."),
+          answer("spare"),
+        ],
+        (conversations) =>
+          Effect.gen(function* () {
+            const created = yield* conversations.create({
+              owner: alice.id,
+              sandbox: "none",
+              prompt: "/goal pick",
+            });
+            yield* waitUntil(
+              conversations
+                .list(alice.id)
+                .pipe(Effect.map((all) => all[0]?.pendingApprovals === 1))
+            );
+            // Pausing mid-Run: the goal yields at the end of this turn instead of continuing.
+            yield* conversations.pause(created.id);
+            yield* conversations.answer(
+              created.id,
+              `${created.id}:call-ask_user`,
+              [{ id: "q", selected: ["A"] }]
+            );
+            yield* waitUntil(
+              conversations
+                .list(alice.id)
+                .pipe(Effect.map((all) => all[0]?.status === "paused"))
+            );
+            return yield* conversations.goal(created.id);
+          })
+      )
+    );
+    expect(result).toMatchObject({ status: "active", turns: 0 });
+  });
+
   it("keeps a chat conversation paused and resumable across a restart", async () => {
     const file = db();
     let id = -1;

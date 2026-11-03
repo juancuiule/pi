@@ -51,6 +51,7 @@ import { activeSubagents } from "@/lib/subagent";
 import { useOpenMenu } from "./console-shell";
 import { ConversationActions } from "./conversation-actions";
 import { ConversationSettings } from "./conversation-settings";
+import { GoalBanner } from "./goal-banner";
 import { ResumingNotice } from "./resuming-notice";
 import { SandboxBadge } from "./sandbox-badge";
 import { WaitingNotice } from "./waiting-notice";
@@ -448,6 +449,7 @@ export const ConversationHeader = ({
       </header>
       <WaitingNotice conversation={conversation} />
       <ResumingNotice conversation={conversation} />
+      <GoalBanner conversation={conversation} running={state.running} />
     </>
   );
 };

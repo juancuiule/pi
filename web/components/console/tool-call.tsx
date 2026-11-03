@@ -45,6 +45,7 @@ import type { ToolDiagnostic } from "@/lib/diagnostics";
 import { diagnosticsOf, visibleResultContent } from "@/lib/diagnostics";
 import { formatDuration } from "@/lib/format";
 import { questionsOf } from "@/lib/questions";
+import { todosOf } from "@/lib/todos";
 import { editHunksOf, isEditConfirmation, patchOf } from "@/lib/tool-input";
 import { toolSummary } from "@/lib/tool-summary";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,7 @@ import { filePathOf } from "@/lib/workspace-files";
 
 import { EditPreview, FilePreview, PatchPreview } from "./file-blocks";
 import { AnsweredQuestions, QuestionForm } from "./question-form";
+import { TodoList } from "./todo-list";
 import { toolIcon } from "./tool-icon";
 
 type AssistantMessage = Extract<Message, { role: "assistant" }>;
@@ -497,6 +499,28 @@ const QuestionsBody = ({
   return null;
 };
 
+/** The call's arguments; an `update_todos` call shows its list as a checklist instead. */
+const CallInput = ({
+  call,
+  toolResult,
+}: {
+  readonly call: ToolCallBlock;
+  readonly toolResult: ToolResult | undefined;
+}) => {
+  if (call.name === "update_todos") {
+    return (
+      <Section label="Todo list">
+        <TodoList todos={todosOf(call.arguments)} />
+      </Section>
+    );
+  }
+  return hasInput(call) ? (
+    <Section label="Input">
+      <Arguments call={call} toolResult={toolResult} />
+    </Section>
+  ) : null;
+};
+
 const CallBody = ({
   call,
   tool,
@@ -528,11 +552,7 @@ const CallBody = ({
         />
       ) : (
         <>
-          {hasInput(call) ? (
-            <Section label="Input">
-              <Arguments call={call} toolResult={toolResult} />
-            </Section>
-          ) : null}
+          <CallInput call={call} toolResult={toolResult} />
           {pendingKey === undefined ? null : (
             <ApprovalActions approvalKey={pendingKey} />
           )}
