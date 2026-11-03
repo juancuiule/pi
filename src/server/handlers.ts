@@ -26,6 +26,7 @@ import type { ArtifactView } from "../artifacts/artifacts.ts";
 import { TrustedDomains } from "../artifacts/domains.ts";
 import { Attachments, infoOf } from "../attachments/attachments.ts";
 import type { User, UserId } from "../auth/user.ts";
+import { Connectors, noConnectors } from "../connectors/connectors.ts";
 import type { ConversationEvent } from "../conversation-events.ts";
 import type { ConversationNotFound } from "../errors.ts";
 import {
@@ -789,6 +790,30 @@ const TrustedDomainsHandlers = HttpApiBuilder.group(
   })
 );
 
+const ConnectorsHandlers = HttpApiBuilder.group(
+  Api,
+  "connectors",
+  Effect.fnUntraced(function* (handlers) {
+    // A server without personal connectors (and tests that build the API without the service) lists none.
+    const provided = yield* Effect.serviceOption(Connectors);
+    const connectors = provided._tag === "Some" ? provided.value : noConnectors;
+    return handlers
+      .handle("list", () => withUser((user) => connectors.list(user.id)))
+      .handle("connect", ({ params, payload }) =>
+        withUser((user) => connectors.connect(user.id, params.id, payload))
+      )
+      .handle("disconnect", ({ params }) =>
+        withUser((user) => connectors.disconnect(user.id, params.id))
+      )
+      .handle("startLogin", ({ params }) =>
+        withUser((user) => connectors.startLogin(user.id, params.id))
+      )
+      .handle("pollLogin", ({ params }) =>
+        withUser((user) => connectors.pollLogin(user.id, params.id))
+      );
+  })
+);
+
 const infoHandlers = (options: {
   readonly apiUrl: string;
   readonly tracing: boolean;
@@ -869,6 +894,7 @@ export const apiLayer = (options: {
         AttachmentImagesHandlers,
         ArtifactsHandlers,
         TrustedDomainsHandlers,
+        ConnectorsHandlers,
         SkillsHandlers,
         FilesHandlers,
         SearchHandlers,

@@ -79,6 +79,7 @@ import type { Attention } from "../attention.ts";
 import type { UserId } from "../auth/user.ts";
 import { Capacity } from "../capacity.ts";
 import type { Claim, ClaimCancelled } from "../capacity.ts";
+import { Connectors } from "../connectors/connectors.ts";
 import type {
   ConversationEvent,
   HistoryPage,
@@ -875,6 +876,16 @@ export class Agents extends Context.Service<
         if (webExt !== undefined) {
           registry.install(webExt);
         }
+        // Personal connectors (Nextcloud): one extension each, at every Level, its tools signed as the conversation's
+        // owner. None when the layer has no Connectors or none is configured. Not locked.
+        const connectorsService = yield* Effect.serviceOption(Connectors);
+        const connectorExts =
+          connectorsService._tag === "Some"
+            ? connectorsService.value.extensions
+            : [];
+        for (const extension of connectorExts) {
+          registry.install(extension);
+        }
         // `task`: delegation to a subagent conversation; children have it removed.
         registry.install(Subagent);
         // Every installed extension, for the console; and those every conversation selects, whatever its Level.
@@ -886,6 +897,7 @@ export class Agents extends Context.Service<
           questionsExt,
           Subagent,
           ...(webExt === undefined ? [] : [webExt]),
+          ...connectorExts,
           skillsExt,
           ...mcp.extensions,
           repeatGuard,
@@ -898,6 +910,7 @@ export class Agents extends Context.Service<
           questionsExt,
           Subagent,
           ...(webExt === undefined ? [] : [webExt]),
+          ...connectorExts,
           skillsExt,
           ...mcp.extensions,
           repeatGuard,
@@ -941,6 +954,7 @@ export class Agents extends Context.Service<
             questionsExt,
             Subagent,
             ...(webExt === undefined ? [] : [webExt]),
+            ...connectorExts,
             skillsExt,
             ...mcp.extensions,
             repeatGuard,

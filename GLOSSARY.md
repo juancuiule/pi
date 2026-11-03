@@ -34,7 +34,9 @@ A server where people talk to agents in conversations; an agent can run tools on
 
 **Session**: A User signed in on one browser, kept by a cookie for 30 days or until Sign out. _Avoid_: token, login
 
-**Owner**: The User a Conversation belongs to, and with it its Workspace, Artifacts, Attachments and Search results; a subagent's is its parent's. Other Users cannot see or reach any of it. Trusted domains are per User too; org skills are shared. _Avoid_: author, creator
+**Connection**: A User's own account on a third-party service the agent works in (Nextcloud first), connected under Settings → Connections. Its credential is sealed on the server and never shown to the agent; a Conversation's tools use its Owner's Connection. _Avoid_: integration, link, account (the User's own)
+
+**Owner**: The User a Conversation belongs to, and with it its Workspace, Artifacts, Attachments and Search results; a subagent's is its parent's. Other Users cannot see or reach any of it. Trusted domains and Connections are per User too; org skills are shared. _Avoid_: author, creator
 
 ## Workspaces
 

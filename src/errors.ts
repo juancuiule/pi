@@ -191,3 +191,18 @@ export class InvalidAccount extends Schema.TaggedError<InvalidAccount>()(
   "InvalidAccount",
   { reason: Schema.String }
 ) {}
+
+/** No personal connector by this id is configured on this server. */
+export class ConnectorNotFound extends Schema.TaggedError<ConnectorNotFound>()(
+  "ConnectorNotFound",
+  { connector: Schema.String }
+) {}
+
+/**
+ * A connector refused to connect: wrong credentials, the service is unreachable, or a login flow expired. `message`
+ * is the sentence the person reads; it never carries the credential.
+ */
+export class ConnectorRefused extends Schema.TaggedError<ConnectorRefused>()(
+  "ConnectorRefused",
+  { connector: Schema.String, message: Schema.String }
+) {}
