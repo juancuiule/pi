@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { HolderRow } from "@/components/console/holder-row";
 import { PageHeader } from "@/components/console/page-header";
+import { PageTitle } from "@/components/console/page-title";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { CapacityShortage } from "@/lib/api";
@@ -53,7 +54,7 @@ const CapacityPage = () => {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <title>Capacity · effect-pi</title>
+      <PageTitle>Capacity · effect-pi</PageTitle>
       <PageHeader title="Capacity" />
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">

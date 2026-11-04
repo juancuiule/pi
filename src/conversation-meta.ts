@@ -1,4 +1,4 @@
-// Per-conversation metadata the console needs after a restart: title and timestamps. The doc survives every Seat,
+// Per-conversation metadata the console needs after a restart: title, timestamps and the pin. The doc survives every Seat,
 // so the server can list and describe Conversations that are paused or archived.
 import type { Context } from "@earendil-works/chord";
 import { defineDoc } from "@earendil-works/pi-durable";
@@ -22,6 +22,8 @@ export type ConversationMeta = {
   readonly createdAt: number;
   /** Set by Archive, removed by unarchiving. */
   readonly archivedAt?: number;
+  /** When the person pinned it to the top of their list; removed by unpinning. Archive keeps it. */
+  readonly pinnedAt?: number;
   /** Who wrote `title`; absent reads as "prompt" (pre-feature and freshly created conversations). */
   readonly titleSource?: TitleSource;
   /**

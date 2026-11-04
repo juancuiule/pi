@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const DOT_CLASS: Record<DotStatus, string> = {
   error: "bg-status-error rounded-xs",
   waiting: "bg-status-waiting rounded-full",
+  running: "bg-status-live rounded-full",
   live: "bg-status-live rounded-full",
   paused: "border-status-paused rounded-full border-2",
 };

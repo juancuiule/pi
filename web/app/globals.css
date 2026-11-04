@@ -59,6 +59,26 @@
   --text-code: 0.78125rem;
   /* 12px kbd hints */
   --text-tiny: 0.75rem;
+  /* A strong ease-out (quint-like): fast start, long settle, so UI motion reads as responsive. Overrides
+     Tailwind's flatter default for every `ease-out` utility, and tw-animate-css enter/exit read it via --tw-ease. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* A Base UI Collapsible panel that grows to its measured height and fades in, and shrinks and fades out.
+   Height is the one layout property animated in the console: the panels are small and contained, and Base UI
+   resets the height to auto once open. clip with a margin, unlike hidden, keeps focus rings at the edges. */
+@utility collapsible-panel {
+  height: var(--collapsible-panel-height);
+  overflow: clip;
+  overflow-clip-margin: 0.25rem;
+  transition-property: height, opacity;
+  transition-duration: 200ms;
+  transition-timing-function: var(--ease-out);
+  &[data-starting-style],
+  &[data-ending-style] {
+    height: 0;
+    opacity: 0;
+  }
 }
 
 :root {

@@ -9,6 +9,7 @@ import { Agents } from "./agents/agents.ts";
 import type { ConversationEvent } from "./conversation-events.ts";
 import { ask, callTool, fauxAgents, openSeat } from "./testing/faux.ts";
 import {
+  missingCommands,
   redactArtifactArguments,
   redactAttachments,
   traceJson,
@@ -271,6 +272,46 @@ describe("failed tool calls", () => {
       level: "ERROR",
       message: "No artifact art_missing in this conversation.",
     });
+  });
+});
+
+describe("missing commands", () => {
+  it("are recorded on the bash call that looked for them", async () => {
+    const { spans, tracer } = recordingTracer();
+    const { layer } = fauxAgents([
+      callTool("bash", {
+        command:
+          "effect-pi-missing-a; effect-pi-missing-b; effect-pi-missing-a; true",
+      }),
+      fauxAssistantMessage([fauxText("Neither is installed.")]),
+    ]);
+
+    await Effect.runPromise(
+      ask("Run them.", "shell").pipe(
+        Effect.provide(layer),
+        Effect.provideService(Tracer.Tracer, tracer)
+      )
+    );
+
+    expect(
+      spans
+        .find((span) => span.name === "tool bash")
+        ?.attributes.get("langfuse.observation.metadata.missing_commands")
+    ).toBe("effect-pi-missing-a,effect-pi-missing-b");
+  });
+
+  it("are read from bash's own line, whatever surrounds it", () => {
+    expect(
+      missingCommands(
+        [
+          "/bin/bash: line 1: pip: command not found",
+          "bash: yt-dlp: command not found",
+          "A Python tool: `uvx yt-dlp` runs it from PyPI",
+          "echo 'bash: quoted: command not found' > log",
+          "zsh: command not found: ignored",
+        ].join("\n")
+      )
+    ).toStrictEqual(["pip", "yt-dlp"]);
   });
 });
 

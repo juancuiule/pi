@@ -133,6 +133,21 @@ export const redactAttachments = (
     return message;
   });
 
+// bash's own line, which docker/sandbox/sandbox-env.sh keeps printing before its hint: `bash: x: command not found`,
+// or `/bin/bash: line 3: x: command not found` from `bash -c`.
+const MISSING_COMMAND =
+  /^(?:\/(?:usr\/)?bin\/)?bash: (?:line \d+: )?(?<command>[^\s:]+): command not found$/gmu;
+
+/** The commands a shell's output says were not found, each once, in order: what the base images lack (ADR-0009). */
+export const missingCommands = (output: string): string[] => [
+  ...new Set(
+    Array.from(
+      output.matchAll(MISSING_COMMAND),
+      (match) => match.groups?.command ?? ""
+    )
+  ),
+];
+
 /** Langfuse attributes for one model response. */
 export const generationAttributes = (
   message: AssistantMessage
@@ -379,9 +394,26 @@ export const makeAgentTracing = (
                 ? sizeOf(diagnostic.message)
                 : diagnostic.message
             );
+          // Filterable in Langfuse as the observation's `missing_commands` metadata, to count what agents look for.
+          const missing =
+            call.name === "bash"
+              ? missingCommands(
+                  (result.content ?? [])
+                    .flatMap((part) =>
+                      part.type === "text" ? [part.text] : []
+                    )
+                    .join("\n")
+                )
+              : [];
           end(
             api.taskId,
             {
+              ...(missing.length === 0
+                ? {}
+                : {
+                    "langfuse.observation.metadata.missing_commands":
+                      missing.join(","),
+                  }),
               "langfuse.observation.output": traceJson(
                 result.content === undefined || result.content.length === 0
                   ? errors

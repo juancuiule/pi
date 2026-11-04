@@ -4,7 +4,13 @@ import { describe, expect, it } from "vitest";
 
 import { Capacity } from "../capacity.ts";
 import type { Resource } from "../capacity.ts";
-import { fauxAgents, offered, offeredIn } from "../testing/faux.ts";
+import {
+  callTool,
+  echoToolResult,
+  fauxAgents,
+  offered,
+  offeredIn,
+} from "../testing/faux.ts";
 import { alice } from "../testing/users.ts";
 import { Agents } from "./agents.ts";
 import { SETTINGS_ENTRY } from "./settings.ts";
@@ -51,16 +57,16 @@ describe("Software", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const agents = yield* Agents;
-          const id = yield* create({ software: ["uv", "node", "uv"] });
+          const id = yield* create({ software: ["ffmpeg", "node", "ffmpeg"] });
           yield* agents.open(id);
           return yield* agents.get(id);
         })
       ).pipe(Effect.provide(layer))
     );
 
-    expect(stored.software).toStrictEqual(["node", "uv"]);
+    expect(stored.software).toStrictEqual(["node", "ffmpeg"]);
     expect(sandboxes.created).toStrictEqual([
-      { kind: "shell", software: ["node", "uv"] },
+      { kind: "shell", software: ["node", "ffmpeg"] },
     ]);
   });
 
@@ -70,18 +76,14 @@ describe("Software", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const agents = yield* Agents;
-        const chrome = yield* Effect.flip(create({ software: ["chrome"] }));
         const chat = yield* Effect.flip(
           create({ level: "none", software: ["node"] })
         );
-        return { chrome, chat, all: yield* agents.list };
+        return { chat, all: yield* agents.list };
       }).pipe(Effect.provide(layer))
     );
 
-    expect([result.chrome._tag, result.chat._tag]).toStrictEqual([
-      "InvalidSetting",
-      "InvalidSetting",
-    ]);
+    expect(result.chat._tag).toBe("InvalidSetting");
     expect(result.all).toHaveLength(0);
   });
 
@@ -94,7 +96,7 @@ describe("Software", () => {
           const agents = yield* Agents;
           const id = yield* create({ software: ["node"] });
           const seat = yield* agents.open(id);
-          yield* seat.upgrade({ software: ["uv"] });
+          yield* seat.upgrade({ software: ["ffmpeg"] });
           return {
             level: seat.level,
             stored: yield* agents.get(id),
@@ -106,12 +108,12 @@ describe("Software", () => {
 
     expect(sandboxes.created).toStrictEqual([
       { kind: "shell", software: ["node"] },
-      { kind: "shell", software: ["node", "uv"] },
+      { kind: "shell", software: ["node", "ffmpeg"] },
     ]);
     expect(result.level).toBe("shell");
-    expect(result.stored.software).toStrictEqual(["node", "uv"]);
+    expect(result.stored.software).toStrictEqual(["node", "ffmpeg"]);
     expect(result.records).toStrictEqual([
-      { by: "person", changes: [{ type: "software", added: ["uv"] }] },
+      { by: "person", changes: [{ type: "software", added: ["ffmpeg"] }] },
     ]);
   });
 
@@ -127,7 +129,7 @@ describe("Software", () => {
         const during = yield* Effect.scoped(
           Effect.gen(function* () {
             const seat = yield* agents.open(id);
-            yield* seat.upgrade({ software: ["uv"] });
+            yield* seat.upgrade({ software: ["ffmpeg"] });
             return yield* holdersOf("shell");
           })
         );
@@ -137,7 +139,7 @@ describe("Software", () => {
 
     expect(sandboxes.created).toStrictEqual([
       { kind: "shell", software: ["node"] },
-      { kind: "shell", software: ["node", "uv"] },
+      { kind: "shell", software: ["node", "ffmpeg"] },
     ]);
     expect(result.during).toStrictEqual([result.id]);
     expect(result.after).toStrictEqual([]);
@@ -155,7 +157,7 @@ describe("Software", () => {
           const agents = yield* Agents;
           const holder = yield* create({ level: "desktop" });
           yield* agents.open(holder);
-          const id = yield* create({ software: ["uv"] });
+          const id = yield* create({ software: ["ffmpeg"] });
           const seat = yield* agents.open(id);
           const refused = yield* Effect.flip(
             seat.upgrade({ level: "desktop" })
@@ -178,7 +180,7 @@ describe("Software", () => {
     expect(result.desktops).toStrictEqual([result.holder]);
     expect(sandboxes.created).toStrictEqual([
       { kind: "desktop", software: [] },
-      { kind: "shell", software: ["uv"] },
+      { kind: "shell", software: ["ffmpeg"] },
     ]);
   });
 
@@ -189,7 +191,7 @@ describe("Software", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const agents = yield* Agents;
-          const id = yield* create({ software: ["uv"] });
+          const id = yield* create({ software: ["ffmpeg"] });
           const seat = yield* agents.open(id);
           yield* seat.upgrade({ level: "desktop" });
           return yield* agents.get(id);
@@ -198,10 +200,13 @@ describe("Software", () => {
     );
 
     expect(sandboxes.created).toStrictEqual([
-      { kind: "shell", software: ["uv"] },
-      { kind: "desktop", software: ["uv"] },
+      { kind: "shell", software: ["ffmpeg"] },
+      { kind: "desktop", software: ["ffmpeg"] },
     ]);
-    expect([stored.level, stored.software]).toStrictEqual(["desktop", ["uv"]]);
+    expect([stored.level, stored.software]).toStrictEqual([
+      "desktop",
+      ["ffmpeg"],
+    ]);
   });
 
   it("refuses an Upgrade that adds nothing, or Software the Level cannot have", async () => {
@@ -262,7 +267,7 @@ describe("Software", () => {
           const id = yield* create({ software: ["node"] });
           const seat = yield* agents.open(id);
           const first = yield* seat.ask("What is installed?");
-          yield* seat.upgrade({ software: ["uv"] });
+          yield* seat.upgrade({ software: ["ffmpeg"] });
           const second = yield* seat.ask("And now?");
           return [first, second].map((answer) => offeredIn(answer).system);
         })
@@ -270,13 +275,80 @@ describe("Software", () => {
     );
 
     const node = "- Node.js 24 (`node`, `npm`, `npx`, `pnpm`, `yarn`)";
-    const uv =
-      "- uv, which manages Python environments and packages (`uv venv`, `uv pip install`, `uv run`). Use it instead of pip.";
+    const ffmpeg = "- FFmpeg (`ffmpeg`, `ffprobe`)";
     expect(before).toContain(
       `Installed beyond the base system:\\n${node}\\n</workspace>`
     );
     expect(after).toContain(
-      `Installed beyond the base system:\\n${node}\\n${uv}\\n</workspace>`
+      `Installed beyond the base system:\\n${node}\\n${ffmpeg}\\n</workspace>`
     );
+  });
+
+  it("is added by the agent's upgrade_workspace, with a Level in the same call", async () => {
+    const { layer, sandboxes } = fauxAgents([
+      callTool("upgrade_workspace", {
+        level: "shell",
+        software: ["ffmpeg"],
+        reason: "to cut the video",
+      }),
+      echoToolResult,
+    ]);
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const id = yield* create({ level: "none" });
+          const seat = yield* agents.open(id);
+          return {
+            reply: yield* seat.ask("Cut this video."),
+            stored: yield* agents.get(id),
+            by: (yield* recordsOf(id)).map(
+              (each) => (each as { by: string }).by
+            ),
+          };
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(sandboxes.created).toStrictEqual([
+      { kind: "shell", software: ["ffmpeg"] },
+    ]);
+    expect(result.reply).toBe(
+      "The workspace has a shell; your files are in /workspace. Installed: FFmpeg."
+    );
+    expect([result.stored.level, result.stored.software]).toStrictEqual([
+      "shell",
+      ["ffmpeg"],
+    ]);
+    expect(result.by).toStrictEqual(["agent"]);
+  });
+
+  it("tells the agent why upgrade_workspace cannot add software", async () => {
+    const { layer, sandboxes } = fauxAgents([
+      callTool("upgrade_workspace", { software: ["node"], reason: "js" }),
+      echoToolResult,
+      callTool("upgrade_workspace", { reason: "nothing" }),
+      echoToolResult,
+    ]);
+
+    const replies = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const agents = yield* Agents;
+          const chat = yield* agents.open(yield* create({ level: "none" }));
+          const shell = yield* agents.open(yield* create({ level: "shell" }));
+          return [yield* chat.ask("Run js."), yield* shell.ask("Again.")];
+        })
+      ).pipe(Effect.provide(layer))
+    );
+
+    expect(replies).toStrictEqual(
+      [
+        "The upgrade cannot be done: Software needs a shell or desktop.",
+        "Nothing to upgrade: the workspace is already shell with that software.",
+      ].map((message) => `error: <harness>\n[error] ${message}\n</harness>`)
+    );
+    expect(sandboxes.created).toStrictEqual([{ kind: "shell", software: [] }]);
   });
 });

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Ahead of /usr/bin in PATH, and what x-www-browser and the menu entries run, so every way of opening Chrome here works:
+# it refuses root without --no-sandbox, opens behind a Terms of Service dialog without --no-first-run (no policy can
+# remove that), and Docker's 64MB /dev/shm crashes its tabs.
+exec /usr/bin/google-chrome-stable --no-sandbox --no-first-run --no-default-browser-check --password-store=basic --disable-dev-shm-usage --start-maximized "$@"

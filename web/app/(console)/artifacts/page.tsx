@@ -13,6 +13,7 @@ import {
   ArtifactResizablePanel,
 } from "@/components/console/artifact-panel";
 import { PageHeader } from "@/components/console/page-header";
+import { PageTitle } from "@/components/console/page-title";
 import { ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -134,7 +135,7 @@ const ArtifactsPage = () => {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <title>Artifacts · effect-pi</title>
+      <PageTitle>Artifacts · effect-pi</PageTitle>
       <PageHeader title="Artifacts" />
       {body}
       <ArtifactDrawer

@@ -13,6 +13,7 @@ import {
   Effect,
   Exit,
   Layer,
+  PubSub,
   Schedule,
   Scope,
   Semaphore,
@@ -27,7 +28,11 @@ import type {
   UpgradeRequest,
 } from "../agents/agents.ts";
 import type { SettingsChange } from "../agents/settings.ts";
-import type { AnswerInput, ApprovalChoice } from "../approvals.ts";
+import type {
+  AnswerInput,
+  ApprovalChoice,
+  PendingApproval,
+} from "../approvals.ts";
 import { Attachments } from "../attachments/attachments.ts";
 import type { Attention } from "../attention.ts";
 import type { UserId } from "../auth/user.ts";
@@ -70,6 +75,8 @@ export interface ConversationSummary {
   /** The Sandbox has a desktop to watch, over `/api/conversations/:id/desktop`. */
   readonly desktop?: boolean;
   readonly title: string;
+  /** When the person pinned it; pinned Conversations list first. */
+  readonly pinnedAt?: number;
   readonly status: ConversationStatus;
   /** True while a Pause waits for the current Run to end. */
   readonly pausing: boolean;
@@ -78,6 +85,23 @@ export interface ConversationSummary {
   /** The last settled input ended badly — a failed run or the repeat guard's stop. */
   readonly attention?: Attention;
   readonly createdAt: number;
+}
+
+/**
+ * Something in a Conversation that may want the person: a Run ended — answered (`finished`) or badly (`failed`) —
+ * or a call started waiting for them (`approval`, `question`). Every Run of a Seat ends through the same edge,
+ * whoever sent its input, so a scheduled run is just another `finished`. A Run the person stopped, or an input
+ * withdrawn, is not reported.
+ */
+export interface Activity {
+  readonly conversation: number;
+  readonly title: string;
+  readonly kind: "finished" | "failed" | "approval" | "question";
+  readonly at: number;
+  /** `failed`: why. */
+  readonly attention?: Attention;
+  /** `approval` and `question`: the waiting call's tool. */
+  readonly tool?: string;
 }
 
 const TITLE_LENGTH = 60;
@@ -115,6 +139,12 @@ interface Live {
 
 const asId = (id: number) => id as ConversationId;
 
+/** Pinned first, the most recently pinned on top; then newest first. */
+const byPinThenRecency = (
+  a: ConversationSummary,
+  b: ConversationSummary
+): number => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0) || b.createdAt - a.createdAt;
+
 const summaryOf = (
   stored: StoredConversation,
   live: Live | undefined,
@@ -133,6 +163,9 @@ const summaryOf = (
     ...(sandbox === undefined ? {} : { sandboxId: sandbox.id }),
     ...(sandbox?.vncUrl === undefined ? {} : { desktop: true }),
     title: stored.meta.title,
+    ...(stored.meta.pinnedAt === undefined
+      ? {}
+      : { pinnedAt: stored.meta.pinnedAt }),
     status,
     pausing: live?.pausing ?? false,
     pendingApprovals,
@@ -172,7 +205,7 @@ export class Conversations extends Context.Service<
       ConversationSummary & { readonly submission: SubmissionRecord },
       SeatError | SkillNotFound | InvalidSetting | AttachmentError
     >;
-    /** `owner`'s Conversations, newest first. */
+    /** `owner`'s Conversations: pinned ones first, most recently pinned on top, then the rest newest first. */
     list(
       owner: UserId
     ): Effect.Effect<readonly ConversationSummary[], AgentError>;
@@ -214,6 +247,11 @@ export class Conversations extends Context.Service<
     unarchive(
       id: number
     ): Effect.Effect<void, AgentError | ConversationNotFound>;
+    /** Pin a Conversation above the rest of its owner's list, or unpin it. Works in any state. */
+    pin(
+      id: number,
+      pinned: boolean
+    ): Effect.Effect<ConversationSummary, AgentError | ConversationNotFound>;
     /** Rename a Conversation's title; marks it manual. */
     rename(
       id: number,
@@ -312,6 +350,11 @@ export class Conversations extends Context.Service<
     >;
     /** Each resource's limit and holders, for choosing a Seat to free. */
     readonly capacity: Effect.Effect<readonly Usage[]>;
+    /**
+     * `owner`'s Activity from now on, every Conversation of theirs at once. Attached when the effect runs, not
+     * when the stream is run, so nothing published after the call is missed; the stream never ends by itself.
+     */
+    activity(owner: UserId): Effect.Effect<Stream.Stream<Activity>>;
   }
 >()("effect-pi/Conversations") {
   static readonly layer = (options: {
@@ -328,6 +371,10 @@ export class Conversations extends Context.Service<
         const capacity = yield* Capacity;
         const workspaces = yield* Workspaces;
         const search = yield* Search;
+        // Sliding: a subscriber that stops reading loses its oldest Activity instead of holding memory.
+        const activities = yield* PubSub.sliding<
+          Activity & { readonly owner: UserId }
+        >(256);
         const live = new Map<number, Live>();
         // A Seat mid-open, before `register` lands it in `live`: its Conversation is recorded already, so it
         // reads as paused. Look-ups wait on the gate instead of opening a second Seat or writing its Workspace;
@@ -365,6 +412,52 @@ export class Conversations extends Context.Service<
             Effect.catchTag("ConversationNotFound", () =>
               // oxlint-disable-next-line unicorn/no-useless-undefined -- a conversation gone between list and read reports nothing
               Effect.succeed(undefined)
+            )
+          );
+
+        // Activity carries the title and owner as stored now; a Conversation gone meanwhile reports nothing.
+        const publish = (
+          id: number,
+          activity: Omit<Activity, "conversation" | "title" | "at">
+        ) =>
+          Effect.gen(function* () {
+            const stored = yield* agents.get(asId(id));
+            const { owner } = stored.meta;
+            if (owner === undefined) {
+              return;
+            }
+            yield* PubSub.publish(activities, {
+              ...activity,
+              conversation: id,
+              title: stored.meta.title,
+              at: yield* Clock.currentTimeMillis,
+              owner,
+            });
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Activity of conversation ${id} was not published`,
+                cause
+              )
+            )
+          );
+
+        // A Run ended: report how its last settled input did.
+        const runEnded = (id: number) =>
+          agents.outcome(asId(id)).pipe(
+            Effect.flatMap((outcome) => {
+              if (outcome?.kind === "answered") {
+                return publish(id, { kind: "finished" });
+              }
+              return outcome?.kind === "failed"
+                ? publish(id, { kind: "failed", attention: outcome.attention })
+                : Effect.void;
+            }),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Outcome of conversation ${id}'s Run could not be read`,
+                cause
+              )
             )
           );
 
@@ -427,6 +520,9 @@ export class Conversations extends Context.Service<
                   }
                 }
                 if (was && !value) {
+                  yield* runEnded(entry.seat.id).pipe(
+                    Effect.forkIn(layerScope)
+                  );
                   // One answered Run earns one automatic title; the meta latch inside decides.
                   // Unlike the checkpoint it needs no Sandbox, and a Pause is no reason to skip it.
                   yield* agents.autoTitle(entry.seat.id).pipe(
@@ -499,6 +595,44 @@ export class Conversations extends Context.Service<
                 }
               })
             ),
+            Effect.ignore,
+            Effect.forkIn(entry.scope)
+          );
+          // Each call that starts waiting is reported once; the watch's first value is the baseline.
+          const waiting = yield* entry.seat.waiting.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Waiting calls of conversation ${id} cannot be watched`,
+                cause
+              ).pipe(
+                Effect.as(
+                  Stream.empty as Stream.Stream<readonly PendingApproval[]>
+                )
+              )
+            )
+          );
+          let known: ReadonlySet<string> | undefined;
+          yield* waiting.pipe(
+            Stream.runForEach((pending) => {
+              const seen = known;
+              known = new Set(
+                pending.map((call) => `${call.conversationId}:${call.callId}`)
+              );
+              if (seen === undefined) {
+                return Effect.void;
+              }
+              return Effect.forEach(
+                pending.filter(
+                  (call) => !seen.has(`${call.conversationId}:${call.callId}`)
+                ),
+                (call) =>
+                  publish(id, {
+                    kind: call.question === true ? "question" : "approval",
+                    tool: call.tool,
+                  }),
+                { discard: true }
+              );
+            }),
             Effect.ignore,
             Effect.forkIn(entry.scope)
           );
@@ -906,7 +1040,7 @@ export class Conversations extends Context.Service<
               )
             );
           }
-          return listed.toSorted((a, b) => b.createdAt - a.createdAt);
+          return listed.toSorted(byPinThenRecency);
         });
 
         const sweep = Effect.gen(function* () {
@@ -940,6 +1074,19 @@ export class Conversations extends Context.Service<
           withdraw: (id, submission) => agents.withdraw(asId(id), submission),
           feedback,
           report,
+          pin: Effect.fn("Conversations.pin")(function* (id, pinned) {
+            const entry = live.get(id);
+            const stored = yield* agents.pin(
+              asId(id),
+              pinned ? yield* Clock.currentTimeMillis : undefined
+            );
+            return summaryOf(
+              stored,
+              entry,
+              entry === undefined ? 0 : yield* entry.seat.pendingApprovals,
+              yield* attentionOf(id)
+            );
+          }),
           rename: Effect.fn("Conversations.rename")(function* (id, title) {
             const entry = live.get(id);
             const stored = yield* agents.renameTitle(asId(id), title);
@@ -968,6 +1115,22 @@ export class Conversations extends Context.Service<
           decide,
           answer,
           capacity: capacity.usage,
+          activity: (owner) =>
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                const scope = yield* Scope.make();
+                const subscription = yield* PubSub.subscribe(activities).pipe(
+                  Scope.provide(scope)
+                );
+                return Stream.fromSubscription(subscription).pipe(
+                  Stream.filter((each) => each.owner === owner),
+                  Stream.map(
+                    ({ owner: _owner, ...activity }): Activity => activity
+                  ),
+                  Stream.ensuring(Scope.close(scope, Exit.void))
+                );
+              })
+            ),
         });
       })
     );

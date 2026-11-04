@@ -3,7 +3,7 @@
 // cookie was set on the page's host, and cookies are per host, not per port, so a loopback server is reached under
 // the page's own loopback name: a page on localhost:3001 and an apiUrl of 127.0.0.1:4000 make ws://localhost:4000.
 // A page served through a tunnel (PUBLIC_URL) cannot reach the server's loopback address at all, so its socket goes
-// to the page's own origin, and the tunnel routes the socket paths to the server (docs/deploy/raspberry-pi.md).
+// to the page's own origin, and the tunnel routes the socket paths to the server (docs/deploy/README.md).
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 

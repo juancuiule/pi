@@ -24,7 +24,7 @@ const LOW_SNAP = 0.55;
 const TOP_SNAP = 0.95;
 const SNAP_POINTS = [LOW_SNAP, TOP_SNAP];
 
-/** The sandbox's own panel — the desktop VNC view, or the shell/agent/files tabs. */
+/** The sandbox's own panel — the desktop's live view/files tabs, or the shell/agent/files tabs. */
 export const SandboxContent = ({
   conversation,
   state,
@@ -35,7 +35,7 @@ export const SandboxContent = ({
   conversation: ConversationSummary;
   state: ConversationState;
   resuming: boolean;
-  /** The shell panel's tab and pending folder reveal, owned by the console page. */
+  /** The panel's tab and pending folder reveal, owned by the console page. */
   view: SandboxView;
   onView: (action: SandboxViewAction) => void;
 }) => (
@@ -46,6 +46,8 @@ export const SandboxContent = ({
         desktop={conversation.desktop === true}
         paused={seatlessOf(conversation)}
         resuming={resuming}
+        view={view}
+        onView={onView}
       />
     ) : (
       <SandboxPanel
