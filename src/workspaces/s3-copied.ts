@@ -45,7 +45,9 @@ const inUse = (error: SandboxError) =>
 const missing = (error: SandboxError) =>
   error.cause instanceof Error && /no such volume/iu.test(error.cause.message);
 
-const volumeName = (id: string) => `effect-pi-workspace-${id}`;
+const VOLUME_PREFIX = "effect-pi-workspace-";
+
+const volumeName = (id: string) => `${VOLUME_PREFIX}${id}`;
 
 /** A SandboxCache of Docker named volumes; `labels` are added to every one it creates. */
 export const dockerCache = (labels: readonly string[] = []): SandboxCache => ({
@@ -212,6 +214,12 @@ export const layer = (options: {
 
       return WorkspaceStorage.of({
         adapter: ADAPTER,
+        // A `docker-volume` Workspace's volume has the name of this adapter's cache for the same id: it becomes that
+        // cache, so nothing moves. Its next Seat skips the restore (a populated mount) and its closing save uploads it.
+        adopt: (ref) =>
+          ref.adapter === "docker-volume" && ref.id.startsWith(VOLUME_PREFIX)
+            ? { adapter: ADAPTER, id: ref.id.slice(VOLUME_PREFIX.length) }
+            : undefined,
         create: Effect.gen(function* () {
           const id = randomUUID();
           yield* options.cache.create(id);

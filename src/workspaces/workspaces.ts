@@ -56,6 +56,11 @@ export class WorkspaceStorage extends Context.Service<
   {
     /** What this adapter writes as `StorageRef.adapter`; opening a Workspace recorded under another fails. */
     readonly adapter: string;
+    /**
+     * The ref this adapter reads `storage`'s files under, when it was recorded under another adapter whose files
+     * it can take as they are. Absent, or `undefined` for a ref it cannot take: that Workspace keeps failing to open.
+     */
+    readonly adopt?: (storage: StorageRef) => StorageRef | undefined;
     /** Make empty storage for a new Workspace. */
     readonly create: Effect.Effect<StorageRef, SandboxError>;
     /** Delete a Workspace's files, ignoring ones already gone. */
@@ -111,6 +116,8 @@ export class Workspaces extends Context.Service<
     ): Effect.Effect<void, SandboxError>;
     /** Delete a Workspace's files, for Archive. */
     discard(storage: StorageRef): Effect.Effect<void, SandboxError>;
+    /** The ref to record instead of `storage` when the configured adapter takes it over; `undefined` to keep it. */
+    adopt(storage: StorageRef): StorageRef | undefined;
     /** The execution environment of a Sandbox, for the harness; cheap, called for every tool call. */
     env(sandbox: SandboxInfo): ExecutionEnv;
     /**
@@ -228,6 +235,8 @@ export class Workspaces extends Context.Service<
         sandbox,
         save,
         discard: storage.remove,
+        adopt: (ref) =>
+          ref.adapter === storage.adapter ? undefined : storage.adopt?.(ref),
         env: sandboxes.env,
         shell: (info, size) =>
           Effect.flatMap(sandboxes.shell(info, size), shellSession),

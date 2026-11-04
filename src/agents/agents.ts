@@ -1086,7 +1086,7 @@ export class Agents extends Context.Service<
         // `abort` enables scheduling for the whole harness, so another conversation's pending task may start before
         // its own abort mark lands — at worst one tool call failing for lack of a Sandbox, or one model request.
         // Each abort waits until its conversation is idle. Then every conversation is left without a Sandbox and
-        // without waiting calls.
+        // without waiting calls. Workspaces recorded under an adapter the configured one can take over move to it.
         yield* attempt(async () => {
           const inspection = await harness.inspect(context);
           const ids = new Set<ConversationId>();
@@ -1116,6 +1116,14 @@ export class Agents extends Context.Service<
                 approvals.answers = {};
                 const sandbox = await tx.doc(SandboxDoc, id);
                 delete sandbox.sandbox;
+                const workspace = await tx.doc(WorkspaceDoc, id);
+                const adopted =
+                  workspace.storage === undefined
+                    ? undefined
+                    : workspaces.adopt(workspace.storage);
+                if (adopted !== undefined) {
+                  workspace.storage = adopted;
+                }
               }, context)
             )
           );

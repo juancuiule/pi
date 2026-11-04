@@ -5,7 +5,9 @@ Streams the WAL of `EFFECT_PI_DB` (`data/effect-pi.sqlite`, which holds conversa
 - `pnpm litestream:up` — ensures the bucket (`init-bucket.ts`) and starts replication.
 - `pnpm litestream:down` — stops it. SeaweedFS keeps running.
 
-Credentials come from `docker/seaweedfs/.env`; the container reaches the gateway's published `127.0.0.1:8333` as `host.docker.internal:8333`.
+Credentials come from `docker/seaweedfs/.env`; the container joins SeaweedFS's compose network (`seaweedfs_default`) and reaches the gateway as `seaweedfs:8333`.
+
+A deployed server keeps its database in the `effect-pi-data` volume, not `data/`: under `STORAGE=s3`, `deploy/deploy.sh` runs the `litestream` service of `deploy/compose.yml` instead. Restoring it: [docs/deploy/storage.md](../../docs/deploy/storage.md).
 
 ## Restore
 

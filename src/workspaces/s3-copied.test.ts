@@ -327,6 +327,39 @@ describe("s3-copied workspace storage", () => {
     expect(Exit.isFailure(exit)).toBeTruthy();
   });
 
+  it("takes over a docker-volume Workspace's files where they are, and uploads them at its closing save", async () => {
+    const { root, store, layer } = setup();
+
+    const adopted = await Effect.runPromise(
+      Effect.gen(function* () {
+        const workspaces = yield* Workspaces;
+        const ref = workspaces.adopt({
+          adapter: "docker-volume",
+          id: "effect-pi-workspace-1d91d804",
+        });
+        expect(ref).toStrictEqual({ adapter: "s3-copied", id: "1d91d804" });
+        // The old volume is the cache of the adopted id.
+        mkdirSync(cacheDir(root, "1d91d804"));
+        populate(root, "1d91d804");
+        yield* Effect.scoped(
+          workspaces.sandbox({ level: "shell", storage: ref })
+        );
+        return {
+          again: ref === undefined ? ref : workspaces.adopt(ref),
+          other: workspaces.adopt({
+            adapter: "docker-volume",
+            id: "elsewhere",
+          }),
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(adopted).toStrictEqual({ again: undefined, other: undefined });
+    const packed = await store.get(BUCKET, "1d91d804/files.tar.zst");
+    expect(packed).toBeDefined();
+    expect(tarList(packed ?? new Uint8Array())).toContain("./note.txt");
+  });
+
   it("deletes the snapshot and the cache on discard", async () => {
     const { root, store, layer } = setup();
 
