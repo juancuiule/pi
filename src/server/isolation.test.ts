@@ -238,19 +238,34 @@ describe("isolation between Users", () => {
           yield* HttpClient.HttpClient,
           HttpClientRequest.removeHeader("cookie")
         );
-        const status = (file: string) =>
+        const answer = (file: string) =>
           anonymous.get(`/api/artifact-libs/${file}`).pipe(
-            Effect.map((response) => response.status),
+            Effect.map((response) => ({
+              status: response.status,
+              type: response.headers["content-type"],
+            })),
             Effect.scoped
           );
+        const status = (file: string) =>
+          answer(file).pipe(Effect.map((response) => response.status));
         return {
-          pele: yield* status("pele.global.js"),
+          pele: yield* answer("pele.global.js"),
           chart: yield* status("chart.umd.js"),
           missing: yield* status("evil.js"),
+          // Names every plain object inherits are not library files.
+          inherited: yield* Effect.all(
+            ["constructor", "__proto__", "toString"].map(status)
+          ),
         };
       }).pipe(Effect.provide(server()))
     );
-    expect(result).toStrictEqual({ pele: 200, chart: 200, missing: 404 });
+    expect(result).toStrictEqual({
+      // Pele's bundle is UTF-8: without the charset, a page with no <meta charset> decodes it wrongly and it throws.
+      pele: { status: 200, type: "text/javascript; charset=utf-8" },
+      chart: 200,
+      missing: 404,
+      inherited: [404, 404, 404],
+    });
   }, 30_000);
 
   it("covers every endpoint the API defines", () => {
