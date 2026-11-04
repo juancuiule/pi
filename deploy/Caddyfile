@@ -23,8 +23,8 @@
 http://:{$EDGE_PORT} {
 	bind {$EDGE_BIND}
 
-	# First: the console's /api rewrite cannot carry WebSockets (the Shell tab and the desktop).
-	@sockets path_regexp ^/api/conversations/[^/]+/(shell|desktop)$
+	# First: the console's /api rewrite cannot carry WebSockets (the Shell tab, the desktop and dictation).
+	@sockets path_regexp ^/api/(conversations/[^/]+/(shell|desktop)|dictation)$
 	reverse_proxy @sockets 127.0.0.1:4000
 
 	# Services (docs/deploy/services.md, ADR-0011), each where `pnpm <name>:up` publishes it on loopback. None of these

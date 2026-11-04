@@ -19,3 +19,4 @@ One file per decision that is hard to reverse, surprising without context, and t
 | [0009](0009-base-images-cover-the-first-commands.md) | Base images carry Python packaging and common CLI tools; a missing command says how to get it |
 | [0010](0010-activity-stream-for-notifications.md) | One owner-scoped activity stream, published from the Seat's edges, feeds notifications and the favicon |
 | [0011](0011-services-behind-the-edge.md) | Services sit under /_/ on the console's hostname, behind effect-pi's sign-in at the edge |
+| [0013](0013-dictation-segments-over-one-openai-compatible-url.md) | Dictation streams PCM to the server, which re-transcribes segments over one OpenAI-compatible URL |

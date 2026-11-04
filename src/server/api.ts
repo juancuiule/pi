@@ -48,6 +48,14 @@ export { SOFTWARE } from "../sandbox/software.ts";
 export { SERVICES } from "../services.ts";
 export type { ServiceName } from "../services.ts";
 export {
+  DICTATION_ERRORS,
+  DICTATION_LANGUAGES,
+  DICTATION_SAMPLE_RATE,
+  DictationClientMessage,
+  DictationLanguage,
+  DictationServerMessage,
+} from "../dictation/protocol.ts";
+export {
   NAME_RULE,
   nameProblem,
   PASSWORD_RULE,
@@ -877,6 +885,8 @@ const InfoGroup = HttpApiGroup.make("info").add(
       tracing: Schema.Boolean,
       /** Generated titles are on: a real model is configured. */
       titleGeneration: Schema.Boolean,
+      /** A transcription backend is configured: the composer shows its mic button (the `/api/dictation` socket). */
+      dictation: Schema.Boolean,
     }),
   }),
   HttpApiEndpoint.get("capabilities", "/capabilities", {

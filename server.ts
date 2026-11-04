@@ -27,6 +27,7 @@ import { s3Blobs } from "./src/attachments/store.ts";
 import { Auth } from "./src/auth/auth.ts";
 import { Capacity } from "./src/capacity.ts";
 import * as config from "./src/config.ts";
+import { Transcriber } from "./src/dictation/transcriber.ts";
 import { langfuseLayer } from "./src/langfuse.ts";
 import { modelFromConfig } from "./src/models.ts";
 import {
@@ -36,6 +37,7 @@ import {
 import { Search } from "./src/search/search.ts";
 import { Conversations } from "./src/server/conversations.ts";
 import { desktopRoute } from "./src/server/desktop.ts";
+import { dictationRoute } from "./src/server/dictation.ts";
 import { echoModel } from "./src/server/faux.ts";
 import { apiLayer } from "./src/server/handlers.ts";
 import { shellRoute } from "./src/server/shell.ts";
@@ -203,20 +205,35 @@ const UploadLimits = Layer.succeedContext(
   })
 );
 
+// Dictation exists only with TRANSCRIBE_URL set: without a Transcriber the socket answers 404 and the console shows
+// no mic button.
+const TranscriberLive =
+  config.dictation === undefined
+    ? Layer.empty
+    : Transcriber.openAiCompatible(config.dictation);
+
 const ServerLive = HttpRouter.serve(
   // Where the console reaches this server directly, skipping Next's rewrite (the shell's socket needs it).
   Layer.mergeAll(
     apiLayer({
       apiUrl: `http://127.0.0.1:${config.server.port}`,
       tracing: config.langfuse !== undefined,
+      dictation: config.dictation !== undefined,
       pagePorts: [config.server.webPort, config.server.port],
       publicUrls: config.server.publicUrls,
       services: config.services,
     }),
     shellRoute,
-    desktopRoute
+    desktopRoute,
+    dictationRoute({
+      interimMs: config.dictation?.interimMs ?? 0,
+      pauseMs: config.dictation?.pauseMs,
+      maxSeconds: config.dictation?.maxSeconds ?? 0,
+      prompt: config.dictation?.prompt,
+    })
   )
 ).pipe(
+  Layer.provide(TranscriberLive),
   Layer.provide(ConversationsLive),
   Layer.provide(AgentsLive),
   Layer.provide(SearchLive),

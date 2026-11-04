@@ -11,12 +11,12 @@ browser ──> exposure ┼─ tailscale: tailscale serve ──┐
                      └─ cloudflare: cloudflared ──────┤
                                                       v
                                edge (Caddy) on the host
-                               ├── /api/conversations/*/(shell|desktop) ──> server :4000 (WebSockets)
+                               ├── /api/conversations/*/(shell|desktop), /api/dictation ──> server :4000 (WebSockets)
                                ├── /_/<service>/ ──(signed in? server :4000)──> Langfuse, SeaweedFS, SearXNG
                                └── everything else ──> console :3001 ──/api──> server :4000
 ```
 
-The server and the console listen on 127.0.0.1 only. The edge (`deploy/Caddyfile`) holds the routing rules: the console's `/api` rewrite cannot carry WebSockets, so the Shell tab and the desktop go straight to the server, and the Services under `/_/` are forwarded only after the server accepts the request's session ([services.md](services.md)). Every exposure forwards everything to the edge.
+The server and the console listen on 127.0.0.1 only. The edge (`deploy/Caddyfile`) holds the routing rules: the console's `/api` rewrite cannot carry WebSockets, so the Shell tab, the desktop and dictation go straight to the server, and the Services under `/_/` are forwarded only after the server accepts the request's session ([services.md](services.md)). The microphone needs a secure context, so dictation works through an https exposure (tailscale, cloudflare) or on localhost, not over the plain-http LAN URL. Every exposure forwards everything to the edge.
 
 ## Configure
 
