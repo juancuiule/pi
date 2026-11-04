@@ -1,12 +1,14 @@
 ---
 name: agent-browser
-description: Drive a real Chrome browser from the shell with the agent-browser CLI — open pages, read them as accessibility snapshots with element refs, click, fill forms, take screenshots, extract data, test a web app. Use when a task needs to interact with a website beyond what web_search returns.
+description: Drive a real Chrome browser by running the agent-browser command with the bash tool — open pages, read them as accessibility snapshots with element refs, click, fill forms, take screenshots, extract data, test a web app. Use when a task needs to interact with a website beyond what web_search returns.
 compatibility: Needs a shell or desktop sandbox; both have agent-browser and Google Chrome.
 ---
 
 # agent-browser
 
-`agent-browser` drives Google Chrome through the DevTools protocol. A page reads as an accessibility tree in which every element you can act on has a ref (`@e1`, `@e2`, ...), so you work from text, not pixels.
+`agent-browser` is a program, not a tool you can call: every command in this skill goes in the bash tool's `command` argument. There is no `agent-browser` tool, and loading this skill does not add one.
+
+It drives Google Chrome through the DevTools protocol. A page reads as an accessibility tree in which every element you can act on has a ref (`@e1`, `@e2`, ...), so you work from text, not pixels.
 
 ## 1. Check it is there
 

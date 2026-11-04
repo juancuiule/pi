@@ -2,9 +2,13 @@
 // a desktop. Under the `ask` approval policy the person approves it first; when there is no room, it waits until the
 // person frees some (see Capacity), and a Stop or a cancelled wait ends it with an error the model can read.
 import { Type } from "@earendil-works/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
+import { getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
 import {
   defineExtension,
   defineTool,
+  GenerationTask,
+  hook,
   section,
 } from "@earendil-works/pi-durable";
 import type { ConversationId, Extension } from "@earendil-works/pi-durable";
@@ -21,7 +25,7 @@ export const UPGRADE_WORKSPACE = "upgrade_workspace";
 
 // Both sandbox images have agent-browser and Google Chrome (docker/sandbox/shell.Dockerfile).
 const BROWSER =
-  "To use a website — open pages, click, fill forms, read what search snippets do not show — use `agent-browser`, which drives Google Chrome; load the `agent-browser` skill first.";
+  "To use a website — open pages, click, fill forms, read what search snippets do not show — run the `agent-browser` command with the bash tool, for example `agent-browser open <url>`. It drives Google Chrome. It is a program, not a tool you can call. Load the `agent-browser` skill first.";
 
 // What both sandbox images have (docker/sandbox/shell.Dockerfile), so the agent does not probe for it.
 const BASE = [
@@ -51,7 +55,7 @@ const levelSection = (level: SandboxChoice): string => {
         "You have a Linux desktop with a shell and file tools; your files are in /workspace.",
         BASE,
         BROWSER,
-        "To operate the desktop's apps, use `agent-desktop`, which reads them as text through the accessibility tree; load the `agent-desktop` skill first, and prefer it over screenshots and pixel coordinates.",
+        "To operate the desktop's apps, run the `agent-desktop` command with the bash tool. It reads them as text through the accessibility tree, and it is a program too, not a tool you can call. Load the `agent-desktop` skill first, and prefer it over screenshots and pixel coordinates.",
       ].join("\n");
     }
     default: {
@@ -106,9 +110,59 @@ const softwareParameter = () =>
     ).join(", ")}`,
   });
 
+// pi-durable answers a call to a tool nobody offered in the transcript, before any tool hook runs.
+const unavailable = (name: string) => `Tool ${name} is not available`;
+
+const whereProgramsRun = (name: string, offeredTools: ReadonlySet<string>) => {
+  if (offeredTools.has("bash")) {
+    return `Tool ${name} does not exist, which says nothing about what is installed: programs on this machine, such as agent-browser or git, are not tools. Run them with the bash tool, the whole command line in its \`command\` argument.`;
+  }
+  return offeredTools.has(UPGRADE_WORKSPACE)
+    ? `Tool ${name} does not exist. Programs such as agent-browser run in a shell, and you have no machine yet: call ${UPGRADE_WORKSPACE} first, then run them with bash.`
+    : `Tool ${name} does not exist. Programs such as agent-browser run in a shell, and you have none here.`;
+};
+
+/**
+ * What the model reads instead of "Tool agent-browser is not available", which it takes for "not installed": it went
+ * looking for an installer, or gave up on the browser. Only the request changes: the transcript keeps pi-durable's
+ * result, and that is what the console shows.
+ */
+export const explainUnavailableTools = (
+  messages: readonly Message[]
+): readonly Message[] => {
+  const offeredTools = new Set(getCurrentTools(messages).map((t) => t.name));
+  return messages.map((message) => {
+    if (message.role !== "toolResult" || !message.isError) {
+      return message;
+    }
+    const { toolName } = message;
+    return {
+      ...message,
+      content: message.content.map((part) =>
+        part.type === "text"
+          ? {
+              ...part,
+              text: part.text.replace(
+                unavailable(toolName),
+                whereProgramsRun(toolName, offeredTools)
+              ),
+            }
+          : part
+      ),
+    };
+  });
+};
+
 export const workspaceExtension = (upgrade: UpgradeWorkspace): Extension =>
   defineExtension({
     name: "workspace",
+    hooks: [
+      hook(GenerationTask, {
+        beforeRequest: ({ messages }) => ({
+          messages: explainUnavailableTools(messages),
+        }),
+      }),
+    ],
     sections: [
       section("workspace", async (input, context) => {
         // A task-owned conversation works in its owner's machine: its own WorkspaceDoc stays "none".
