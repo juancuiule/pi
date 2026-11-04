@@ -1,8 +1,8 @@
-// What the shell sandbox panel shows. The console page owns it, so it survives the mobile drawer
+// What the sandbox panel shows (the shell's Shell/Agent/Files tabs, the desktop's Live view/Files). The console page owns it, so it survives the mobile drawer
 // unmounting the panel and an open from outside the panel (a folder link) can drive it.
 import type { WorkspacePath } from "./workspace-links";
 
-export type PanelTab = "shell" | "agent" | "files";
+export type PanelTab = "shell" | "agent" | "files" | "desktop";
 
 export interface SandboxView {
   /** Undefined until the person or an open picks one; the panel then defaults by liveness. */

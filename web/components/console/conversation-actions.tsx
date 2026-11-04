@@ -49,6 +49,43 @@ import { useResuming } from "@/lib/store";
 
 import { AddSoftwareDialog } from "./software-checklist";
 
+const archiveLabelOf = (hasSandbox: boolean) =>
+  hasSandbox ? "Archive and delete files" : "Archive";
+
+/** Asks before an Archive; the header always does, a row's swipe or menu only when it deletes Workspace files. */
+export const ArchiveDialog = ({
+  hasSandbox,
+  open,
+  onOpenChange,
+  pending,
+  onConfirm,
+}: {
+  hasSandbox: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  pending: boolean;
+  onConfirm: () => void;
+}) => (
+  <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle>Archive this conversation?</AlertDialogTitle>
+        <AlertDialogDescription>
+          {hasSandbox
+            ? "The agent stops and the files in its sandbox are deleted. You can still read it, and unarchive it to continue with an empty sandbox."
+            : "The agent stops. You can still read it, and unarchive it to continue."}
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancel</AlertDialogCancel>
+        <AlertDialogAction variant="destructive" onClick={onConfirm}>
+          {pending ? "Archiving…" : archiveLabelOf(hasSandbox)}
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>
+);
+
 export const ConversationActions = ({
   conversation,
 }: {
@@ -69,7 +106,6 @@ export const ConversationActions = ({
   const { status } = conversation;
   const hasSeat = status === "running" || status === "idle";
   const hasSandbox = conversation.sandbox !== "none";
-  const archiveLabel = hasSandbox ? "Archive and delete files" : "Archive";
 
   const run = (action: ConversationAction, onDone?: () => void) => {
     act.mutate(
@@ -199,27 +235,13 @@ export const ConversationActions = ({
         open={addingSoftware}
         onOpenChange={setAddingSoftware}
       />
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Archive this conversation?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {hasSandbox
-                ? "The agent stops and the files in its sandbox are deleted. You can still read it, and unarchive it to continue with an empty sandbox."
-                : "The agent stops. You can still read it, and unarchive it to continue."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => run("archive", () => setConfirming(false))}
-            >
-              {act.isPending ? "Archiving…" : archiveLabel}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ArchiveDialog
+        hasSandbox={hasSandbox}
+        open={confirming}
+        onOpenChange={setConfirming}
+        pending={act.isPending}
+        onConfirm={() => run("archive", () => setConfirming(false))}
+      />
     </>
   );
 };

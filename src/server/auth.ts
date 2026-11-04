@@ -113,13 +113,13 @@ const cookieOptions = {
 } satisfies Cookies.Cookie["options"];
 
 /**
- * Set the session cookie, `Secure` when the request came through an https `publicUrl`. Plain http on loopback
+ * Set the session cookie, `Secure` when the request came through an https public URL. Plain http on loopback
  * leaves it off: not every browser stores a `Secure` cookie on http://localhost.
  */
 const setSession = (
   token: string,
   maxAgeMs: number,
-  publicUrl: URL | undefined
+  publicUrls: readonly URL[] | undefined
 ) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -128,7 +128,7 @@ const setSession = (
       token,
       {
         ...cookieOptions,
-        secure: viaHttpsPublicUrl(request.headers, publicUrl),
+        secure: viaHttpsPublicUrl(request.headers, publicUrls),
         maxAge: `${Math.floor(maxAgeMs / 1000)} seconds`,
       }
     );
@@ -143,7 +143,7 @@ const tokenOf = (request: HttpServerRequest.HttpServerRequest) =>
  * finishes an adoption a crash interrupted. Both adoptions are idempotent.
  */
 export const authHandlers = (options: {
-  readonly publicUrl?: URL | undefined;
+  readonly publicUrls?: readonly URL[] | undefined;
 }) =>
   HttpApiBuilder.group(
     Api,
@@ -183,7 +183,7 @@ export const authHandlers = (options: {
               payload.name,
               payload.password
             );
-            yield* setSession(token, SESSION_TTL_MS, options.publicUrl);
+            yield* setSession(token, SESSION_TTL_MS, options.publicUrls);
             return user;
           })
         )
@@ -194,7 +194,7 @@ export const authHandlers = (options: {
               payload.password
             );
             yield* adopt(user);
-            yield* setSession(token, SESSION_TTL_MS, options.publicUrl);
+            yield* setSession(token, SESSION_TTL_MS, options.publicUrls);
             return user;
           })
         )
@@ -204,7 +204,7 @@ export const authHandlers = (options: {
             if (token !== undefined) {
               yield* auth.logout(token);
             }
-            yield* setSession("", 0, options.publicUrl);
+            yield* setSession("", 0, options.publicUrls);
           })
         );
     })

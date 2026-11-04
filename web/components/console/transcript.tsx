@@ -25,7 +25,7 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -640,6 +640,12 @@ const SendStatus = ({
  * the real entry then replaces it, so it is never in the transcript twice. `conversation` is unset while a new
  * Conversation's create is still in flight.
  */
+/**
+ * Sends whose bubble has risen into place. A send from the new-conversation screen mounts a second time once the
+ * page moves to the conversation, and must not rise again there.
+ */
+const arrived = new Set<string>();
+
 export const PendingMessage = ({
   pending,
   conversation,
@@ -653,8 +659,23 @@ export const PendingMessage = ({
   const { submission } = pending;
   // Still in the inbox — neither placed nor settled — while the send is confirmed and no entry replaced it.
   const queued = submission !== undefined && pending.entry === undefined;
+  // Rises into place once, on send: only this client's own sends are pending, so history and snapshots never
+  // animate, and the committed entry that replaces it renders the same bubble without motion.
+  const rise = useMemo(
+    () => !arrived.has(pending.requestId),
+    [pending.requestId]
+  );
+  useEffect(() => {
+    arrived.add(pending.requestId);
+  }, [pending.requestId]);
   return (
-    <div className="bg-muted text-foreground ml-auto flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5">
+    <div
+      className={cn(
+        "bg-muted text-foreground ml-auto flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5",
+        rise &&
+          "animate-in fade-in-0 slide-in-from-bottom-2 duration-200 ease-out"
+      )}
+    >
       {pending.prompt === "" ? null : (
         <p className="text-prose break-words whitespace-pre-wrap">
           {pending.prompt}
@@ -777,7 +798,7 @@ const StatusLine = ({
 const Failure = ({ children }: { children: string }) => (
   <p
     role="alert"
-    className="border-destructive/40 bg-destructive/5 text-destructive flex items-center gap-2 rounded-lg border p-3 text-sm"
+    className="border-destructive/40 bg-destructive/5 text-destructive animate-in fade-in-0 flex items-center gap-2 rounded-lg border p-3 text-sm"
   >
     <CircleAlert className="size-4 shrink-0" />
     {children}
@@ -1243,16 +1264,18 @@ export const Transcript = ({
           />
         </div>
       </ScrollArea>
-      {showJump ? (
-        <button
-          type="button"
-          aria-label="Jump to latest"
-          onClick={jump}
-          className="bg-background hover:bg-muted focus-visible:ring-ring animate-in fade-in-0 slide-in-from-bottom-2 absolute bottom-4 left-1/2 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border shadow-md transition-colors duration-150 outline-none focus-visible:ring-2"
-        >
-          <ArrowDown className="size-4" />
-        </button>
-      ) : null}
+      {/* Always mounted, so a scroll that flips it mid-way retargets the transition instead of popping;
+          inert while hidden keeps it out of the tab order and away from clicks. */}
+      <button
+        type="button"
+        aria-label="Jump to latest"
+        onClick={jump}
+        inert={!showJump}
+        data-shown={showJump}
+        className="bg-background hover:bg-muted focus-visible:ring-ring absolute bottom-4 left-1/2 flex size-9 -translate-x-1/2 translate-y-2 items-center justify-center rounded-full border opacity-0 shadow-md transition duration-200 ease-out outline-none focus-visible:ring-2 data-[shown=true]:translate-y-0 data-[shown=true]:opacity-100"
+      >
+        <ArrowDown className="size-4" />
+      </button>
     </div>
   );
 };

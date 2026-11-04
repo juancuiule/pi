@@ -16,6 +16,7 @@ import { SearchContext } from "@/lib/search-context";
 import { DESKTOP_MEDIA, useMediaQuery } from "@/lib/use-media-query";
 
 import { CapacityGuardProvider } from "./capacity-dialog";
+import { ConsoleSignals } from "./console-signals";
 import { SearchPalette } from "./search-palette";
 import { Sidebar } from "./sidebar";
 
@@ -50,6 +51,7 @@ export const ConsoleShell = ({ children }: { children: ReactNode }) => {
           >
             Skip to content
           </a>
+          <ConsoleSignals />
           <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
           <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
             <SheetContent side="left" className="w-72">

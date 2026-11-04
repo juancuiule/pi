@@ -4,7 +4,7 @@ import {
   fauxText,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Ref, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { Agents } from "../agents/agents.ts";
@@ -14,10 +14,11 @@ import { Search } from "../search/search.ts";
 import { callTool, echoToolResult, fauxAgents } from "../testing/faux.ts";
 import { localSandboxes } from "../testing/sandboxes.ts";
 import type { LocalSandboxes } from "../testing/sandboxes.ts";
-import { alice } from "../testing/users.ts";
+import { alice, bob } from "../testing/users.ts";
 import { Workspaces, WorkspaceStorage } from "../workspaces/workspaces.ts";
 import type { SaveReason } from "../workspaces/workspaces.ts";
 import { Conversations, titleOf } from "./conversations.ts";
+import type { Activity } from "./conversations.ts";
 
 const defaults = {
   idleTimeoutMs: 60_000,
@@ -27,6 +28,7 @@ const defaults = {
 const setup = (
   responses: FauxResponseStep[],
   options: Partial<typeof defaults> & {
+    readonly seats?: number;
     readonly shells?: number;
     readonly sandboxes?: LocalSandboxes;
     readonly titleGeneration?: boolean;
@@ -34,6 +36,7 @@ const setup = (
   } = {}
 ) => {
   const {
+    seats = 10,
     shells = 3,
     sandboxes,
     search = Search.none,
@@ -41,7 +44,7 @@ const setup = (
     ...rest
   } = options;
   const agents = fauxAgents(responses, {
-    limits: { shells },
+    limits: { seats, shells },
     ...(titleGeneration === undefined ? {} : { titleGeneration }),
     ...(sandboxes === undefined ? {} : { sandboxes }),
   });
@@ -887,7 +890,7 @@ describe("a Seat mid-open", () => {
         yield* Deferred.await(started);
         const listed = yield* conversations.list(alice.id);
         const upgrading = yield* conversations
-          .upgrade(listed[0]?.id ?? -1, { software: ["uv"] })
+          .upgrade(listed[0]?.id ?? -1, { software: ["ffmpeg"] })
           .pipe(Effect.forkChild);
         yield* Effect.sleep("50 millis");
         yield* Deferred.succeed(hold, true);
@@ -901,9 +904,9 @@ describe("a Seat mid-open", () => {
     // The stored-Upgrade path never ran: the Seat's open committed first, then the Upgrade replaced its Sandbox.
     expect(sandboxes.created).toStrictEqual([
       { kind: "shell", software: ["node"] },
-      { kind: "shell", software: ["node", "uv"] },
+      { kind: "shell", software: ["node", "ffmpeg"] },
     ]);
-    expect(result.upgraded.software).toStrictEqual(["node", "uv"]);
+    expect(result.upgraded.software).toStrictEqual(["node", "ffmpeg"]);
     expect(result.created.id).toBe(result.upgraded.id);
   });
 
@@ -922,7 +925,7 @@ describe("a Seat mid-open", () => {
           prompt: "hi",
         });
         const upgrading = yield* conversations
-          .upgrade(created.id, { software: ["uv"] })
+          .upgrade(created.id, { software: ["ffmpeg"] })
           .pipe(Effect.forkChild);
         yield* Deferred.await(started);
         const pausing = yield* conversations
@@ -948,14 +951,14 @@ describe("a Seat mid-open", () => {
     expect(result.during).toStrictEqual([result.upgraded.id]);
     expect(sandboxes.created).toStrictEqual([
       { kind: "shell", software: [] },
-      { kind: "shell", software: ["uv"] },
+      { kind: "shell", software: ["ffmpeg"] },
     ]);
     // Nothing orphaned: both Sandboxes removed, every claim released, the Conversation paused.
     expect(result.sandboxesLive).toBe(0);
     expect(result.after).toStrictEqual([]);
     expect(result.listed[0]).toMatchObject({
       status: "paused",
-      software: ["uv"],
+      software: ["ffmpeg"],
     });
   }, 30_000);
 
@@ -1046,7 +1049,7 @@ describe("a failed build", () => {
           prompt: "hi",
         });
         const upgraded = yield* conversations
-          .upgrade(created.id, { software: ["uv"] })
+          .upgrade(created.id, { software: ["ffmpeg"] })
           .pipe(Effect.flip);
         // The Seat is unharmed: its old Sandbox still serves sends.
         yield* conversations.send(created.id, "more");
@@ -1067,7 +1070,7 @@ describe("a failed build", () => {
   });
 
   it("rejects Software the Level forbids before claiming a Seat or Level", async () => {
-    const { layer, sandboxes } = setup([answer("hi")], { shells: 1 });
+    const { layer, sandboxes } = setup([answer("hi")], { seats: 1 });
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -1077,12 +1080,12 @@ describe("a failed build", () => {
           sandbox: "shell",
           prompt: "hi",
         });
-        // The one shell is taken, but the invalid Software must read as a 400, not a 409.
+        // The one Seat is taken, but the invalid Software must read as a 400, not a 409.
         const rejected = yield* conversations
           .create({
             owner: alice.id,
-            sandbox: "shell",
-            software: ["chrome"],
+            sandbox: "none",
+            software: ["node"],
             prompt: "hi",
           })
           .pipe(Effect.flip);
@@ -1633,4 +1636,154 @@ describe("attention", () => {
       detail: "boom",
     });
   });
+});
+
+/** Collect `owner`'s Activity in the background; read what has arrived so far with the returned effect. */
+const collect = (owner: typeof alice) =>
+  Effect.gen(function* () {
+    const conversations = yield* Conversations;
+    const seen = yield* Ref.make<readonly Activity[]>([]);
+    const stream = yield* conversations.activity(owner.id);
+    yield* Stream.runForEach(stream, (activity) =>
+      Ref.update(seen, (all) => [...all, activity])
+    ).pipe(Effect.forkScoped);
+    return seen;
+  });
+
+const kinds = (seen: Ref.Ref<readonly Activity[]>) =>
+  Ref.get(seen).pipe(Effect.map((all) => all.map((each) => each.kind)));
+
+describe("activity", () => {
+  it("reports a finished Run to its owner only", async () => {
+    const { layer } = setup([answer("hi")]);
+
+    const { mine, theirs, id } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const aliceSeen = yield* collect(alice);
+        const bobSeen = yield* collect(bob);
+        const created = yield* conversations.create({
+          owner: alice.id,
+          sandbox: "none",
+          prompt: "Say hi",
+        });
+        yield* waitUntil(
+          kinds(aliceSeen).pipe(Effect.map((all) => all.length === 1))
+        );
+        return {
+          mine: yield* Ref.get(aliceSeen),
+          theirs: yield* Ref.get(bobSeen),
+          id: created.id,
+        };
+      }).pipe(Effect.scoped, Effect.provide(layer))
+    );
+
+    expect(mine).toMatchObject([
+      { conversation: id, kind: "finished", title: "Say hi" },
+    ]);
+    expect(theirs).toStrictEqual([]);
+  });
+
+  it("reports a failed Run with its attention", async () => {
+    const { layer } = setup([
+      fauxAssistantMessage([fauxText("boom")], {
+        stopReason: "error",
+        errorMessage: "boom",
+      }),
+    ]);
+
+    const seen = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const aliceSeen = yield* collect(alice);
+        yield* conversations.create({
+          owner: alice.id,
+          sandbox: "none",
+          prompt: "say hi",
+        });
+        yield* waitUntil(
+          kinds(aliceSeen).pipe(Effect.map((all) => all.length === 1))
+        );
+        return yield* Ref.get(aliceSeen);
+      }).pipe(Effect.scoped, Effect.provide(layer))
+    );
+
+    expect(seen).toMatchObject([
+      { kind: "failed", attention: { reason: "model_error", detail: "boom" } },
+    ]);
+  });
+
+  it("reports a question once while it waits, then the Run that finishes after the answer", async () => {
+    const { layer } = setup([
+      callTool("ask_user", {
+        questions: [
+          {
+            id: "db",
+            question: "Which database?",
+            options: [{ label: "SQLite" }, { label: "Postgres" }],
+          },
+        ],
+      }),
+      answer("SQLite it is"),
+    ]);
+
+    const seen = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const aliceSeen = yield* collect(alice);
+        const created = yield* conversations.create({
+          owner: alice.id,
+          sandbox: "none",
+          prompt: "plan the app",
+        });
+        yield* waitUntil(
+          kinds(aliceSeen).pipe(Effect.map((all) => all.includes("question")))
+        );
+        yield* conversations.answer(created.id, `${created.id}:call-ask_user`, [
+          { id: "db", selected: ["SQLite"] },
+        ]);
+        yield* waitUntil(
+          kinds(aliceSeen).pipe(Effect.map((all) => all.includes("finished")))
+        );
+        return yield* Ref.get(aliceSeen);
+      }).pipe(Effect.scoped, Effect.provide(layer))
+    );
+
+    expect(seen).toMatchObject([
+      { kind: "question", tool: "ask_user" },
+      { kind: "finished" },
+    ]);
+  });
+
+  it("does not report a Run the person stopped", async () => {
+    const { layer, faux } = setup([
+      callTool("bash", { command: "sleep 5" }),
+      echoToolResult,
+    ]);
+
+    const seen = await Effect.runPromise(
+      Effect.gen(function* () {
+        const conversations = yield* Conversations;
+        const aliceSeen = yield* collect(alice);
+        const created = yield* conversations.create({
+          owner: alice.id,
+          sandbox: "shell",
+          prompt: "sleep",
+        });
+        yield* waitUntil(
+          Effect.sync(() => faux.getPendingResponseCount() === 1)
+        );
+        yield* conversations.stop(created.id);
+        yield* waitUntil(
+          conversations
+            .list(alice.id)
+            .pipe(Effect.map((all) => all[0]?.status === "idle"))
+        );
+        yield* Effect.sleep("200 millis");
+        return yield* Ref.get(aliceSeen);
+      }).pipe(Effect.scoped, Effect.provide(layer))
+    );
+
+    expect(seen).toStrictEqual([]);
+  }, 30_000);
 });

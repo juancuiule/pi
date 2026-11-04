@@ -72,10 +72,11 @@ export type CoercedEnvSchema = {
   
   /**
    * **PUBLIC_URL**  
-   * Where a tunnel (cloudflared, for one) serves the console from outside this machine, e.g. https://pi.example.com.  
-   * The server still listens on 127.0.0.1 only; requests whose Host or Origin is this URL's are accepted beside  
-   * loopback ones, and over https the session cookie is `Secure`. See docs/deploy/raspberry-pi.md.  
-   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M24%2021V9h-2v14h8v-2zm-4-6v-4c0-1.103-.897-2-2-2h-6v14h2v-6h1.48l2.335%206h2.145l-2.333-6H18c1.103%200%202-.897%202-2m-6-4h4v4h-4zM8%2023H4c-1.103%200-2-.897-2-2V9h2v12h4V9h2v12c0%201.103-.897%202-2%202%22%2F%3E%3C%2Fsvg%3E)   
+   * Where a tunnel (cloudflared, for one) or a proxy on the LAN or a VPN serves the console from outside this machine,  
+   * comma-separated, e.g. https://pi.example.com or http://192.168.1.38,http://debian. The server still listens on  
+   * 127.0.0.1 only; requests whose Host or Origin is one of these URLs' are accepted beside loopback ones, and through  
+   * an https one the session cookie is `Secure`. See docs/deploy/exposure.md.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
    */
   PUBLIC_URL?: string;
   
@@ -314,6 +315,23 @@ export type CoercedEnvSchema = {
   MCP_CONNECT_TIMEOUT: number;
   
   /**
+   * **EDGE_SERVICES**  
+   * Which Services the edge serves, comma-separated: langfuse, seaweedfs, searxng. Each must run on this host, set up as  
+   * docs/deploy/services.md says. Unset: none; the console links to none and the edge answers 404 under /_/. Deploy  
+   * only: without the edge (pnpm dev) nothing serves /_/.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  EDGE_SERVICES?: string;
+  
+  /**
+   * **SERVICE_USERS**  
+   * The accounts that may open them, comma-separated names. Every Service shows every User's data, so unset means the  
+   * oldest account only (the one setup created).  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  SERVICE_USERS?: string;
+  
+  /**
    * **SEARXNG_URL**  
    * The local SearXNG (`pnpm searxng:up`), or another instance's URL. Unset: conversations get no web extension.  
    * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M24%2021V9h-2v14h8v-2zm-4-6v-4c0-1.103-.897-2-2-2h-6v14h2v-6h1.48l2.335%206h2.145l-2.333-6H18c1.103%200%202-.897%202-2m-6-4h4v4h-4zM8%2023H4c-1.103%200-2-.897-2-2V9h2v12h4V9h2v12c0%201.103-.897%202-2%202%22%2F%3E%3C%2Fsvg%3E)   
@@ -349,6 +367,72 @@ export type CoercedEnvSchema = {
   WEB_SEARCH_SAFESEARCH: number;
   
   /**
+   * **TRANSCRIBE_URL**  
+   * An OpenAI-compatible API base; the server posts each spoken segment as WAV to <url>/audio/transcriptions. The local  
+   * Speaches (`pnpm speaches:up`, which writes these) is http://127.0.0.1:8000/v1; Groq is  
+   * https://api.groq.com/openai/v1, OpenAI https://api.openai.com/v1. Unset: no mic button.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M24%2021V9h-2v14h8v-2zm-4-6v-4c0-1.103-.897-2-2-2h-6v14h2v-6h1.48l2.335%206h2.145l-2.333-6H18c1.103%200%202-.897%202-2m-6-4h4v4h-4zM8%2023H4c-1.103%200-2-.897-2-2V9h2v12h4V9h2v12c0%201.103-.897%202-2%202%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRANSCRIBE_URL?: string;
+  
+  /**
+   * **TRANSCRIBE_API_KEY** 🔐 _sensitive_  
+   * Sent as a Bearer token; a local Speaches needs none.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRANSCRIBE_API_KEY?: string;
+  
+  /**
+   * **TRANSCRIBE_MODEL**  
+   * The model, required with TRANSCRIBE_URL. For Speaches on a GPU deepdml/faster-whisper-large-v3-turbo-ct2, on a CPU  
+   * Systran/faster-whisper-small; whisper-large-v3-turbo on Groq; gpt-transcribe on OpenAI (not whisper-1, deprecated).  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRANSCRIBE_MODEL?: string;
+  
+  /**
+   * **TRANSCRIBE_PROMPT**  
+   * Spelling hints sent with every request: names and terms the model should write a certain way.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M29%2022h-5a2.003%202.003%200%200%201-2-2v-6a2%202%200%200%201%202-2h5v2h-5v6h5ZM18%2012h-4V8h-2v14h6a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-4%208v-6h4v6Zm-6-8H3v2h5v2H4a2%202%200%200%200-2%202v2a2%202%200%200%200%202%202h6v-8a2%202%200%200%200-2-2m0%208H4v-2h4Z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRANSCRIBE_PROMPT?: string;
+  
+  /**
+   * **TRANSCRIBE_INTERIM**  
+   * How often the segment being spoken is re-transcribed for live text; 0 sends only final text, at each pause.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M12%2020a7%207%200%200%201-7-7a7%207%200%200%201%207-7a7%207%200%200%201%207%207a7%207%200%200%201-7%207m7.03-12.61l1.42-1.42c-.45-.51-.9-.97-1.41-1.41L17.62%206c-1.55-1.26-3.5-2-5.62-2a9%209%200%200%200-9%209a9%209%200%200%200%209%209c5%200%209-4.03%209-9c0-2.12-.74-4.07-1.97-5.61M11%2014h2V8h-2m4-7H9v2h6z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRANSCRIBE_INTERIM: number;
+  
+  /**
+   * **TRANSCRIBE_PAUSE**  
+   * Silence that ends a segment: its text becomes final.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M12%2020a7%207%200%200%201-7-7a7%207%200%200%201%207-7a7%207%200%200%201%207%207a7%207%200%200%201-7%207m7.03-12.61l1.42-1.42c-.45-.51-.9-.97-1.41-1.41L17.62%206c-1.55-1.26-3.5-2-5.62-2a9%209%200%200%200-9%209a9%209%200%200%200%209%209c5%200%209-4.03%209-9c0-2.12-.74-4.07-1.97-5.61M11%2014h2V8h-2m4-7H9v2h6z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRANSCRIBE_PAUSE: number;
+  
+  /**
+   * **TRANSCRIBE_MAX_SECONDS**  
+   * The longest dictation; past it the server stops listening and keeps the text.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRANSCRIBE_MAX_SECONDS: number;
+  
+  /**
+   * **TRANSCRIBE_CONCURRENCY**  
+   * Transcription requests at once, across every dictation on this server.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M26%2012h-4v2h4v2h-3v2h3v2h-4v2h4a2.003%202.003%200%200%200%202-2v-6a2%202%200%200%200-2-2m-7%2010h-6v-4a2%202%200%200%201%202-2h2v-2h-4v-2h4a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2v2h4ZM8%2020v-8H6v1H4v2h2v5H4v2h6v-2z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRANSCRIBE_CONCURRENCY: number;
+  
+  /**
+   * **TRANSCRIBE_TIMEOUT**  
+   * One transcription request is cut off after this long.  
+   * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M12%2020a7%207%200%200%201-7-7a7%207%200%200%201%207-7a7%207%200%200%201%207%207a7%207%200%200%201-7%207m7.03-12.61l1.42-1.42c-.45-.51-.9-.97-1.41-1.41L17.62%206c-1.55-1.26-3.5-2-5.62-2a9%209%200%200%200-9%209a9%209%200%200%200%209%209c5%200%209-4.03%209-9c0-2.12-.74-4.07-1.97-5.61M11%2014h2V8h-2m4-7H9v2h6z%22%2F%3E%3C%2Fsvg%3E)   
+   */
+  TRANSCRIBE_TIMEOUT: number;
+  
+  /**
    * **WEB_PORT**  
    * ![icon](data:image/svg+xml;utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23808080%22%20d%3D%22M20.95%2022.375L18%2019.425v2.225h-2V16h5.65v2H19.4l2.95%202.95zM12%2022q-2.075%200-3.9-.788t-3.175-2.137T2.788%2015.9T2%2012t.788-3.9t2.137-3.175T8.1%202.788T12%202t3.9.788t3.175%202.137T21.213%208.1T22%2012q0%20.5-.05%201t-.15%201h-2.05q.125-.5.188-1T20%2012t-.062-1t-.188-1h-3.4q.075.5.113%201t.037%201t-.037%201t-.113%201h-2q.075-.5.113-1t.037-1t-.037-1t-.113-1h-4.7q-.075.5-.112%201T9.5%2012t.038%201t.112%201H13v2h-2.9q.3%201.075.775%202.063T12%2019.95q.5%200%201-.062t1-.113v2.05q-.5.05-1%20.113T12%2022m-7.75-8h3.4q-.075-.5-.112-1T7.5%2012t.038-1t.112-1h-3.4q-.125.5-.187%201T4%2012t.063%201t.187%201m.85-6h2.95q.225-.925.563-1.812T9.4%204.45q-1.375.45-2.475%201.363T5.1%208m4.3%2011.55q-.45-.85-.788-1.737T8.05%2016H5.1q.725%201.275%201.825%202.188T9.4%2019.55M10.1%208h3.8q-.3-1.075-.775-2.062T12%204.05q-.65.9-1.125%201.888T10.1%208m5.85%200h2.95q-.725-1.275-1.825-2.187T14.6%204.45q.45.85.788%201.738T15.95%208%22%2F%3E%3C%2Fsvg%3E)   
    */
@@ -363,11 +447,11 @@ export type CoercedEnvSchema = {
   
 };
 
-type _CoercedEnvSchema_09e2607b = CoercedEnvSchema;
+type _CoercedEnvSchema_3e4b2e66 = CoercedEnvSchema;
 
 declare module 'varlock/env' {
-  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_09e2607b> {}
-  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_09e2607b, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'PUBLIC_URL' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'SANDBOX_MEMORY_MB' | 'SANDBOX_CPUS' | 'SANDBOX_DNS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SEARCH_DB' | 'SKILLS_DIR' | 'SKILLS_ORG_DIR' | 'SCREENSHOTS_DIR' | 'ATTACHMENTS_DIR' | 'STORAGE' | 'WORKSPACE_STORAGE' | 'S3_ENDPOINT' | 'SCREENSHOT_TTL_DAYS' | 'ATTACHMENT_MAX_FILE_MB' | 'ATTACHMENT_MAX_FILES' | 'ATTACHMENT_MAX_UNSENT_MB' | 'ATTACHMENT_MAX_PDF_PAGES' | 'ATTACHMENT_MAX_IMAGE_MEGAPIXELS' | 'ATTACHMENT_EXTRACT_TIMEOUT' | 'ATTACHMENT_EXTRACT_MEMORY_MB' | 'ATTACHMENT_EXTRACT_CONCURRENCY' | 'ATTACHMENT_UNSENT_TTL' | 'ATTACHMENT_INLINE_CHARS' | 'ATTACHMENT_READ_CHARS' | 'TRACE_ATTACHMENT_TEXT' | 'MCP_CONNECT_TIMEOUT' | 'SEARXNG_URL' | 'WEB_SEARCH_TIMEOUT' | 'WEB_SEARCH_CONCURRENCY' | 'WEB_SEARCH_LANGUAGE' | 'WEB_SEARCH_SAFESEARCH' | 'WEB_PORT' | 'API_URL'>> {}
+  export interface TypedEnvSchema extends Readonly<_CoercedEnvSchema_3e4b2e66> {}
+  export interface PublicTypedEnvSchema extends Readonly<Pick<_CoercedEnvSchema_3e4b2e66, 'MODEL_PROVIDER' | 'MODEL_ID' | 'OLLAMA_URL' | 'LANGFUSE_PUBLIC_KEY' | 'LANGFUSE_BASE_URL' | 'SERVER_PORT' | 'PUBLIC_URL' | 'MAX_SEATS' | 'MAX_SHELLS' | 'MAX_DESKTOPS' | 'SANDBOX_MEMORY_MB' | 'SANDBOX_CPUS' | 'SANDBOX_DNS' | 'CONVERSATION_IDLE_TIMEOUT' | 'CONVERSATION_SWEEP_INTERVAL' | 'SHUTDOWN_TIMEOUT' | 'EFFECT_PI_DB' | 'SEARCH_DB' | 'SKILLS_DIR' | 'SKILLS_ORG_DIR' | 'SCREENSHOTS_DIR' | 'ATTACHMENTS_DIR' | 'STORAGE' | 'WORKSPACE_STORAGE' | 'S3_ENDPOINT' | 'SCREENSHOT_TTL_DAYS' | 'ATTACHMENT_MAX_FILE_MB' | 'ATTACHMENT_MAX_FILES' | 'ATTACHMENT_MAX_UNSENT_MB' | 'ATTACHMENT_MAX_PDF_PAGES' | 'ATTACHMENT_MAX_IMAGE_MEGAPIXELS' | 'ATTACHMENT_EXTRACT_TIMEOUT' | 'ATTACHMENT_EXTRACT_MEMORY_MB' | 'ATTACHMENT_EXTRACT_CONCURRENCY' | 'ATTACHMENT_UNSENT_TTL' | 'ATTACHMENT_INLINE_CHARS' | 'ATTACHMENT_READ_CHARS' | 'TRACE_ATTACHMENT_TEXT' | 'MCP_CONNECT_TIMEOUT' | 'EDGE_SERVICES' | 'SERVICE_USERS' | 'SEARXNG_URL' | 'WEB_SEARCH_TIMEOUT' | 'WEB_SEARCH_CONCURRENCY' | 'WEB_SEARCH_LANGUAGE' | 'WEB_SEARCH_SAFESEARCH' | 'TRANSCRIBE_URL' | 'TRANSCRIBE_MODEL' | 'TRANSCRIBE_PROMPT' | 'TRANSCRIBE_INTERIM' | 'TRANSCRIBE_PAUSE' | 'TRANSCRIBE_MAX_SECONDS' | 'TRANSCRIBE_CONCURRENCY' | 'TRANSCRIBE_TIMEOUT' | 'WEB_PORT' | 'API_URL'>> {}
 }
 
 
@@ -377,11 +461,11 @@ export type EnvSchemaAsStrings = {
       : (NonNullable<CoercedEnvSchema[Property]> extends boolean ? ('true' | 'false') : string)
 };
 
-type _EnvSchemaAsStrings_09e2607b = EnvSchemaAsStrings;
+type _EnvSchemaAsStrings_3e4b2e66 = EnvSchemaAsStrings;
 declare global {
 
   // add types for global import.meta.env
-  interface ImportMetaEnv extends _EnvSchemaAsStrings_09e2607b {}
+  interface ImportMetaEnv extends _EnvSchemaAsStrings_3e4b2e66 {}
   interface ImportMeta {
     readonly env: ImportMetaEnv;
   }

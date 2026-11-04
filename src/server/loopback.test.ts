@@ -68,7 +68,7 @@ describe(isLoopbackRequest, () => {
   const publicUrl = new URL("https://pi.example.com");
 
   it("accepts the public URL's host and origin, through the proxy or straight", () => {
-    const options = { pagePorts: [3001, 4000], publicUrl };
+    const options = { pagePorts: [3001, 4000], publicUrls: [publicUrl] };
     // Next's rewrite: the server's own Host, the tunnel's host forwarded.
     expect(
       isLoopbackRequest(
@@ -97,7 +97,7 @@ describe(isLoopbackRequest, () => {
   });
 
   it("rejects anything near the public URL that is not it", () => {
-    const options = { publicUrl };
+    const options = { publicUrls: [publicUrl] };
     expect(
       isLoopbackRequest(
         { host: "127.0.0.1:4000", origin: "http://pi.example.com" },
@@ -122,6 +122,36 @@ describe(isLoopbackRequest, () => {
     // Without a public URL its host is just a foreign one.
     expect(isLoopbackRequest({ host: "pi.example.com" })).toBeFalsy();
   });
+
+  it("accepts each of several public URLs, a LAN address and a VPN name", () => {
+    const options = {
+      pagePorts: [3001, 4000],
+      publicUrls: [new URL("http://192.168.1.38"), new URL("http://debian")],
+    };
+    for (const host of ["192.168.1.38", "debian"]) {
+      expect(
+        isLoopbackRequest(
+          {
+            host: "127.0.0.1:4000",
+            origin: `http://${host}`,
+            "x-forwarded-host": host,
+          },
+          options
+        )
+      ).toBeTruthy();
+    }
+    // One URL's host with another's origin is still a page from a public URL; a foreign one is not.
+    expect(
+      isLoopbackRequest(
+        { host: "debian", origin: "http://192.168.1.38" },
+        options
+      )
+    ).toBeTruthy();
+    expect(
+      isLoopbackRequest({ host: "debian", origin: "http://evil" }, options)
+    ).toBeFalsy();
+    expect(isLoopbackRequest({ host: "debian.evil" }, options)).toBeFalsy();
+  });
 });
 
 describe(viaHttpsPublicUrl, () => {
@@ -131,24 +161,29 @@ describe(viaHttpsPublicUrl, () => {
     expect(
       viaHttpsPublicUrl(
         { host: "127.0.0.1:4000", "x-forwarded-host": "pi.example.com" },
-        publicUrl
+        [publicUrl]
       )
     ).toBeTruthy();
     expect(
-      viaHttpsPublicUrl({ host: "pi.example.com" }, publicUrl)
+      viaHttpsPublicUrl({ host: "pi.example.com" }, [publicUrl])
     ).toBeTruthy();
     expect(
       viaHttpsPublicUrl(
         { host: "127.0.0.1:4000", "x-forwarded-host": "localhost:3001" },
-        publicUrl
+        [publicUrl]
       )
     ).toBeFalsy();
     expect(
-      viaHttpsPublicUrl(
-        { host: "pi.example.com" },
-        new URL("http://pi.example.com")
-      )
+      viaHttpsPublicUrl({ host: "pi.example.com" }, [
+        new URL("http://pi.example.com"),
+      ])
     ).toBeFalsy();
     expect(viaHttpsPublicUrl({ host: "pi.example.com" })).toBeFalsy();
+  });
+
+  it("beside an http public URL, is true only through the https one", () => {
+    const mixed = [new URL("http://192.168.1.38"), publicUrl];
+    expect(viaHttpsPublicUrl({ host: "192.168.1.38" }, mixed)).toBeFalsy();
+    expect(viaHttpsPublicUrl({ host: "pi.example.com" }, mixed)).toBeTruthy();
   });
 });

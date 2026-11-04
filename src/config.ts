@@ -5,6 +5,7 @@ import { ENV } from "varlock/env";
 
 import { langfuseOptions } from "./langfuse.ts";
 import type { ModelConfig } from "./models.ts";
+import { parseServiceNames } from "./services.ts";
 
 /**
  * For a variable without a default, a blank value from the shell (`X= pnpm server`) arrives as "", while a blank in
@@ -30,15 +31,19 @@ export const model: ModelConfig = {
   hasOpenAIKey: unset(ENV.OPENAI_API_KEY) !== undefined,
 };
 
-const publicUrl = unset(ENV.PUBLIC_URL);
+// Comma-separated; `new URL` throws at startup on a malformed one.
+const publicUrls = (unset(ENV.PUBLIC_URL)?.split(",") ?? [])
+  .map((url) => url.trim())
+  .filter((url) => url !== "")
+  .map((url) => new URL(url));
 
 /** The HTTP server and its conversations; durations are milliseconds (varlock's `duration` type). */
 export const server = {
   port: ENV.SERVER_PORT,
   /** The console's port: browser pages may call the API only from it or from this server's own. */
   webPort: ENV.WEB_PORT,
-  /** Where a tunnel serves the console from outside this machine; accepted beside loopback. */
-  publicUrl: publicUrl === undefined ? undefined : new URL(publicUrl),
+  /** Where a tunnel or proxy serves the console from outside this machine; accepted beside loopback. */
+  publicUrls,
   idleTimeoutMs: ENV.CONVERSATION_IDLE_TIMEOUT,
   sweepEveryMs: ENV.CONVERSATION_SWEEP_INTERVAL,
   shutdownTimeoutMs: ENV.SHUTDOWN_TIMEOUT,
@@ -118,6 +123,30 @@ export const traceAttachmentText = ENV.TRACE_ATTACHMENT_TEXT;
 /** How long to wait for each MCP server when the agents start. */
 export const mcpConnectTimeoutMs = ENV.MCP_CONNECT_TIMEOUT;
 
+const transcribeUrl = unset(ENV.TRANSCRIBE_URL);
+const transcribeModel = unset(ENV.TRANSCRIBE_MODEL);
+if (transcribeUrl !== undefined && transcribeModel === undefined) {
+  throw new Error(
+    "TRANSCRIBE_URL needs TRANSCRIBE_MODEL (see .env.schema; `pnpm speaches:up` writes both)"
+  );
+}
+
+/** Dictation through an OpenAI-compatible transcription endpoint, or `undefined` when TRANSCRIBE_URL is unset. */
+export const dictation =
+  transcribeUrl === undefined || transcribeModel === undefined
+    ? undefined
+    : {
+        url: transcribeUrl,
+        apiKey: unset(ENV.TRANSCRIBE_API_KEY),
+        model: transcribeModel,
+        prompt: unset(ENV.TRANSCRIBE_PROMPT),
+        interimMs: ENV.TRANSCRIBE_INTERIM,
+        pauseMs: ENV.TRANSCRIBE_PAUSE,
+        maxSeconds: ENV.TRANSCRIBE_MAX_SECONDS,
+        concurrency: ENV.TRANSCRIBE_CONCURRENCY,
+        timeoutMs: ENV.TRANSCRIBE_TIMEOUT,
+      };
+
 const searxngUrl = unset(ENV.SEARXNG_URL);
 
 /** Web search through a SearXNG instance, or `undefined` when SEARXNG_URL is unset (no `web` extension then). */
@@ -131,3 +160,12 @@ export const webSearch =
         language: ENV.WEB_SEARCH_LANGUAGE,
         safeSearch: ENV.WEB_SEARCH_SAFESEARCH,
       };
+
+/** The Services the edge serves, and the accounts that may open them (unset: the oldest account). */
+export const services = {
+  enabled: parseServiceNames(unset(ENV.EDGE_SERVICES)),
+  users: unset(ENV.SERVICE_USERS)
+    ?.split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter((name) => name !== ""),
+};

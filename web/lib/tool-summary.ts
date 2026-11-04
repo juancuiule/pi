@@ -1,5 +1,5 @@
 // One-line summaries of tool calls for the transcript headers. Argument shapes come from the tools themselves:
-// src/tools/desktop.ts, src/tools/subagent.ts (task), src/skills/skills.ts (skill) and pi's
+// src/tools/desktop.ts, src/tools/subagent.ts (task), src/tools/workspace.ts (upgrade_workspace), src/skills/skills.ts (skill) and pi's
 // durable/coding-agent tools (bash, read, write, edit, ls, grep, find). Arguments may be missing or partial while a
 // call streams, so every read goes through helpers that never throw.
 
@@ -73,6 +73,19 @@ const askUser = (args: Args): string => {
   return questions.length > 1 ? `${first} (+${questions.length - 1})` : first;
 };
 
+// src/tools/workspace.ts: the Level and the software ids it asks for, which the person approves.
+const upgradeWorkspace = (args: Args): string => {
+  const software = Array.isArray(args.software)
+    ? args.software.flatMap((id) => text(id) ?? [])
+    : [];
+  return [
+    text(args.level),
+    ...(software.length === 0 ? [] : [`+ ${software.join(", ")}`]),
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
+};
+
 const SUMMARIES: Record<string, (args: Args) => string> = {
   bash: (args) => text(args.command) ?? "",
   read: (args) => text(args.path) ?? "",
@@ -90,6 +103,7 @@ const SUMMARIES: Record<string, (args: Args) => string> = {
   desktop_screenshot: () => "",
   ask_user: askUser,
   task: (args) => text(args.prompt) ?? "",
+  upgrade_workspace: upgradeWorkspace,
   web_search: (args) => text(args.query) ?? "",
   artifact_create: (args) => text(args.title) ?? "",
   artifact_update: (args) => text(args.title) ?? "",

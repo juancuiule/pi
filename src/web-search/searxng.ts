@@ -47,7 +47,7 @@ const SearxResponse = Schema.Struct({
 /** The search's paging options: a recency window for engines that support it, a result page. */
 export interface SearchPaging {
   readonly count?: number | undefined;
-  readonly recency?: "day" | "month" | "year" | undefined;
+  readonly recency?: "day" | "week" | "month" | "year" | undefined;
   readonly page?: number | undefined;
 }
 

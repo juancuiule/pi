@@ -191,3 +191,15 @@ export class InvalidAccount extends Schema.TaggedError<InvalidAccount>()(
   "InvalidAccount",
   { reason: Schema.String }
 ) {}
+
+/** No Service of that name is served here: unknown, or not in EDGE_SERVICES. */
+export class ServiceNotFound extends Schema.TaggedError<ServiceNotFound>()(
+  "ServiceNotFound",
+  { name: Schema.String }
+) {}
+
+/** The signed-in User is not one of the accounts that may open the Services (SERVICE_USERS). */
+export class ServiceForbidden extends Schema.TaggedError<ServiceForbidden>()(
+  "ServiceForbidden",
+  { name: Schema.String }
+) {}
