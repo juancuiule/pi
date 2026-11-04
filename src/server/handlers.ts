@@ -421,10 +421,10 @@ const artifactCsp = (domains: readonly string[]) =>
  * The JavaScript a page may load, by served name: each resolves to the file of that name in its package's dist
  * folder (the entry point's directory). Anything not in the map is a 404 — pages never reach a CDN.
  */
-const ARTIFACT_LIBS: Record<string, string> = {
-  "chart.umd.js": "chart.js",
-  "pele.global.js": "pele",
-};
+const ARTIFACT_LIBS: ReadonlyMap<string, string> = new Map([
+  ["chart.umd.js", "chart.js"],
+  ["pele.global.js", "pele"],
+]);
 
 /** An artifact's wire shape; the wire names its owner `conversation`, like the query param. */
 const artifactInfoOf = (view: ArtifactView) => ({
@@ -439,7 +439,7 @@ const artifactInfoOf = (view: ArtifactView) => ({
 const require_ = createRequire(import.meta.url);
 
 const libPath = (file: string) => {
-  const pkg = ARTIFACT_LIBS[file];
+  const pkg = ARTIFACT_LIBS.get(file);
   return pkg === undefined
     ? undefined
     : path.join(path.dirname(require_.resolve(pkg)), file);
@@ -498,24 +498,31 @@ const ArtifactsHandlers = HttpApiBuilder.group(
       )
       .handle("remove", ({ params, query }) =>
         artifacts.remove(query.conversation, params.id)
-      )
-      .handle("lib", ({ params }) => {
-        const file = libPath(params.file);
-        return file === undefined
-          ? Effect.fail(new ArtifactNotFound({ id: params.file }))
-          : Effect.promise(() => readFile(file)).pipe(
-              Effect.map((bytes) =>
-                HttpServerResponse.uint8Array(bytes, {
-                  contentType: "text/javascript",
-                  headers: {
-                    "x-content-type-options": "nosniff",
-                    "cache-control": "no-store",
-                  },
-                })
-              )
-            );
-      });
+      );
   })
+);
+
+const ArtifactLibsHandlers = HttpApiBuilder.group(
+  Api,
+  "artifactLibs",
+  (handlers) =>
+    handlers.handle("lib", ({ params }) => {
+      const file = libPath(params.file);
+      return file === undefined
+        ? Effect.fail(new ArtifactNotFound({ id: params.file }))
+        : Effect.promise(() => readFile(file)).pipe(
+            Effect.map((bytes) =>
+              HttpServerResponse.uint8Array(bytes, {
+                // The charset, because a script inherits the page's encoding and a page may declare none.
+                contentType: "text/javascript; charset=utf-8",
+                headers: {
+                  "x-content-type-options": "nosniff",
+                  "cache-control": "no-store",
+                },
+              })
+            )
+          );
+    })
 );
 
 /** The bytes one file view serves; a bigger file answers its first chunk with `truncated`. */
@@ -900,6 +907,7 @@ export const apiLayer = (options: {
         AttachmentsHandlers,
         AttachmentImagesHandlers,
         ArtifactsHandlers,
+        ArtifactLibsHandlers,
         TrustedDomainsHandlers,
         SkillsHandlers,
         FilesHandlers,

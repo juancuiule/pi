@@ -76,8 +76,11 @@ interface Route {
 }
 
 const routes: readonly Route[] = Object.values(Api.groups).flatMap((group) =>
-  // `auth` is how a session starts; `attachmentImages` is reached by capability (its own test below).
-  group.identifier === "auth" || group.identifier === "attachmentImages"
+  // `auth` is how a session starts; `attachmentImages` is reached by capability and `artifactLibs` is public
+  // library code (their own tests below).
+  group.identifier === "auth" ||
+  group.identifier === "attachmentImages" ||
+  group.identifier === "artifactLibs"
     ? []
     : Object.values(group.endpoints).map((endpoint) => ({
         name: `${group.identifier}.${endpoint.identifier}`,
@@ -224,6 +227,44 @@ describe("isolation between Users", () => {
       guessedId: 404,
       original: 401,
       view: 401,
+    });
+  }, 30_000);
+
+  it("serves the artifact libraries without a session, and nothing outside the allowlist", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        // An artifact's iframe sends no cookie at all.
+        const anonymous = HttpClient.mapRequest(
+          yield* HttpClient.HttpClient,
+          HttpClientRequest.removeHeader("cookie")
+        );
+        const answer = (file: string) =>
+          anonymous.get(`/api/artifact-libs/${file}`).pipe(
+            Effect.map((response) => ({
+              status: response.status,
+              type: response.headers["content-type"],
+            })),
+            Effect.scoped
+          );
+        const status = (file: string) =>
+          answer(file).pipe(Effect.map((response) => response.status));
+        return {
+          pele: yield* answer("pele.global.js"),
+          chart: yield* status("chart.umd.js"),
+          missing: yield* status("evil.js"),
+          // Names every plain object inherits are not library files.
+          inherited: yield* Effect.all(
+            ["constructor", "__proto__", "toString"].map(status)
+          ),
+        };
+      }).pipe(Effect.provide(server()))
+    );
+    expect(result).toStrictEqual({
+      // Pele's bundle is UTF-8: without the charset, a page with no <meta charset> decodes it wrongly and it throws.
+      pele: { status: 200, type: "text/javascript; charset=utf-8" },
+      chart: 200,
+      missing: 404,
+      inherited: [404, 404, 404],
     });
   }, 30_000);
 
