@@ -1,0 +1,21 @@
+{
+  "DefaultBrowserSettingEnabled": false,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "BrowserAddPersonEnabled": false,
+  "BrowserGuestModeEnabled": false,
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "TranslateEnabled": false,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "PrivacySandboxPromptEnabled": false,
+  "PromotionsEnabled": false,
+  "MetricsReportingEnabled": false,
+  "UserFeedbackAllowed": false,
+  "BackgroundModeEnabled": false,
+  "EnableMediaRouter": false,
+  "CommandLineFlagSecurityWarningsEnabled": false,
+  "RestoreOnStartup": 5
+}

@@ -25,7 +25,7 @@ const BROWSER =
 
 // What both sandbox images have (docker/sandbox/shell.Dockerfile), so the agent does not probe for it.
 const BASE = [
-  "Installed: python3 (also `python`) with `pip` and `uv`, git, curl, wget, jq, ripgrep (`rg`), sqlite3, zip and unzip, Google Chrome with `agent-browser`. `pip install` works system-wide; `uvx <tool>` runs a Python command-line tool from PyPI without installing it.",
+  "Installed: python3 (also `python`) with `pip` and `uv`, git, curl, wget, jq, ripgrep (`rg`), sqlite3, zip and unzip, Google Chrome (`google-chrome`, already set up to run here with its first-run and sign-in prompts off) with `agent-browser`. `pip install` works system-wide; `uvx <tool>` runs a Python command-line tool from PyPI without installing it.",
   "For anything else, run `apt-get update` before `apt-get install -y <package>`. What you install yourself is gone when this machine is replaced (an upgrade, a pause); software added with upgrade_workspace stays.",
 ].join("\n");
 

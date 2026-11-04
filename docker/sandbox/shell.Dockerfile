@@ -38,6 +38,17 @@ RUN curl -fsSL -o /tmp/chrome.deb "https://dl.google.com/linux/direct/google-chr
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/chrome.deb \
   && rm -rf /var/lib/apt/lists/* /tmp/chrome.deb
 
+# Chrome for a machine with nobody at the keyboard: managed policies turn off what it would ask, and a wrapper adds
+# the flags root in a container needs. x-www-browser and both menu entries (Chrome ships two, and the default for
+# html is com.google.Chrome) point at it, so the desktop panel's browser button and xdg-open work too.
+COPY chrome-policy.json /etc/opt/chrome/policies/managed/effect-pi.json
+COPY google-chrome /usr/local/bin/google-chrome
+RUN chmod 755 /usr/local/bin/google-chrome \
+  && update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/local/bin/google-chrome 300 \
+  && update-alternatives --set x-www-browser /usr/local/bin/google-chrome \
+  && sed -i 's#^Exec=/usr/bin/google-chrome-stable#Exec=/usr/local/bin/google-chrome#' \
+    /usr/share/applications/google-chrome.desktop /usr/share/applications/com.google.Chrome.desktop
+
 # agent-browser (skills/agent-browser), from its npm package, which npm's integrity hash vouches for: the binary
 # for this architecture plus the skill folders `agent-browser skills get` reads beside it (the GitHub release's
 # binary alone has none). The sha256 pins the package; a replaced file fails the build.
