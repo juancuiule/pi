@@ -1,14 +1,14 @@
 # Replicates the server's WAL SQLite database (EFFECT_PI_DB) to the litestream bucket. The bucket and the
-# path-style endpoint match what the S3 ObjectStore uses (src/storage/object-store.ts); the endpoint reaches
-# the SeaweedFS gateway published on the host's loopback. Credentials come from the environment
-# (docker/seaweedfs/.env, expanded here by litestream).
+# path-style endpoint match what the S3 ObjectStore uses (src/storage/object-store.ts); the endpoint is the SeaweedFS
+# gateway on its compose network, seaweedfs_default. Credentials come from the environment (docker/seaweedfs/.env,
+# expanded here by litestream).
 dbs:
   - path: /data/effect-pi.sqlite
     replicas:
       - type: s3
         bucket: litestream
         path: effect-pi.sqlite
-        endpoint: http://host.docker.internal:8333
+        endpoint: http://seaweedfs:8333
         region: us-east-1
         force-path-style: true
         access-key-id: ${S3_ACCESS_KEY_ID}

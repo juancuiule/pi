@@ -51,6 +51,9 @@ fi
 public_urls=$(sed -n 's/^PUBLIC_URL=//p' ../.env | tail -n 1 | tr -d "\"'")
 # The Services the edge serves at /_/<name>/ (docs/deploy/services.md); each is checked below.
 edge_services=$(sed -n 's/^EDGE_SERVICES=//p' ../.env | tail -n 1 | tr -d "\"' ")
+# Object storage (docs/deploy/storage.md): the server refuses to start without the gateway, and the database follows
+# the files into it through Litestream.
+storage=$(sed -n 's/^STORAGE=//p' ../.env | tail -n 1 | tr -d "\"' ")
 IFS=',' read -r -a services <<<"$edge_services"
 IFS=',' read -r -a urls <<<"$public_urls"
 any_url() {
@@ -75,6 +78,12 @@ if has cloudflare; then
   [[ $tunnel_url == true ]] || die "the cloudflare exposure needs the tunnel's https:// hostname in PUBLIC_URL"
   [[ -n ${CLOUDFLARE_TUNNEL:-} ]] || die "the cloudflare exposure needs CLOUDFLARE_TUNNEL (the tunnel's id) in deploy/.env"
   [[ -f .cloudflared/credentials.json ]] || die "the cloudflare exposure needs deploy/.cloudflared/credentials.json"
+fi
+
+profiles=()
+if [[ $storage == s3 ]]; then
+  curl -s -o /dev/null -m 5 http://127.0.0.1:8333/ || die "STORAGE=s3 needs the S3 gateway on 127.0.0.1:8333: run pnpm seaweed:up"
+  profiles+=(litestream)
 fi
 
 # Unchanged images keep their ids (no provenance attestations with a build timestamp): `up` leaves their containers
@@ -104,10 +113,18 @@ fi
 
 echo "deploy: exposing through ${exposures[*]} (edge on ${EDGE_BIND// /,} port $EDGE_PORT)"
 if has cloudflare; then
-  export COMPOSE_PROFILES=cloudflare
+  profiles+=(cloudflare)
 else
   docker compose rm --stop --force cloudflared >/dev/null 2>&1 || true
 fi
+if [[ $storage != s3 ]]; then
+  docker compose rm --stop --force litestream >/dev/null 2>&1 || true
+fi
+COMPOSE_PROFILES=$(
+  IFS=,
+  echo "${profiles[*]-}"
+)
+export COMPOSE_PROFILES
 docker compose up -d --wait --remove-orphans
 
 if has tailscale; then

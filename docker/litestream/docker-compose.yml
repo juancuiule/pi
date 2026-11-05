@@ -1,9 +1,9 @@
 # Litestream streams the EFFECT_PI_DB WAL to the litestream bucket on the local SeaweedFS gateway
 # (docker/seaweedfs, `pnpm seaweed:up`). It mounts the repo's data/ at /data and reads litestream.yml from the
 # default /etc/litestream.yml path. Credentials come from docker/seaweedfs/.env, the same file the gateway's
-# init-env.ts writes. The gateway is published on the host's 127.0.0.1:8333, reached as host.docker.internal;
-# extra_hosts makes that name resolve on Linux too (Docker Desktop provides it natively). See README.md for
-# the restore runbook.
+# init-env.ts writes. It joins SeaweedFS's compose network to reach the gateway: its port is published on the host's
+# loopback, which a container cannot reach on Linux. See README.md for the restore runbook. A deployed server keeps
+# its database in a Docker volume, so deploy/compose.yml has its own service over that volume.
 services:
   litestream:
     image: litestream/litestream:0.5.17
@@ -15,5 +15,10 @@ services:
     volumes:
       - ../../data:/data
       - ./litestream.yml:/etc/litestream.yml:ro
-    extra_hosts:
-      - host.docker.internal:host-gateway
+    networks:
+      - seaweedfs
+
+networks:
+  seaweedfs:
+    name: seaweedfs_default
+    external: true

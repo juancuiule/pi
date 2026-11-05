@@ -77,6 +77,32 @@ services:
       retries: 3
       start_period: 30s
 
+  # The database's replica under STORAGE=s3 (docs/deploy/storage.md): deploy.sh turns this profile on. Unlike
+  # docker/litestream's service it mounts the server's volume, runs as the server's user, whose files it shares, and
+  # never restores on its own: the server creates an empty database first, and a restore is a choice.
+  litestream:
+    image: litestream/litestream:0.5.17
+    profiles: [litestream]
+    command: replicate
+    user: "1000:1000"
+    env_file:
+      - path: ../docker/seaweedfs/.env
+        required: false
+    volumes:
+      - effect-pi-data:/data
+      - ../docker/litestream/litestream.yml:/etc/litestream.yml:ro
+    networks:
+      - seaweedfs
+    depends_on:
+      server:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+    restart: unless-stopped
+
   web:
     <<: *app
     command: ["pnpm", "--filter", "web", "start"]
@@ -151,3 +177,9 @@ services:
 
 volumes:
   effect-pi-data:
+
+networks:
+  # The gateway, by name; docker/seaweedfs's project creates it (pnpm seaweed:up).
+  seaweedfs:
+    name: seaweedfs_default
+    external: true

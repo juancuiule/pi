@@ -3,7 +3,7 @@
 // created for a Seat and removed when the Seat ends, while the files stay for the next one.
 import { defineDoc } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { Context, Effect, Exit, Layer, Ref, Semaphore } from "effect";
+import { Context, Effect, Exit, Layer, Semaphore } from "effect";
 import type { Scope } from "effect";
 
 import { Sandboxes, SandboxError } from "../sandbox/sandbox.ts";
@@ -56,6 +56,11 @@ export class WorkspaceStorage extends Context.Service<
   {
     /** What this adapter writes as `StorageRef.adapter`; opening a Workspace recorded under another fails. */
     readonly adapter: string;
+    /**
+     * The ref this adapter reads `storage`'s files under, when it was recorded under another adapter whose files
+     * it can take as they are. Absent, or `undefined` for a ref it cannot take: that Workspace keeps failing to open.
+     */
+    readonly adopt?: (storage: StorageRef) => StorageRef | undefined;
     /** Make empty storage for a new Workspace. */
     readonly create: Effect.Effect<StorageRef, SandboxError>;
     /** Delete a Workspace's files, ignoring ones already gone. */
@@ -64,11 +69,13 @@ export class WorkspaceStorage extends Context.Service<
     mount(storage: StorageRef): WorkspaceMount;
     /**
      * Copy the Workspace's files into a Sandbox that just started; a failure fails the Sandbox's open.
-     * Absent for adapters whose mount is the storage itself.
+     * `writing` is called once the mount is known to be empty, before anything goes into it: only then may a
+     * failure discard the mount. Absent for adapters whose mount is the storage itself.
      */
     restore?(
       storage: StorageRef,
-      sandbox: SandboxInfo
+      sandbox: SandboxInfo,
+      writing: () => void
     ): Effect.Effect<void, SandboxError>;
     /**
      * Copy the Sandbox's /workspace back to storage. Absent for adapters whose mount is the storage
@@ -111,6 +118,8 @@ export class Workspaces extends Context.Service<
     ): Effect.Effect<void, SandboxError>;
     /** Delete a Workspace's files, for Archive. */
     discard(storage: StorageRef): Effect.Effect<void, SandboxError>;
+    /** The ref to record instead of `storage` when the configured adapter takes it over; `undefined` to keep it. */
+    adopt(storage: StorageRef): StorageRef | undefined;
     /** The execution environment of a Sandbox, for the harness; cheap, called for every tool call. */
     env(sandbox: SandboxInfo): ExecutionEnv;
     /**
@@ -168,9 +177,11 @@ export class Workspaces extends Context.Service<
           });
         }
         const files = workspace.storage ?? (yield* storage.create);
-        // A failed restore leaves the mount half-populated; `restored` keeps the release from saving
-        // that over a good snapshot.
-        const restored = yield* Ref.make(storage.restore === undefined);
+        // Only `restored` may be saved: a half-populated mount must not replace a good snapshot. `writing` may be
+        // evicted, since it was empty when the restore began. `untouched` holds whatever it held before this open,
+        // which can be the only copy: an adopted volume, or a cache a failed save kept.
+        let mount: "untouched" | "writing" | "restored" =
+          storage.restore === undefined ? "restored" : "untouched";
         const created = yield* Effect.acquireRelease(
           sandboxes.create(
             workspace.level,
@@ -180,8 +191,8 @@ export class Workspaces extends Context.Service<
           ),
           (running) =>
             Effect.gen(function* () {
-              let keepCache = false;
-              if ((yield* Ref.get(restored)) && storage.save !== undefined) {
+              let keepCache = mount === "untouched";
+              if (mount === "restored" && storage.save !== undefined) {
                 const saved = yield* Effect.exit(save(files, running, "pause"));
                 if (Exit.isFailure(saved)) {
                   yield* Effect.logWarning(
@@ -211,8 +222,16 @@ export class Workspaces extends Context.Service<
             storage.restore === undefined
               ? Effect.void
               : storage
-                  .restore(files, running)
-                  .pipe(Effect.andThen(Ref.set(restored, true)))
+                  .restore(files, running, () => {
+                    mount = "writing";
+                  })
+                  .pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        mount = "restored";
+                      })
+                    )
+                  )
           ),
           // New storage that never got a Sandbox is never recorded, so it is removed instead of leaking.
           Effect.onError(() =>
@@ -228,6 +247,8 @@ export class Workspaces extends Context.Service<
         sandbox,
         save,
         discard: storage.remove,
+        adopt: (ref) =>
+          ref.adapter === storage.adapter ? undefined : storage.adopt?.(ref),
         env: sandboxes.env,
         shell: (info, size) =>
           Effect.flatMap(sandboxes.shell(info, size), shellSession),

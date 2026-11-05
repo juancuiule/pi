@@ -16,6 +16,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { zstdDecompressSync } from "node:zlib";
 
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { Effect, Exit, Fiber, Layer, Scope } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -27,8 +28,11 @@ import { Workspaces, WorkspaceStorage } from "./workspaces.ts";
 
 const BUCKET = BUCKETS.workspaces;
 
-const setup = (store: ObjectStore = memory()) => {
-  const local = localSandboxes();
+const setup = (
+  store: ObjectStore = memory(),
+  sandboxOptions: Parameters<typeof localSandboxes>[0] = {}
+) => {
+  const local = localSandboxes(sandboxOptions);
   const root = mkdtempSync(path.join(tmpdir(), "effect-pi-cache-"));
   const layer = Workspaces.layer.pipe(
     Layer.provideMerge(
@@ -179,6 +183,39 @@ describe("s3-copied workspace storage", () => {
     expect(existsSync(cacheDir(root, opened.files.id))).toBeFalsy();
   });
 
+  it("keeps the cache when a restore fails before it writes", async () => {
+    const { root, store, layer } = setup(memory(), {
+      env: (cwd) => {
+        const env = new NodeExecutionEnv({ cwd });
+        env.listDir = () => Promise.reject(new Error("the Sandbox went away"));
+        return env;
+      },
+    });
+
+    const opened = await Effect.runPromise(
+      Effect.gen(function* () {
+        const storageService = yield* WorkspaceStorage;
+        const workspaces = yield* Workspaces;
+        const files = yield* storageService.create;
+        // An adopted volume: its files are here and no snapshot exists yet.
+        populate(root, files.id);
+        const exit = yield* Effect.exit(
+          Effect.scoped(workspaces.sandbox({ level: "shell", storage: files }))
+        );
+        return { exit, files };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(Exit.isFailure(opened.exit)).toBeTruthy();
+    expect(
+      readFileSync(
+        path.join(cacheDir(root, opened.files.id), "note.txt"),
+        "utf-8"
+      )
+    ).toBe("kept");
+    await expect(store.list(BUCKET, "")).resolves.toStrictEqual([]);
+  });
+
   it("skips the download when the mounted cache is already populated", async () => {
     const { root, store, layer } = setup();
 
@@ -325,6 +362,39 @@ describe("s3-copied workspace storage", () => {
     );
 
     expect(Exit.isFailure(exit)).toBeTruthy();
+  });
+
+  it("takes over a docker-volume Workspace's files where they are, and uploads them at its closing save", async () => {
+    const { root, store, layer } = setup();
+
+    const adopted = await Effect.runPromise(
+      Effect.gen(function* () {
+        const workspaces = yield* Workspaces;
+        const ref = workspaces.adopt({
+          adapter: "docker-volume",
+          id: "effect-pi-workspace-1d91d804",
+        });
+        expect(ref).toStrictEqual({ adapter: "s3-copied", id: "1d91d804" });
+        // The old volume is the cache of the adopted id.
+        mkdirSync(cacheDir(root, "1d91d804"));
+        populate(root, "1d91d804");
+        yield* Effect.scoped(
+          workspaces.sandbox({ level: "shell", storage: ref })
+        );
+        return {
+          again: ref === undefined ? ref : workspaces.adopt(ref),
+          other: workspaces.adopt({
+            adapter: "docker-volume",
+            id: "elsewhere",
+          }),
+        };
+      }).pipe(Effect.provide(layer))
+    );
+
+    expect(adopted).toStrictEqual({ again: undefined, other: undefined });
+    const packed = await store.get(BUCKET, "1d91d804/files.tar.zst");
+    expect(packed).toBeDefined();
+    expect(tarList(packed ?? new Uint8Array())).toContain("./note.txt");
   });
 
   it("deletes the snapshot and the cache on discard", async () => {

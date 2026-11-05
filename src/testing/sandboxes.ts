@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { NodeStream } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
@@ -45,6 +46,8 @@ export const localSandboxes = (
     readonly onCreate?: Effect.Effect<void, SandboxError>;
     /** The `vncUrl` desktop Sandboxes report: a stand-in websockify for the desktop relay. */
     readonly vncUrl?: string;
+    /** Replaces the Sandbox's environment: a stand-in for one that fails after it started. */
+    readonly env?: (cwd: string) => ExecutionEnv;
   } = {}
 ): LocalSandboxes => {
   const live = new Set<string>();
@@ -83,7 +86,8 @@ export const localSandboxes = (
         Effect.sync(() => {
           live.delete(sandbox.id);
         }),
-      env: (sandbox: SandboxInfo) => new NodeExecutionEnv({ cwd: sandbox.id }),
+      env: (sandbox: SandboxInfo) =>
+        options.env?.(sandbox.id) ?? new NodeExecutionEnv({ cwd: sandbox.id }),
       // pty.spawn runs the shell under a real PTY, so echo, Ctrl-C and `exit` behave like the Docker
       // Sandboxes'. Its PTY size is unreachable from outside: `resize` does nothing.
       shell: (
