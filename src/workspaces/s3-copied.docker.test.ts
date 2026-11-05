@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { Effect, Layer } from "effect";
+import { Effect, Function as Fn, Layer } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
 
 import * as DockerSandboxes from "../sandbox/docker.ts";
@@ -143,7 +143,7 @@ describe.skipIf(!(await dockerAvailable()) || !(await s3GatewayUp()))(
             sandbox = yield* create();
             env = sandboxes.env(sandbox);
             const restore = yield* timed(
-              storage.restore?.(ref, sandbox) ?? Effect.void
+              storage.restore?.(ref, sandbox, Fn.constVoid) ?? Effect.void
             );
             const restored = Number(
               yield* run(env, "stat -c%s /workspace/big1.bin")

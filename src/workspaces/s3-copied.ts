@@ -83,7 +83,8 @@ export const layer = (options: {
 
       const restore = Effect.fn("S3Copied.restore")(function* (
         ref: StorageRef,
-        sandbox: SandboxInfo
+        sandbox: SandboxInfo,
+        writing: () => void
       ) {
         const env = sandboxes.env(sandbox);
         // A populated mount is a remounted cache (an Upgrade, a volume that outlived its Sandbox):
@@ -109,6 +110,7 @@ export const layer = (options: {
               // No snapshot yet: the Workspace starts empty.
               return;
             }
+            writing();
             try {
               for await (const chunk of packed.pipe(createZstdDecompress())) {
                 // oxlint-disable-next-line no-await-in-loop -- the appended chunks must stay in order
